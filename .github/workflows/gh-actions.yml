@@ -1,0 +1,41 @@
+name: Build & Test
+
+on:
+  push:
+    branches: ['*']
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    env:
+        QC_TEMPLATE_BROKERAGE_KEY: ${{ secrets.QC_TEMPLATE_BROKERAGE_KEY }}
+        QC_TEMPLATE_BROKERAGE_SECRET: ${{ secrets.QC_TEMPLATE_BROKERAGE_SECRET }}
+    container:
+        image: quantconnect/lean:foundation
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Checkout Lean Same Branch
+        id: lean-same-branch
+        uses: actions/checkout@v2
+        continue-on-error: true
+        with:
+          ref: ${{ github.ref }}
+          repository: QuantConnect/Lean
+          path: Lean
+
+      - name: Checkout Lean Master
+        if: steps.lean-same-branch.outcome != 'success'
+        uses: actions/checkout@v2
+        with:
+          repository: QuantConnect/Lean
+          path: Lean
+
+      - name: Move Lean
+        run: mv Lean ../Lean
+
+      - name: Build
+        run: dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.TemplateBrokerage.sln
+
+      - name: Run Tests
+        run: dotnet test ./QuantConnect.TemplateBrokerage.Tests/bin/Release/QuantConnect.TemplateBrokerage.Tests.dll
