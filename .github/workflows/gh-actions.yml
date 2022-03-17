@@ -20,8 +20,8 @@ jobs:
         uses: actions/checkout@v2
         continue-on-error: true
         with:
-          ref: ${{ github.ref }}
-          repository: QuantConnect/Lean
+          ref: refactor-extract-ib-brokerage
+          repository: rjra2611/Lean
           path: Lean
 
       - name: Checkout Lean Master
