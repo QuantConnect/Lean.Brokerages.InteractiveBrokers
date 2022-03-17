@@ -363,7 +363,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             {
                 //Thread.MemoryBarrier();
                 Thread.Sleep(1000);
-                order.LimitPrice = order.LimitPrice/2;
+                var request = new UpdateOrderRequest(DateTime.UtcNow, order.Id, new UpdateOrderFields { LimitPrice = order.LimitPrice / 2 });
+                order.ApplyUpdateOrderRequest(request);
                 ib.UpdateOrder(order);
             }
 
