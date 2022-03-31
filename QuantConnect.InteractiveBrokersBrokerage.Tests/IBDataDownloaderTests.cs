@@ -13,14 +13,13 @@
  * limitations under the License.
 */
 
+using NUnit.Framework;
+using QuantConnect.ToolBox.IBDownloader;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using NUnit.Framework;
-using QuantConnect.Logging;
-using QuantConnect.ToolBox.IBDownloader;
 
-namespace QuantConnect.Tests.ToolBox.IBDownloader
+namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
     [TestFixture]
     [Ignore("These tests require the IBGateway to be installed.")]
@@ -79,6 +78,5 @@ namespace QuantConnect.Tests.ToolBox.IBDownloader
                     }
                 });
         }
-
     }
 }
