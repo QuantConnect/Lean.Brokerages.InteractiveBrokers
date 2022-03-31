@@ -206,50 +206,48 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(expectedCount, history.Count);
         }
 
-        private static TestCaseData[] GetHistoryData
+        private static TestCaseData[] GetHistoryData()
         {
-            get
+            TestGlobals.Initialize();
+            var futureSymbolUsingCents = Symbols.CreateFutureSymbol("LE", new DateTime(2021, 12, 31));
+            var futureOptionSymbolUsingCents = Symbols.CreateFutureOptionSymbol(futureSymbolUsingCents, OptionRight.Call, 1.23m, new DateTime(2021, 12, 3));
+
+            var futureSymbol = Symbol.CreateFuture("NQ", Market.CME, new DateTime(2021, 9, 17));
+            var optionSymbol = Symbol.CreateOption("AAPL", Market.USA, OptionStyle.American, OptionRight.Call, 145, new DateTime(2021, 8, 20));
+
+            return new[]
             {
-                var futureSymbolUsingCents = Symbols.CreateFutureSymbol("LE", new DateTime(2021, 12, 31));
-                var futureOptionSymbolUsingCents = Symbols.CreateFutureOptionSymbol(futureSymbolUsingCents, OptionRight.Call, 1.23m, new DateTime(2021, 12, 3));
+                // 30 min RTH today + 60 min RTH yesterday
+                new TestCaseData(Symbols.SPY, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), false, 5400),
 
-                var futureSymbol = Symbol.CreateFuture("NQ", Market.CME, new DateTime(2021, 9, 17));
-                var optionSymbol = Symbol.CreateOption("AAPL", Market.USA, OptionStyle.American, OptionRight.Call, 145, new DateTime(2021, 8, 20));
+                // 30 min RTH + 30 min ETH
+                new TestCaseData(Symbols.SPY, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(1), true, 3600),
 
-                return new[]
-                {
-                    // 30 min RTH today + 60 min RTH yesterday
-                    new TestCaseData(Symbols.SPY, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
-                        new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), false, 5400),
+                // daily
+                new TestCaseData(futureSymbolUsingCents, Resolution.Daily, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2021, 9, 20, 0, 0, 0), TimeSpan.FromDays(10), true, 6),
+                // hourly
+                new TestCaseData(futureOptionSymbolUsingCents, Resolution.Hour, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2021, 9, 20, 0, 0, 0), TimeSpan.FromDays(10), true, 11),
 
-                    // 30 min RTH + 30 min ETH
-                    new TestCaseData(Symbols.SPY, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
-                        new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(1), true, 3600),
+                // 60 min
+                new TestCaseData(futureSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.Utc,
+                    new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(1), false, 3600),
 
-                    // daily
-                    new TestCaseData(futureSymbolUsingCents, Resolution.Daily, TimeZones.NewYork, TimeZones.NewYork,
-                        new DateTime(2021, 9, 20, 0, 0, 0), TimeSpan.FromDays(10), true, 6),
-                    // hourly
-                    new TestCaseData(futureOptionSymbolUsingCents, Resolution.Hour, TimeZones.NewYork, TimeZones.NewYork,
-                        new DateTime(2021, 9, 20, 0, 0, 0), TimeSpan.FromDays(10), true, 11),
+                // 60 min - RTH flag ignored, no ETH market hours
+                new TestCaseData(futureSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.Utc,
+                    new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(1), true, 3600),
 
-                    // 60 min
-                    new TestCaseData(futureSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.Utc,
-                        new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(1), false, 3600),
+                // 30 min today + 60 min yesterday
+                new TestCaseData(optionSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), false, 5400),
 
-                    // 60 min - RTH flag ignored, no ETH market hours
-                    new TestCaseData(futureSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.Utc,
-                        new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(1), true, 3600),
-
-                    // 30 min today + 60 min yesterday
-                    new TestCaseData(optionSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
-                        new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), false, 5400),
-
-                    // 30 min today + 60 min yesterday - RTH flag ignored, no ETH market hours
-                    new TestCaseData(optionSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
-                        new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), true, 5400)
-                };
-            }
+                // 30 min today + 60 min yesterday - RTH flag ignored, no ETH market hours
+                new TestCaseData(optionSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), true, 5400)
+            };
         }
 
         private InteractiveBrokersBrokerage GetBrokerage()
