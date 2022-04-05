@@ -30,7 +30,7 @@
   </ItemGroup>
 	
   <ItemGroup>
-    <ProjectReference Include="..\..\Lean\Brokerages\QuantConnect.Brokerages.csproj" />
+	  <PackageReference Include="QuantConnect.Brokerages" Version="2.5.*" />
   </ItemGroup>
 
   <ItemGroup>

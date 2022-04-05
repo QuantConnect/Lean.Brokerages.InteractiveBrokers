@@ -45,10 +45,6 @@ namespace QuantConnect.ToolBox.IBDownloader
                     : DateTime.UtcNow;
                 IBDownloaderProgram.IBDownloader(tickers, resolution, fromDate, toDate);
             }
-            else if (targetAppName.Contains("updater") || targetAppName.EndsWith("spu"))
-            {
-                // updater not present
-            }
             else
             {
                 PrintMessageAndExit(1, "ERROR: Unrecognized --app value");

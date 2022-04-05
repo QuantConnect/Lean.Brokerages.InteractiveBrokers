@@ -28,7 +28,7 @@
         <Compile Include="..\..\Lean\Common\Properties\SharedAssemblyInfo.cs" Link="Properties\SharedAssemblyInfo.cs" />
     </ItemGroup>
     <ItemGroup>
-      <ProjectReference Include="..\..\Lean\ToolBox\QuantConnect.ToolBox.csproj" />
+	  <PackageReference Include="QuantConnect.ToolBox" Version="2.5.*" />
       <ProjectReference Include="..\QuantConnect.InteractiveBrokersBrokerage\QuantConnect.InteractiveBrokersBrokerage.csproj" />
     </ItemGroup>
 </Project>
