@@ -35,7 +35,7 @@ jobs:
         run: mv Lean ../Lean
 
       - name: Build
-        run: dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.TemplateBrokerage.sln
+        run: dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.InteractiveBrokersBrokerage.sln
 
       - name: Run Tests
-        run: dotnet test ./QuantConnect.TemplateBrokerage.Tests/bin/Release/QuantConnect.TemplateBrokerage.Tests.dll
+        run: dotnet test ./QuantConnect.InteractiveBrokersBrokerage.Tests/bin/Release/QuantConnect.InteractiveBrokersBrokerage.Tests.dll

@@ -1,0 +1,58 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <TargetFramework>net5.0</TargetFramework>
+    <Product>QuantConnect.InteractiveBrokersBrokerage</Product>
+    <AssemblyName>QuantConnect.InteractiveBrokersBrokerage</AssemblyName>
+    <RootNamespace>QuantConnect.InteractiveBrokersBrokerage</RootNamespace>
+    <AssemblyTitle>QuantConnect.InteractiveBrokersBrokerage</AssemblyTitle>
+    <OutputType>Library</OutputType>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Description>QuantConnect LEAN InteractiveBrokers Brokerage: Brokerage Template plugin for Lean</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugType>full</DebugType>
+    <OutputPath>bin\Debug\</OutputPath>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <OutputPath>bin\Release\</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Lean\Common\Properties\SharedAssemblyInfo.cs" Link="Properties\SharedAssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
+  </ItemGroup>
+	
+  <ItemGroup>
+	  <PackageReference Include="QuantConnect.Brokerages" Version="2.5.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<None Include="IB-symbol-map.json">
+	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	</None>
+  </ItemGroup>
+
+  <ItemGroup>
+	<Reference Include="CSharpAPI">
+		<HintPath>CSharpAPI.dll</HintPath>
+	</Reference>
+  </ItemGroup>
+  <ItemGroup>
+	<None Update="CSharpAPI.dll" Pack="True">
+		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		<PackageCopyToOutput>true</PackageCopyToOutput>
+	</None>
+	<None Update="CSharpAPI.deps.json" Pack="True">
+		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		<PackageCopyToOutput>true</PackageCopyToOutput>
+	</None>
+  </ItemGroup>
+	
+</Project>
