@@ -31,20 +31,22 @@
 	
   <ItemGroup>
 	  <PackageReference Include="QuantConnect.Brokerages" Version="2.5.*" />
+	  <PackageReference Include="QuantConnect.IBAutomater" Version="2.0.64">
+		<!-- 
+            Content files of dependencies are excluded by default.
+			This allows content files to be available in project where nuget will be consumed.
+        -->
+        <PrivateAssets>analyzers;build</PrivateAssets>
+      </PackageReference>
   </ItemGroup>
-
+	
   <ItemGroup>
-	<None Include="IB-symbol-map.json">
-	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	<None Include="InteractiveBrokers\IB-symbol-map.json" Pack="True">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</None>
-  </ItemGroup>
-
-  <ItemGroup>
 	<Reference Include="CSharpAPI">
 		<HintPath>CSharpAPI.dll</HintPath>
 	</Reference>
-  </ItemGroup>
-  <ItemGroup>
 	<None Update="CSharpAPI.dll" Pack="True">
 		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		<PackageCopyToOutput>true</PackageCopyToOutput>
