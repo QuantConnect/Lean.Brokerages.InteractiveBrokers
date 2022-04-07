@@ -39,19 +39,14 @@
         <PrivateAssets>analyzers;build</PrivateAssets>
       </PackageReference>
   </ItemGroup>
-
+	
   <ItemGroup>
-	<None Include="IB-symbol-map.json">
-	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	<None Include="InteractiveBrokers\IB-symbol-map.json" Pack="True">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</None>
-  </ItemGroup>
-
-  <ItemGroup>
 	<Reference Include="CSharpAPI">
 		<HintPath>CSharpAPI.dll</HintPath>
 	</Reference>
-  </ItemGroup>
-  <ItemGroup>
 	<None Update="CSharpAPI.dll" Pack="True">
 		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		<PackageCopyToOutput>true</PackageCopyToOutput>
