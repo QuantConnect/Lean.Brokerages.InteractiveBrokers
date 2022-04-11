@@ -8,8 +8,17 @@ jobs:
   build:
     runs-on: ubuntu-20.04
     env:
-        QC_TEMPLATE_BROKERAGE_KEY: ${{ secrets.QC_TEMPLATE_BROKERAGE_KEY }}
-        QC_TEMPLATE_BROKERAGE_SECRET: ${{ secrets.QC_TEMPLATE_BROKERAGE_SECRET }}
+        QC_IB_ACCOUNT: ${{ secrets.QC_IB_ACCOUNT }}
+        QC_IB_USER_NAME: ${{ secrets.QC_IB_USER_NAME }}
+        QC_IB_PASSWORD: ${{ secrets.QC_IB_PASSWORD }}
+        QC_IB_TRADING_MODE: ${{ secrets.QC_IB_TRADING_MODE }}
+        QC_IB_AGENT_DESCRIPTION: ${{ secrets.QC_IB_AGENT_DESCRIPTION }}
+        QC_IB_TWS_DIR: ${{ secrets.QC_IB_TWS_DIR }}
+        QC_IB_ENABLE_DELAYED_STREAMING_DATA: ${{ secrets.QC_IB_ENABLE_DELAYED_STREAMING_DATA }}
+        QC_IB_HOST: ${{ secrets.QC_IB_HOST }}
+        QC_JOB_USER_ID: ${{ secrets.JOB_USER_ID }}
+        QC_API_ACCESS_TOKEN: ${{ secrets.API_ACCESS_TOKEN }}
+        QC_JOB_ORGANIZATION_ID: ${{ secrets.JOB_ORGANIZATION_ID }}
     container:
         image: quantconnect/lean:foundation
     steps:

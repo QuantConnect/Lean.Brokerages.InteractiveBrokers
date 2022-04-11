@@ -23,7 +23,6 @@ using QuantConnect.Util;
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
     [TestFixture]
-    [Ignore("These tests require the IBGateway to be installed.")]
     public class InteractiveBrokersBrokerageFactoryTests
     {
         public static readonly IAlgorithm AlgorithmDependency = new InteractiveBrokersBrokerageFactoryAlgorithmDependency();
