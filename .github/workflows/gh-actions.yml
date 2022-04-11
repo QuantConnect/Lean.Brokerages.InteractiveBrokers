@@ -11,7 +11,7 @@ jobs:
         QC_IB_ACCOUNT: ${{ secrets.QC_IB_ACCOUNT }}
         QC_IB_USER_NAME: ${{ secrets.QC_IB_USER_NAME }}
         QC_IB_PASSWORD: ${{ secrets.QC_IB_PASSWORD }}
-        QC_IB_TRADING_MODE: ${{ secrets.IB_TRADING_MODE }}
+        QC_IB_TRADING_MODE: ${{ secrets.QC_IB_TRADING_MODE }}
         QC_IB_AGENT_DESCRIPTION: ${{ secrets.QC_IB_AGENT_DESCRIPTION }}
         QC_JOB_USER_ID: ${{ secrets.JOB_USER_ID }}
         QC_API_ACCESS_TOKEN: ${{ secrets.API_ACCESS_TOKEN }}
