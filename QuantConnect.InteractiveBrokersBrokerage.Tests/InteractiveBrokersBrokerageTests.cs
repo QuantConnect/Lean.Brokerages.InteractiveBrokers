@@ -146,7 +146,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         }
 
         [Test]
-        [Ignore("Ignore a test")]
         public void IsConnectedUpdatesCorrectly()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -160,7 +159,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         }
 
         [Test]
-        [Ignore("Ignore a test")]
         public void ConnectDisconnectLoop()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -176,8 +174,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void PlacedOrderHasNewBrokerageOrderID()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -197,7 +194,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         }
 
         [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void ClientPlacesMarketOrder()
         {
             bool orderFilled = false;
@@ -222,8 +219,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(OrderType.Market, orderFromIB.Type);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void ClientSellsMarketOrder()
         {
             bool orderFilled = false;
@@ -251,8 +247,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(OrderType.Market, orderFromIB.Type);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void ClientPlacesLimitOrder()
         {
             bool orderFilled = false;
@@ -297,8 +292,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(OrderType.Limit, orderFromIB.Type);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void ClientPlacesStopLimitOrder()
         {
             bool orderFilled = false;
@@ -343,8 +337,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(OrderType.StopMarket, orderFromIB.Type);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void ClientUpdatesLimitOrder()
         {
             int id = 0;
@@ -377,8 +370,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(filled);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void ClientCancelsLimitOrder()
         {
             var orderedResetEvent = new ManualResetEvent(false);
@@ -415,8 +407,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsNull(cancelledOrder);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void ClientFiresSingleOrderFilledEvent()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -448,8 +439,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(1, orderFilledEventCount);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void GetsAccountHoldings()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -503,7 +493,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         }
 
         [Test]
-        [Ignore("Ignore a test")]
         public void GetsCashBalanceAfterConnect()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -519,8 +508,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void FiresMultipleAccountBalanceEvents()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -559,7 +547,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(orderCount, cashBalanceUpdates.Count);
         }
 
-        [Test]
+        [Explicit("Ignore a test")]
         public void GetsCashBalanceAfterTrade()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -581,8 +569,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreNotEqual(balance, balanceAfterTrade);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void GetExecutions()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -611,8 +598,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(executions.Any(x => order.BrokerId.Any(id => executions.Any(e => e.Execution.OrderId == Parse.Int(id)))));
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void GetOpenOrders()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -674,8 +660,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(ib.IsConnected);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void GetCashBalanceConnectsIfDisconnected()
         {
             var ib = _interactiveBrokersBrokerage;
@@ -701,8 +686,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(ib.IsConnected);
         }
 
-        [Test]
-        [Ignore("Ignore a test")]
+        [Explicit("Ignore a test")]
         public void DoesNotLoopEndlesslyIfGetCashBalanceAlwaysThrows()
         {
             var ib = _interactiveBrokersBrokerage;
