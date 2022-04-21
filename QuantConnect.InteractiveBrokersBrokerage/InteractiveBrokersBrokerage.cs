@@ -61,6 +61,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
     [BrokerageFactory(typeof(InteractiveBrokersBrokerageFactory))]
     public sealed class InteractiveBrokersBrokerage : Brokerage, IDataQueueHandler, IDataQueueUniverseProvider
     {
+        private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 10));
+
         /// <summary>
         /// The default gateway version to use
         /// </summary>
@@ -100,6 +102,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ManualResetEvent _waitForNextValidId = new ManualResetEvent(false);
         private readonly ManualResetEvent _accountHoldingsResetEvent = new ManualResetEvent(false);
         private Exception _accountHoldingsLastException;
+
+        // tracks pending brokerage order responses. In some cases we've seen orders been placed and they never get through to IB
+        private readonly ConcurrentDictionary<int, ManualResetEventSlim> _pendingOrderResponse = new();
 
         // tracks requested order updates, so we can flag Submitted order events as updates
         private readonly ConcurrentDictionary<int, int> _orderUpdates = new ConcurrentDictionary<int, int>();
@@ -297,7 +302,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             try
             {
-                Log.Trace("InteractiveBrokersBrokerage.PlaceOrder(): Symbol: " + order.Symbol.Value + " Quantity: " + order.Quantity);
+                Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}");
 
                 if (!IsConnected)
                 {
@@ -328,7 +333,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             try
             {
-                Log.Trace("InteractiveBrokersBrokerage.UpdateOrder(): Symbol: " + order.Symbol.Value + " Quantity: " + order.Quantity + " Status: " + order.Status);
+                Log.Trace($"InteractiveBrokersBrokerage.UpdateOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity} Status: {order.Status} Id: {order.Id}");
 
                 if (!IsConnected)
                 {
@@ -383,7 +388,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     CheckRateLimiting();
 
+                    var eventSlim = new ManualResetEventSlim(false);
+                    _pendingOrderResponse[orderId] = eventSlim;
+
                     _client.ClientSocket.cancelOrder(orderId);
+
+                    if (!eventSlim.Wait(_responseTimeout))
+                    {
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {orderId} lean id {order.Id}"));
+                    }
+                    else
+                    {
+                        eventSlim.DisposeSafely();
+                    }
                 }
 
                 // canceled order events fired upon confirmation, see HandleError
@@ -1102,8 +1119,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
                 }
 
+                var eventSlim = new ManualResetEventSlim(false);
+                _pendingOrderResponse[ibOrderId] = eventSlim;
+
                 var ibOrder = ConvertOrder(order, contract, ibOrderId, outsideRth);
                 _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
+
+                if (!eventSlim.Wait(_responseTimeout))
+                {
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}"));
+                }
+                else
+                {
+                    eventSlim.DisposeSafely();
+                }
             }
         }
 
@@ -1449,6 +1478,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             if (InvalidatingCodes.Contains(errorCode))
             {
+                // let's unblock the waiting thread right away
+                if (_pendingOrderResponse.TryRemove(requestId, out var eventSlim))
+                {
+                    eventSlim.Set();
+                }
+
                 var message = $"{errorCode} - {errorMsg}";
                 Log.Trace($"InteractiveBrokersBrokerage.HandleError.InvalidateOrder(): IBOrderId: {requestId} ErrorCode: {message}");
 
@@ -1568,7 +1603,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             try
             {
-                Log.Trace("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): " + update);
+                // let's unblock the waiting thread right away
+                if (_pendingOrderResponse.TryRemove(update.OrderId, out var eventSlim))
+                {
+                    eventSlim.Set();
+                }
+
+                Log.Trace($"InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): {update}");
 
                 if (!IsConnected)
                 {
