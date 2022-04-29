@@ -1002,7 +1002,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             Log.Trace("InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): Starting IB Automater...");
 
             // start IB Gateway
-            var exportIbGatewayLogs = Config.GetBool("ib-export-ibgateway-logs");
+            var exportIbGatewayLogs = true; // Config.GetBool("ib-export-ibgateway-logs");
             _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, exportIbGatewayLogs);
             _ibAutomater.OutputDataReceived += OnIbAutomaterOutputDataReceived;
             _ibAutomater.ErrorDataReceived += OnIbAutomaterErrorDataReceived;
