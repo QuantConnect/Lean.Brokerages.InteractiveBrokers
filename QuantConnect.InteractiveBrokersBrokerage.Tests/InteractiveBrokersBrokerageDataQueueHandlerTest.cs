@@ -22,11 +22,9 @@ using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.Data;
-using QuantConnect.Data.Auxiliary;
 using QuantConnect.Data.Market;
 using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Securities;
-using QuantConnect.Tests.Engine.DataFeeds;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
@@ -45,7 +43,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 var cancelationToken = new CancellationTokenSource();
 
                 var es = Symbols.CreateFuturesCanonicalSymbol("ES");
-                var firstEs = ib.LookupSymbols(es, includeExpired: false).First();
+                var firstEs = ib.LookupSymbols(es, includeExpired: false, DateTime.UtcNow).First();
                 ProcessFeed(
                     ib.Subscribe(GetSubscriptionDataConfig<TradeBar>(firstEs, Resolution.Second), (s, e) => { gotEsData = true; }),
                     cancelationToken,
@@ -53,7 +51,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
                 // non USD quote currency, HDK
                 var hsi = Symbols.CreateFuturesCanonicalSymbol("HSI");
-                var firstHsi = ib.LookupSymbols(hsi, includeExpired: false).First();
+                var firstHsi = ib.LookupSymbols(hsi, includeExpired: false, DateTime.UtcNow).First();
                 ProcessFeed(
                     ib.Subscribe(GetSubscriptionDataConfig<TradeBar>(firstHsi, Resolution.Second), (s, e) => { gotHsiData = true; }),
                     cancelationToken,

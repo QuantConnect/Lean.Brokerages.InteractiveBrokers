@@ -13,13 +13,13 @@
  * limitations under the License.
 */
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using IBApi;
 using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
-using QuantConnect.Data.Auxiliary;
 using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Logging;
 
@@ -351,7 +351,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                     foreach (var ticker in tickers)
                     {
                         var currentSymbol = Symbol.Create(ticker, SecurityType.Future, market);
-                        var symbolsFound = ib.LookupSymbols(currentSymbol, false);
+                        var symbolsFound = ib.LookupSymbols(currentSymbol, false, DateTime.UtcNow);
                         Assert.IsNotEmpty(symbolsFound);
 
                         foreach (var symbol in symbolsFound)

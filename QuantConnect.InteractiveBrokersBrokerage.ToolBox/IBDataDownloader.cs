@@ -113,7 +113,7 @@ namespace QuantConnect.ToolBox.IBDownloader
         /// <param name="includeExpired">Include expired contracts</param>
         public IEnumerable<Symbol> GetChainSymbols(Symbol symbol, bool includeExpired)
         {
-            return _brokerage.LookupSymbols(symbol, includeExpired);
+            return _brokerage.LookupSymbols(symbol, includeExpired, DateTime.UtcNow);
         }
 
         /// <summary>

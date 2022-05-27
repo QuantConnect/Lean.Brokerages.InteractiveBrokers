@@ -2874,7 +2874,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private DateTime GetRealTimeTickTime(Symbol symbol)
         {
             var time = DateTime.UtcNow.Add(_brokerTimeDiff);
+            return GetRealTimeTickTime(symbol, time);
+        }
 
+        /// <summary>
+        /// Returns a timestamp for a tick converted to the exchange time zone
+        /// </summary>
+        private DateTime GetRealTimeTickTime(Symbol symbol, DateTime time)
+        {
             DateTimeZone exchangeTimeZone;
             if (!_symbolExchangeTimeZones.TryGetValue(symbol, out exchangeTimeZone))
             {
@@ -3132,9 +3139,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="symbol">Symbol to search future/option chain for</param>
         /// <param name="includeExpired">Include expired contracts</param>
+        /// <param name="dateTimeUtc">The current time in utc</param>
         /// <param name="securityCurrency">Expected security currency(if any)</param>
         /// <returns>Future/Option chain associated with the Symbol provided</returns>
-        public IEnumerable<Symbol> LookupSymbols(Symbol symbol, bool includeExpired, string securityCurrency = null)
+        public IEnumerable<Symbol> LookupSymbols(Symbol symbol, bool includeExpired, DateTime dateTimeUtc, string securityCurrency = null)
         {
             // setting up exchange defaults and filters
             var exchangeSpecifier = GetSymbolExchange(symbol);
@@ -3183,7 +3191,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // IB requests for full option chains are rate limited and responses can be delayed up to a minute for each underlying,
                 // so we fetch them from the OCC website instead of using the IB API.
                 // For futures options, we fetch the option chain from CME.
-                symbols.AddRange(_algorithm.OptionChainProvider.GetOptionContractList(symbol.Underlying, DateTime.Today));
+                symbols.AddRange(_algorithm.OptionChainProvider.GetOptionContractList(symbol.Underlying, GetRealTimeTickTime(symbol.Underlying, dateTimeUtc)));
             }
             else if (symbol.SecurityType == SecurityType.Future)
             {
@@ -3209,7 +3217,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 if (symbol.SecurityType.IsOption() || symbol.SecurityType == SecurityType.Future)
                 {
-                    var removedSymbols = symbols.Where(x => x.ID.Date < GetRealTimeTickTime(x).Date).ToHashSet();
+                    var removedSymbols = symbols.Where(x => x.ID.Date < GetRealTimeTickTime(x, dateTimeUtc).Date).ToHashSet();
 
                     if (symbols.RemoveAll(x => removedSymbols.Contains(x)) > 0)
                     {
