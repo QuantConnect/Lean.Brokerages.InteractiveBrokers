@@ -17,7 +17,6 @@ using System;
 using IBApi;
 using NUnit.Framework;
 using QuantConnect.Securities;
-using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 
@@ -178,7 +177,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [TestCase(2021, 3, 25)]
         public void FuturesOptionsWithUnderlyingContractMonthMappedByRuleResolvesUnderlyingGetLeanSymbol(int year, int month, int day)
         {
-            var futuresChainProvider = new BacktestingFutureChainProvider(TestGlobals.DataProvider);
             var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
 
             var expectedUnderlyingSymbol = Symbol.CreateFuture("GC", Market.COMEX, new DateTime(2021, 4, 28));

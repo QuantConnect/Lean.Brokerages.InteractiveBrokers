@@ -61,7 +61,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
     [BrokerageFactory(typeof(InteractiveBrokersBrokerageFactory))]
     public sealed class InteractiveBrokersBrokerage : Brokerage, IDataQueueHandler, IDataQueueUniverseProvider
     {
-        private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 10));
+        /// <summary>
+        /// During market open there can be some extra delay and resource constraint so let's be generous
+        /// </summary>
+        private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 30));
 
         /// <summary>
         /// The default gateway version to use
@@ -94,6 +97,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private EventBasedDataQueueHandlerSubscriptionManager _subscriptionManager;
 
         private Thread _messageProcessingThread;
+        private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+        private ManualResetEvent _currentTimeEvent = new ManualResetEvent(false);
+        private Thread _heartBeatThread;
 
         // Notifies the thread reading information from Gateway/TWS whenever there are messages ready to be consumed
         private readonly EReaderSignal _signal = new EReaderMonitorSignal();
@@ -825,6 +831,79 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
         }
 
+        private bool HeartBeat(int waitTimeMs)
+        {
+            if (_cancellationTokenSource.Token.WaitHandle.WaitOne(Time.GetSecondUnevenWait(waitTimeMs)))
+            {
+                // cancel signal
+                return true;
+            }
+
+            if (!_ibAutomater.IsWithinScheduledServerResetTimes() && IsConnected)
+            {
+                _currentTimeEvent.Reset();
+                // request current time to the server
+                _client.ClientSocket.reqCurrentTime();
+                var result = _currentTimeEvent.WaitOne(Time.GetSecondUnevenWait(waitTimeMs), _cancellationTokenSource.Token);
+                if (!result)
+                {
+                    Log.Error("InteractiveBrokersBrokerage.HeartBeat(): failed!", overrideMessageFloodProtection: true);
+                }
+                return result;
+            }
+            // expected
+            return true;
+        }
+
+        private void RunHeartBeatThread()
+        {
+            _heartBeatThread = new Thread(() =>
+            {
+                Log.Trace("InteractiveBrokersBrokerage.RunHeartBeatThread(): starting...");
+                var waitTimeMs = 1000 * 60 * 2;
+                try
+                {
+                    while (!_cancellationTokenSource.IsCancellationRequested)
+                    {
+                        if (!HeartBeat(waitTimeMs))
+                        {
+                            // just in case we were unlucky, we are reconnecting or similar let's retry with a longer wait
+                            if (!HeartBeat(waitTimeMs * 3))
+                            {
+                                // we emit the disconnected event so that if the re connection bellow fails it will kill the algorithm
+                                OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. Heart beat failed."));
+                                try
+                                {
+                                    Disconnect();
+                                }
+                                catch (Exception)
+                                {
+                                }
+                                Connect();
+                            }
+                        }
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // expected
+                }
+                catch (OperationCanceledException)
+                {
+                    // expected
+                }
+                catch (Exception e)
+                {
+                    Log.Error(e, "HeartBeat");
+                }
+
+                Log.Trace("InteractiveBrokersBrokerage.RunHeartBeatThread(): ended");
+            })
+            { IsBackground = true, Name = "IbHeartBeat" };
+
+            _heartBeatThread.Start();
+        }
+
         /// <summary>
         /// Downloads the financial advisor configuration information.
         /// This method is called upon successful connection.
@@ -929,6 +1008,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             Log.Trace("InteractiveBrokersBrokerage.Dispose(): Disposing of IB resources.");
 
             _isDisposeCalled = true;
+
+            _heartBeatThread.StopSafely(TimeSpan.FromSeconds(10), _cancellationTokenSource);
 
             if (_client != null)
             {
@@ -1054,7 +1135,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Log.Trace($"InteractiveBrokersBrokerage.HandleConnectionClosed(): API client disconnected [Server Version: {_client.ClientSocket.ServerVersion}].");
                 _connectEvent.Set();
             };
+
             ValidateSubscription();
+
+            // initialize our heart beat thread
+            RunHeartBeatThread();
         }
 
         /// <summary>
@@ -2632,11 +2717,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void HandleBrokerTime(object sender, IB.CurrentTimeUtcEventArgs e)
         {
-            // keep track of clock drift
-            _brokerTimeDiff = e.CurrentTimeUtc.Subtract(DateTime.UtcNow);
+            _currentTimeEvent.Set();
         }
-
-        private TimeSpan _brokerTimeDiff = new TimeSpan(0);
 
         /// <summary>
         /// Sets the job we're subscribing for
@@ -2873,7 +2955,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private DateTime GetRealTimeTickTime(Symbol symbol)
         {
-            var time = DateTime.UtcNow.Add(_brokerTimeDiff);
+            var time = DateTime.UtcNow;
 
             DateTimeZone exchangeTimeZone;
             if (!_symbolExchangeTimeZones.TryGetValue(symbol, out exchangeTimeZone))

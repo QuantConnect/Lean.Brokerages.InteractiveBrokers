@@ -229,7 +229,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="time">The current system time on the IB server.</param>
         public override void currentTime(long time)
         {
-            var currentTimeUtc = new DateTime(time, DateTimeKind.Utc);
+            var currentTimeUtc = Time.UnixTimeStampToDateTime(time);
             OnCurrentTimeUtc(new CurrentTimeUtcEventArgs(currentTimeUtc));
         }
 
