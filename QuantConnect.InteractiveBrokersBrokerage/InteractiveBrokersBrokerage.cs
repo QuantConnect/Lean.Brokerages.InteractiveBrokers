@@ -722,8 +722,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     // pause for a moment to receive next valid ID message from gateway
                     if (!_waitForNextValidId.WaitOne(15000))
                     {
-                        Log.Trace("InteractiveBrokersBrokerage.Connect(): Operation took longer than 15 seconds.");
-
                         // no response, disconnect and retry
                         Disconnect();
 
@@ -748,7 +746,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (IsFinancialAdvisor)
                     {
-                        if (!DownloadFinancialAdvisorAccount(_account))
+                        if (!DownloadFinancialAdvisorAccount())
                         {
                             Log.Trace("InteractiveBrokersBrokerage.Connect(): DownloadFinancialAdvisorAccount failed.");
 
@@ -772,7 +770,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
                     else
                     {
-                        if (!DownloadAccount(_account))
+                        if (!DownloadAccount())
                         {
                             Log.Trace("InteractiveBrokersBrokerage.Connect(): DownloadAccount failed. Operation took longer than 15 seconds.");
 
@@ -908,7 +906,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// Downloads the financial advisor configuration information.
         /// This method is called upon successful connection.
         /// </summary>
-        private bool DownloadFinancialAdvisorAccount(string account)
+        private bool DownloadFinancialAdvisorAccount()
         {
             if (!_accountData.FinancialAdvisorConfiguration.Load(_client))
                 return false;
@@ -920,15 +918,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // https://interactivebrokers.github.io/tws-api/account_updates.html#gsc.tab=0
 
             // subscribe to the FA account
-            return DownloadAccount(account + "A");
+            return DownloadAccount();
+        }
+
+        private string GetAccountName()
+        {
+            return IsFinancialAdvisor ? $"{_account}A" : _account;
         }
 
         /// <summary>
         /// Downloads the account information and subscribes to account updates.
         /// This method is called upon successful connection.
         /// </summary>
-        private bool DownloadAccount(string account)
+        private bool DownloadAccount()
         {
+            var account = GetAccountName();
             Log.Trace($"InteractiveBrokersBrokerage.DownloadAccount(): Downloading account data for {account}");
 
             _accountHoldingsLastException = null;
@@ -944,9 +948,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // we'll wait to get our first account update, we need to be absolutely sure we
             // have downloaded the entire account before leaving this function
-            var firstAccountUpdateReceived = new ManualResetEvent(false);
+            using var firstAccountUpdateReceived = new ManualResetEvent(false);
+            using var accountIsNotReady = new ManualResetEvent(false);
             EventHandler<IB.UpdateAccountValueEventArgs> clientOnUpdateAccountValue = (sender, args) =>
             {
+                if(args != null && !string.IsNullOrEmpty(args.Key)
+                    && string.Equals(args.Key, "accountReady", StringComparison.InvariantCultureIgnoreCase)
+                    && bool.TryParse(args.Value, out var isReady))
+                {
+                    if (!isReady)
+                    {
+                        accountIsNotReady.Set();
+                    }
+                }
                 firstAccountUpdateReceived.Set();
             };
 
@@ -962,22 +976,25 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // linux there appears to be different behavior where the account download end fires immediately.
             Thread.Sleep(2500);
 
-            if (!_accountHoldingsResetEvent.WaitOne(15000))
-            {
-                // remove our event handlers
-                _client.AccountDownloadEnd -= clientOnAccountDownloadEnd;
-                _client.UpdateAccountValue -= clientOnUpdateAccountValue;
-
-                Log.Trace("InteractiveBrokersBrokerage.DownloadAccount(): Operation took longer than 15 seconds.");
-
-                return false;
-            }
+            var result = _accountHoldingsResetEvent.WaitOne(15000);
 
             // remove our event handlers
             _client.AccountDownloadEnd -= clientOnAccountDownloadEnd;
             _client.UpdateAccountValue -= clientOnUpdateAccountValue;
 
-            return _accountHoldingsLastException == null;
+            if(!result)
+            {
+                Log.Trace("InteractiveBrokersBrokerage.DownloadAccount(): Operation took longer than 15 seconds.");
+            }
+
+            if (accountIsNotReady.WaitOne(TimeSpan.Zero))
+            {
+                result = false;
+                Log.Error("InteractiveBrokersBrokerage.DownloadAccount(): Account is not ready! Means that the IB server is in the process of resetting. Wait 30min and retry...");
+                _cancellationTokenSource.Token.WaitHandle.WaitOne(TimeSpan.FromMinutes(30));
+            }
+
+            return result && _accountHoldingsLastException == null;
         }
 
         /// <summary>
@@ -985,6 +1002,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         public override void Disconnect()
         {
+            try
+            {
+                if (_client != null && _client.ClientSocket != null && _client.Connected)
+                {
+                    // unsubscribe from account updates
+                    _client.ClientSocket.reqAccountUpdates(subscribe: false, GetAccountName());
+                }
+            }
+            catch (Exception exception)
+            {
+                Log.Error(exception);
+            }
             _client?.ClientSocket.eDisconnect();
 
             if (_messageProcessingThread != null)
