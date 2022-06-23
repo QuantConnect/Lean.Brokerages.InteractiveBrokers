@@ -64,7 +64,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// During market open there can be some extra delay and resource constraint so let's be generous
         /// </summary>
-        private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 30));
+        private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 60 * 5));
 
         /// <summary>
         /// The default gateway version to use
@@ -1813,6 +1813,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             try
             {
+                // There are not guaranteed to be orderStatus callbacks for every change in order status. For example with market orders when the order is accepted and executes immediately,
+                // there commonly will not be any corresponding orderStatus callbacks. For that reason it is recommended to monitor the IBApi.EWrapper.execDetails function in addition to
+                // IBApi.EWrapper.orderStatus. From IB API docs
+                // let's unblock the waiting thread right away
+                if (_pendingOrderResponse.TryRemove(executionDetails.Execution.OrderId, out var eventSlim))
+                {
+                    eventSlim.Set();
+                }
+
                 Log.Trace("InteractiveBrokersBrokerage.HandleExecutionDetails(): " + executionDetails);
 
                 if (!IsConnected)
