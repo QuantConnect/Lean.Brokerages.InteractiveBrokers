@@ -1233,19 +1233,25 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
                 }
 
-                var eventSlim = new ManualResetEventSlim(false);
-                _pendingOrderResponse[ibOrderId] = eventSlim;
+                ManualResetEventSlim eventSlim = null;
+                if (order.Type != OrderType.MarketOnOpen)
+                {
+                    _pendingOrderResponse[ibOrderId] = eventSlim = new ManualResetEventSlim(false);
+                }
 
                 var ibOrder = ConvertOrder(order, contract, ibOrderId, outsideRth);
                 _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
 
-                if (!eventSlim.Wait(_responseTimeout))
+                if(order.Type != OrderType.MarketOnOpen)
                 {
-                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}"));
-                }
-                else
-                {
-                    eventSlim.DisposeSafely();
+                    if (!eventSlim.Wait(_responseTimeout))
+                    {
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}"));
+                    }
+                    else
+                    {
+                        eventSlim.DisposeSafely();
+                    }
                 }
             }
         }
