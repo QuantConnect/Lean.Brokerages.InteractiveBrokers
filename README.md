@@ -150,7 +150,15 @@ The following table describes the order types that IB supports. For specific det
 For local deployment, the algorithm needs to download the following datasets:
 
 - [US Equities Security Master](https://www.quantconnect.com/datasets/quantconnect-us-equity-security-master) provided by QuantConnect
+- [US Equities](https://www.quantconnect.com/datasets/algoseek-us-equities)
 - [US Coarse Universe](https://www.quantconnect.com/datasets/quantconnect-us-coarse-universe-constituents)
+- [US Equity Options](https://www.quantconnect.com/datasets/algoseek-us-equity-options)
+- [FOREX Data](https://www.quantconnect.com/datasets/oanda-forex)
+- [US Futures Security Master](https://www.quantconnect.com/datasets/quantconnect-us-futures-security-master)
+- [US Futures](https://www.quantconnect.com/datasets/algoseek-us-futures)
+- [US Future Options](https://www.quantconnect.com/datasets/algoseek-us-future-options)
+- [US Cash Indices](https://www.quantconnect.com/datasets/tickdata-us-cash-indices)
+- [US Index Options](https://www.quantconnect.com/datasets/algoseek-us-index-options)
 
 ## Brokerage Model
 
