@@ -13,6 +13,14 @@ This repository hosts the Interactive Brokers (IB) Brokerage Plugin Integration 
 
 ### About Interactive Brokers
 
+<p align="center">
+<picture >
+  <source media="(prefers-color-scheme: dark)" srcset="https://user-images.githubusercontent.com/79997186/188234310-4d3cf2e5-4a88-4f8b-abaf-1f4c8f5ae71e.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://user-images.githubusercontent.com/79997186/188234305-1924c76a-86c1-46cf-b9bf-b29f8449e97e.png">
+  <img alt="introduction" width="40%">
+</picture>
+<p>
+
 IB was founded by Thomas Peterffy in 1993 with the goal to "create technology to provide liquidity on better terms. Compete on price, speed, size, diversity of global products and advanced trading tools". IB provides access to trading Equities, ETFs, Options, Futures, Future Options, Forex, Gold, Warrants, Bonds, and Mutual Funds for clients in over [200 countries and territories](https://www.interactivebrokers.com/en/index.php?f=7021) with no minimum deposit. IB also provides paper trading, a trading platform, and educational services.
 
 For more information about the IB brokerage, see the [QuantConnect-IB Integration Page](https://www.quantconnect.com/docs/v2/our-platform/live-trading/brokerages/interactive-brokers).
