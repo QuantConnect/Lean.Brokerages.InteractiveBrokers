@@ -222,7 +222,7 @@ You can deposit and withdraw cash from your brokerage account while you run an a
 
 LEAN Engine is an open-source algorithmic trading engine built for easy strategy research, backtesting, and live trading. We integrate with common data providers and brokerages, so you can quickly deploy algorithmic trading strategies.
 
-The core of the LEAN Engine is written in C#, but it operates seamlessly on Linux, Mac and Windows operating systems. To use it, you can write algorithms in Python 3.6 or C#. QuantConnect maintains the LEAN project and uses it to drive the web-based algorithmic trading platform on the website.
+The core of the LEAN Engine is written in C#, but it operates seamlessly on Linux, Mac and Windows operating systems. To use it, you can write algorithms in Python 3.8 or C#. QuantConnect maintains the LEAN project and uses it to drive the web-based algorithmic trading platform on the website.
 
 ## Contributions
 
