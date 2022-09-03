@@ -31,7 +31,7 @@ For more information about the IB brokerage, see the [QuantConnect-IB Integratio
 
   You can deploy using a visual interface in the QuantConnect cloud. For instructions, see the [QuantConnect-IB Integration Page](https://www.quantconnect.com/docs/v2/our-platform/live-trading/brokerages/interactive-brokers). 
   
-  ![Interactive Brokers Deployment Wizard](https://cdn.quantconnect.com/i/tu/atreyu-deploy-wizard.jpg)
+  ![deploy-ib](https://user-images.githubusercontent.com/38889814/188246363-cb60f7e8-06f4-41ca-adeb-213861295cc7.gif) 
 
   In the QuantConnect Cloud Platform, you can harness the QuantConnect Live Data Feed, the IB Live Data Feed, or both. For most users, this is substantially cheaper and easier than self-hosting.
   
