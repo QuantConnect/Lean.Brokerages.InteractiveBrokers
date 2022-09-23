@@ -83,6 +83,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private readonly object _nextValidIdLocker = new object();
 
+        private CancellationTokenSource _gatewayRestartTokenSource;
+
         private int _port;
         private string _account;
         private string _host;
@@ -952,7 +954,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             using var accountIsNotReady = new ManualResetEvent(false);
             EventHandler<IB.UpdateAccountValueEventArgs> clientOnUpdateAccountValue = (sender, args) =>
             {
-                if(args != null && !string.IsNullOrEmpty(args.Key)
+                if (args != null && !string.IsNullOrEmpty(args.Key)
                     && string.Equals(args.Key, "accountReady", StringComparison.InvariantCultureIgnoreCase)
                     && bool.TryParse(args.Value, out var isReady))
                 {
@@ -982,7 +984,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _client.AccountDownloadEnd -= clientOnAccountDownloadEnd;
             _client.UpdateAccountValue -= clientOnUpdateAccountValue;
 
-            if(!result)
+            if (!result)
             {
                 Log.Trace("InteractiveBrokersBrokerage.DownloadAccount(): Operation took longer than 15 seconds.");
             }
@@ -1242,7 +1244,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var ibOrder = ConvertOrder(order, contract, ibOrderId, outsideRth);
                 _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
 
-                if(order.Type != OrderType.MarketOnOpen)
+                if (order.Type != OrderType.MarketOnOpen)
                 {
                     if (!eventSlim.Wait(_responseTimeout))
                     {
@@ -1536,6 +1538,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             Log.Trace($"InteractiveBrokersBrokerage.HandleError(): RequestId: {requestId} ErrorCode: {errorCode} - {errorMsg}");
 
+            if (errorCode == 2105 || errorCode == 2103)
+            {
+                // 'connection is broken': if we haven't already let's trigger a gateway restart
+                StartGatewayRestartTask();
+            }
+            else if (errorCode == 2106 || errorCode == 2104)
+            {
+                // 'connection is ok'
+                StopGatewayRestartTask();
+            }
+
             // figure out the message type based on our code collections below
             var brokerageMessageType = BrokerageMessageType.Information;
             if (ErrorCodes.Contains(errorCode))
@@ -1550,6 +1563,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // code 1100 is a connection failure, we'll wait a minute before exploding gracefully
             if (errorCode == 1100)
             {
+                StopGatewayRestartTask();
                 if (!_stateManager.Disconnected1100Fired)
                 {
                     _stateManager.Disconnected1100Fired = true;
@@ -3648,9 +3662,64 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void OnIbAutomaterOutputDataReceived(object sender, OutputDataReceivedEventArgs e)
         {
-            if (e.Data == null) return;
+            if (string.IsNullOrEmpty(e.Data))
+            {
+                return;
+            }
 
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterOutputDataReceived(): {e.Data}");
+
+            if (e.Data.Contains("java.io.IOException: write beyond end of stream"))
+            {
+                StartGatewayRestartTask();
+            }
+        }
+
+        private void StopGatewayRestartTask()
+        {
+            if (_gatewayRestartTokenSource != null && !_gatewayRestartTokenSource.IsCancellationRequested)
+            {
+                _gatewayRestartTokenSource.Cancel();
+                Log.Trace($"InteractiveBrokersBrokerage.StopGatewayRestartTask(): cancelled");
+            }
+        }
+
+        /// <summary>
+        /// Rarely the gateways goes into an invalid state until it's restarted, so we restart the gateway from within so 2FA is not requested
+        /// </summary>
+        private void StartGatewayRestartTask()
+        {
+            if (_isDisposeCalled || _gatewayRestartTokenSource != null && !_gatewayRestartTokenSource.IsCancellationRequested)
+            {
+                // if we are disposed or we already triggered the restart skip a new call
+                Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): skipped request");
+                return;
+            }
+
+            Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): start delayed restart...");
+            // dispose of the previous cancellation token
+            _gatewayRestartTokenSource.DisposeSafely();
+            _gatewayRestartTokenSource = new CancellationTokenSource();
+            Task.Delay(GetRestartDelay(), _gatewayRestartTokenSource.Token).ContinueWith((_) =>
+            {
+                if (_isDisposeCalled || _gatewayRestartTokenSource.IsCancellationRequested)
+                {
+                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): skip restart. Disposed: {_isDisposeCalled} Cancelled {_gatewayRestartTokenSource.IsCancellationRequested}");
+                    return;
+                }
+
+                if (_ibAutomater.IsWithinScheduledServerResetTimes())
+                {
+                    // delay it
+                    _gatewayRestartTokenSource.Cancel();
+                    StartGatewayRestartTask();
+                }
+                else
+                {
+                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): trigger soft restart");
+                    _ibAutomater.SoftRestart();
+                }
+            });
         }
 
         private void OnIbAutomaterErrorDataReceived(object sender, ErrorDataReceivedEventArgs e)
@@ -3665,6 +3734,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Exit code: {e.ExitCode}");
 
             _stateManager.Reset();
+            StopGatewayRestartTask();
 
             // check if IBGateway was closed because of an IBAutomater error
             var result = _ibAutomater.GetLastStartResult();
@@ -3685,10 +3755,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): error in Disconnect(): {exception}");
                 }
 
-                // during weekends wait until one hour before FX market open before restarting IBAutomater
-                var delay = _ibAutomater.IsWithinWeekendServerResetTimes()
-                    ? GetNextWeekendReconnectionTimeUtc() - DateTime.UtcNow
-                    : TimeSpan.FromMinutes(5);
+                var delay = GetRestartDelay();
 
                 Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Delay before restart: {delay:d'd 'h'h 'm'm 's's'}");
 
@@ -3710,11 +3777,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
         }
 
+        private TimeSpan GetRestartDelay()
+        {
+            // during weekends wait until one hour before FX market open before restarting IBAutomater
+             return _ibAutomater.IsWithinWeekendServerResetTimes()
+                ? GetNextWeekendReconnectionTimeUtc() - DateTime.UtcNow
+                : TimeSpan.FromMinutes(5);
+        }
+
         private void OnIbAutomaterRestarted(object sender, EventArgs e)
         {
             Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterRestarted()");
 
             _stateManager.Reset();
+            StopGatewayRestartTask();
 
             // check if IBGateway was closed because of an IBAutomater error
             var result = _ibAutomater.GetLastStartResult();
