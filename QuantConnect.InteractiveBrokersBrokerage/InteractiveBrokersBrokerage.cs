@@ -3689,37 +3689,53 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void StartGatewayRestartTask()
         {
-            if (_isDisposeCalled || _gatewayRestartTokenSource != null && !_gatewayRestartTokenSource.IsCancellationRequested)
+            try
             {
-                // if we are disposed or we already triggered the restart skip a new call
-                Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): skipped request");
-                return;
-            }
-
-            Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): start delayed restart...");
-            // dispose of the previous cancellation token
-            _gatewayRestartTokenSource.DisposeSafely();
-            _gatewayRestartTokenSource = new CancellationTokenSource();
-            Task.Delay(GetRestartDelay(), _gatewayRestartTokenSource.Token).ContinueWith((_) =>
-            {
-                if (_isDisposeCalled || _gatewayRestartTokenSource.IsCancellationRequested)
+                if (_isDisposeCalled || _gatewayRestartTokenSource != null && !_gatewayRestartTokenSource.IsCancellationRequested)
                 {
-                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): skip restart. Disposed: {_isDisposeCalled} Cancelled {_gatewayRestartTokenSource.IsCancellationRequested}");
+                    // if we are disposed or we already triggered the restart skip a new call
+                    var message = _isDisposeCalled ? "we are disposed" : "restart task already scheduled";
+                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): skipped request: {message}");
                     return;
                 }
 
-                if (_ibAutomater.IsWithinScheduledServerResetTimes())
+                var delay = GetRestartDelay();
+                Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): start restart in: {delay}...");
+                // dispose of the previous cancellation token
+                _gatewayRestartTokenSource.DisposeSafely();
+                _gatewayRestartTokenSource = new CancellationTokenSource();
+                Task.Delay(delay, _gatewayRestartTokenSource.Token).ContinueWith((_) =>
                 {
-                    // delay it
-                    _gatewayRestartTokenSource.Cancel();
-                    StartGatewayRestartTask();
-                }
-                else
-                {
-                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): trigger soft restart");
-                    _ibAutomater.SoftRestart();
-                }
-            });
+                    try
+                    {
+                        if (_isDisposeCalled || _gatewayRestartTokenSource.IsCancellationRequested)
+                        {
+                            Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): skip restart. Disposed: {_isDisposeCalled} Cancelled {_gatewayRestartTokenSource.IsCancellationRequested}");
+                            return;
+                        }
+
+                        if (_ibAutomater.IsWithinScheduledServerResetTimes())
+                        {
+                            // delay it
+                            _gatewayRestartTokenSource.Cancel();
+                            StartGatewayRestartTask();
+                        }
+                        else
+                        {
+                            Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): triggering soft restart");
+                            _ibAutomater.SoftRestart();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex);
+            }
         }
 
         private void OnIbAutomaterErrorDataReceived(object sender, ErrorDataReceivedEventArgs e)
