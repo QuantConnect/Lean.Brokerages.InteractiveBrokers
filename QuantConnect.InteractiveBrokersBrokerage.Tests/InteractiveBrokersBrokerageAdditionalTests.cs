@@ -27,9 +27,12 @@ using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
+using QuantConnect.Interfaces;
 using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Logging;
+using QuantConnect.Orders;
 using QuantConnect.Securities;
+using QuantConnect.Tests.Engine.DataFeeds;
 using Order = QuantConnect.Orders.Order;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
@@ -44,6 +47,104 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         public void Setup()
         {
             Log.LogHandler = new NUnitLogHandler();
+        }
+
+        [TestCase(OrderType.ComboMarket, 0, 0, 0, 0)]
+        [TestCase(OrderType.ComboLimit, 250, 0, 0, 0)] // limit price that will never fill
+        [TestCase(OrderType.ComboLegLimit, 0, 350, 10, -1)]
+        public void SendComboOrder(OrderType orderType, decimal comboLimitPrice, decimal underlyingLimitPrice, decimal callLimitPrice, decimal putLimitPrice)
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio, new AggregationManager(), TestGlobals.MapFileProvider);
+            brokerage.Connect();
+
+            var openOrders = brokerage.GetOpenOrders();
+            foreach (var order in openOrders)
+            {
+                brokerage.CancelOrder(order);
+            }
+
+            var orderProperties = new InteractiveBrokersOrderProperties
+            {
+                GuaranteedComboRouting = true
+            };
+            var group = new GroupOrderManager(legCount: orderType != OrderType.ComboLegLimit ? 3 : 2, quantity: 2);
+
+            var comboOrderUnderlying = BuildOrder(orderType, Symbols.SPY, 100, comboLimitPrice, group, algo.Transactions.GetIncrementOrderId(),
+                underlyingLimitPrice, orderProperties);
+
+            var callSymbol = Symbol.CreateOption(Symbols.SPY, Market.USA, OptionStyle.American, OptionRight.Call,
+                        380, new DateTime(2022, 11, 4)); //new DateTime(2022, 09, 28))
+            var comboOrderCall = BuildOrder(orderType, callSymbol, 1, comboLimitPrice, group, algo.Transactions.GetIncrementOrderId(),
+                callLimitPrice, orderProperties);
+
+            using var manualResetEvent = new ManualResetEvent(false);
+            var events = new List<OrderEvent>();
+            var orders = new List<Order> { comboOrderUnderlying, comboOrderCall };
+
+            if (orderType != OrderType.ComboLegLimit)
+            {
+                var putSymbol = Symbol.CreateOption(Symbols.SPY, Market.USA, OptionStyle.American, OptionRight.Put,
+                            360, new DateTime(2022, 11, 4)); //new DateTime(2022, 09, 28))
+                var comboOrderPut = BuildOrder(orderType, putSymbol, 1, comboLimitPrice, group, algo.Transactions.GetIncrementOrderId(),
+                    putLimitPrice, orderProperties);
+                orders.Add(comboOrderPut);
+            }
+
+            brokerage.OrderStatusChanged += (_, orderEvent) =>
+            {
+                events.Add(orderEvent);
+
+                foreach (var order in orders)
+                {
+                    if (orderEvent.OrderId == order.Id)
+                    {
+                        // update the order like the BTH would do
+                        order.Status = orderEvent.Status;
+                    }
+                }
+
+                if (orders.All(o => o.Status.IsClosed()) || orderType == OrderType.ComboLimit && orders.All(o => o.Status == OrderStatus.Submitted))
+                {
+                    manualResetEvent.Set();
+                }
+            };
+
+            foreach (var order in orders)
+            {
+                group.OrderIds.Add(order.Id);
+                orderProvider.Add(order);
+                var response = brokerage.PlaceOrder(order);
+            }
+
+            Assert.IsTrue(manualResetEvent.WaitOne(TimeSpan.FromSeconds(60)));
+            if (orderType == OrderType.ComboLimit)
+            {
+                Assert.AreEqual(3, events.Count);
+                Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Submitted));
+            }
+            else
+            {
+                Assert.AreEqual(9, events.Count);
+                Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Submitted));
+                Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.PartiallyFilled));
+                Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Filled));
+            }
+        }
+
+        private Order BuildOrder(OrderType orderType, Symbol symbol, decimal quantity, decimal comboLimitPrice,
+            GroupOrderManager group, int id, decimal legLimitPrice, IOrderProperties orderProperties)
+        {
+            var limitPrice = comboLimitPrice;
+            if (legLimitPrice != 0)
+            {
+                limitPrice = legLimitPrice;
+            }
+            var request = new SubmitOrderRequest(orderType, symbol.SecurityType, symbol, quantity, 0,
+                limitPrice, 0, DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
+            request.SetOrderId(id);
+            return Order.CreateOrder(request);
         }
 
         [Test(Description = "Requires an existing IB connection with the same user credentials.")]
