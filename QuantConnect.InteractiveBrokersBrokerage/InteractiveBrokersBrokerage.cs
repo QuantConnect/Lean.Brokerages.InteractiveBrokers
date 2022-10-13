@@ -152,8 +152,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // exchange time zones by symbol
         private readonly Dictionary<Symbol, DateTimeZone> _symbolExchangeTimeZones = new Dictionary<Symbol, DateTimeZone>();
 
-        // IB requests made through the IB-API must be limited to a maximum of 50 messages/second
-        private readonly RateGate _messagingRateLimiter = new RateGate(50, TimeSpan.FromSeconds(1));
+        // IB requests made through the IB-API must be limited to a maximum of 50 messages/3 second
+        private readonly RateGate _messagingRateLimiter = new RateGate(50, TimeSpan.FromSeconds(3));
 
         // additional IB request information, will be matched with errors in the handler, for better error reporting
         private readonly ConcurrentDictionary<int, string> _requestInformation = new ConcurrentDictionary<int, string>();
@@ -162,7 +162,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // so we track subscription times to ensure symbols are not unsubscribed before a minimum time span has elapsed
         private readonly Dictionary<int, DateTime> _subscriptionTimes = new Dictionary<int, DateTime>();
 
-        private readonly TimeSpan _minimumTimespanBeforeUnsubscribe = TimeSpan.FromMilliseconds(500);
+        private readonly TimeSpan _minimumTimespanBeforeUnsubscribe = TimeSpan.FromSeconds(5);
 
         private readonly bool _enableDelayedStreamingData = Config.GetBool("ib-enable-delayed-streaming-data");
 
@@ -2900,7 +2900,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             _subscribedSymbols[symbol] = id;
                             _subscribedTickers[id] = new SubscriptionEntry { Symbol = subscribeSymbol, PriceMagnifier = priceMagnifier };
 
-                            Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Subscribe Processed: {symbol.Value} ({GetContractDescription(contract)}) # {id}");
+                            Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Subscribe Processed: {symbol.Value} ({GetContractDescription(contract)}) # {id}. SubscribedSymbols.Count: {_subscribedSymbols.Count}");
                         }
                     }
                 }
@@ -2937,7 +2937,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         lock (_sync)
                         {
-                            Log.Trace("InteractiveBrokersBrokerage.Unsubscribe(): Unsubscribe Request: " + symbol.Value);
+                            Log.Trace($"InteractiveBrokersBrokerage.Unsubscribe(): Unsubscribe Request: {symbol.Value}. SubscribedSymbols.Count: {_subscribedSymbols.Count}");
 
                             if (symbol.ID.SecurityType.IsOption() && symbol.ID.StrikePrice == 0.0m)
                             {
