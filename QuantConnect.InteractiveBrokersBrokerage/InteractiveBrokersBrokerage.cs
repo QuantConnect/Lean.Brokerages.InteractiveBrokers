@@ -52,6 +52,7 @@ using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 using Order = QuantConnect.Orders.Order;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using QuantConnect.Data.Auxiliary;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -91,7 +92,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private IAlgorithm _algorithm;
         private bool _loadExistingHoldings;
         private IOrderProvider _orderProvider;
-        private ISecurityProvider _securityProvider;
+        private IMapFileProvider _mapFileProvider;
         private IDataAggregator _aggregator;
         private IB.InteractiveBrokersClient _client;
         private int _ibVersion;
@@ -168,6 +169,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
+
+        private bool _historySecondResolutionWarning;
+        private bool _historyDelistedAssetWarning;
+        private bool _historyExpiredAssetWarning;
 
         /// <summary>
         /// Returns true if we're currently connected to the broker
@@ -870,7 +875,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             // just in case we were unlucky, we are reconnecting or similar let's retry with a longer wait
                             if (!HeartBeat(waitTimeMs * 3))
                             {
-                                // we emit the disconnected event so that if the re connection bellow fails it will kill the algorithm
+                                // we emit the disconnected event so that if the re connection below fails it will kill the algorithm
                                 OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. Heart beat failed."));
                                 try
                                 {
@@ -1097,7 +1102,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _loadExistingHoldings = loadExistingHoldings;
             _algorithm = algorithm;
             _orderProvider = orderProvider;
-            _securityProvider = securityProvider;
+            _mapFileProvider = mapFileProvider;
             _aggregator = aggregator;
             _account = account;
             _host = host;
@@ -3419,14 +3424,51 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 yield break;
             }
 
-            // preparing the data for IB request
-            var contract = CreateContract(request.Symbol, true);
-            var resolution = ConvertResolution(request.Resolution);
-            var duration = ConvertResolutionToDuration(request.Resolution);
-            var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
-            var endTime = request.Resolution == Resolution.Daily ? request.EndTimeUtc.Date : request.EndTimeUtc;
+            // See https://interactivebrokers.github.io/tws-api/historical_limitations.html
+            // We need to check this before creating the contract below, which could trigger an IB request that would fail for expired contracts and kill the algorithm
+            if (request.Symbol.ID.SecurityType.IsOption() || request.Symbol.ID.SecurityType == SecurityType.Future)
+            {
+                var localNow = DateTime.UtcNow.ConvertFromUtc(request.ExchangeHours.TimeZone);
+                // EOD of the expiration for options
+                var historicalLimitDate = request.Symbol.ID.Date.AddDays(1);
 
-            Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Submitting request: {request.Symbol.Value} ({GetContractDescription(contract)}): {request.Resolution}/{request.TickType} {startTime} UTC -> {endTime} UTC");
+                if (request.Symbol.ID.SecurityType == SecurityType.Future)
+                {
+                    // Expired futures data older than two years counting from the future's expiration date.
+                    historicalLimitDate = request.Symbol.ID.Date.AddYears(2);
+                }
+
+                if (localNow > historicalLimitDate)
+                {
+                    if (!_historyExpiredAssetWarning)
+                    {
+                        var message = request.Symbol.ID.SecurityType == SecurityType.Future ? "IB does not provide historical data of expired futures older than 2 years"
+                            : "IB does not provide historical data of expired options";
+
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryExpired", message));
+                        _historyExpiredAssetWarning = true;
+                    }
+                    Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip request of expired asset: {request.Symbol.Value}. {localNow} > {historicalLimitDate}");
+                    yield break;
+                }
+            }
+            else if(request.Symbol.ID.SecurityType == SecurityType.Equity)
+            {
+                var localNow = DateTime.UtcNow.ConvertFromUtc(request.ExchangeHours.TimeZone);
+                var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(request.Symbol));
+                var mapfile = resolver.ResolveMapFile(request.Symbol);
+                if (localNow > mapfile.DelistingDate)
+                {
+                    if (!_historyDelistedAssetWarning)
+                    {
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryDelisted", "IB does not provide historical data of delisted assets"));
+                        _historyDelistedAssetWarning = true;
+                    }
+
+                    Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip request of delisted asset: {request.Symbol.Value}. DelistingDate: {mapfile.DelistingDate}");
+                    yield break;
+                }
+            }
 
             DateTimeZone exchangeTimeZone;
             if (!_symbolExchangeTimeZones.TryGetValue(request.Symbol, out exchangeTimeZone))
@@ -3435,6 +3477,41 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 exchangeTimeZone = MarketHoursDatabase.FromDataFolder().GetExchangeHours(request.Symbol.ID.Market, request.Symbol, request.Symbol.SecurityType).TimeZone;
                 _symbolExchangeTimeZones.Add(request.Symbol, exchangeTimeZone);
             }
+
+            // preparing the data for IB request
+            var contract = CreateContract(request.Symbol, true);
+            var resolution = ConvertResolution(request.Resolution);
+            var duration = ConvertResolutionToDuration(request.Resolution);
+
+            var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
+            var startTimeLocal = startTime.ConvertFromUtc(exchangeTimeZone);
+            var endTime = request.Resolution == Resolution.Daily ? request.EndTimeUtc.Date : request.EndTimeUtc;
+            var endTimeLocal = request.EndTimeUtc.ConvertFromUtc(exchangeTimeZone);
+
+            // See https://interactivebrokers.github.io/tws-api/historical_limitations.html
+            if (request.Resolution == Resolution.Second)
+            {
+                var minimumLocalStartTime = DateTime.UtcNow.ConvertFromUtc(exchangeTimeZone).AddMonths(-6);
+                if (startTimeLocal < minimumLocalStartTime)
+                {
+                    startTimeLocal = minimumLocalStartTime;
+                    startTime = startTimeLocal.ConvertFromUtc(exchangeTimeZone);
+
+                    if (!_historySecondResolutionWarning)
+                    {
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistorySecondResolution", "IB does not provide Resolution.Second historical data older than 6 months"));
+                        _historySecondResolutionWarning = true;
+                    }
+
+                    if (startTime > endTime)
+                    {
+                        Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip too old 'Resolution.Second' request {startTimeLocal} < {minimumLocalStartTime}");
+                        yield break;
+                    }
+                }
+            }
+
+            Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Submitting request: {request.Symbol.Value} ({GetContractDescription(contract)}): {request.Resolution}/{request.TickType} {startTime} UTC -> {endTime} UTC");
 
             IEnumerable<BaseData> history;
             if (request.TickType == TickType.Quote)
@@ -3463,10 +3540,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             // cleaning the data before returning it back to user
-            var requestStartTime = request.StartTimeUtc.ConvertFromUtc(exchangeTimeZone);
-            var requestEndTime = request.EndTimeUtc.ConvertFromUtc(exchangeTimeZone);
-
-            foreach (var bar in history.Where(bar => bar.Time >= requestStartTime && bar.EndTime <= requestEndTime))
+            foreach (var bar in history.Where(bar => bar.Time >= startTimeLocal && bar.EndTime <= endTimeLocal))
             {
                 if (request.Symbol.SecurityType == SecurityType.Equity ||
                     request.ExchangeHours.IsOpen(bar.Time, bar.EndTime, request.IncludeExtendedMarketHours))

@@ -215,6 +215,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var futureSymbol = Symbol.CreateFuture("NQ", Market.CME, new DateTime(2021, 9, 17));
             var optionSymbol = Symbol.CreateOption("AAPL", Market.USA, OptionStyle.American, OptionRight.Call, 145, new DateTime(2021, 8, 20));
 
+            var delistedEquity = Symbol.Create("AAA.1", SecurityType.Equity, Market.USA);
             return new[]
             {
                 // 30 min RTH today + 60 min RTH yesterday
@@ -246,7 +247,11 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
                 // 30 min today + 60 min yesterday - RTH flag ignored, no ETH market hours
                 new TestCaseData(optionSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
-                    new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), true, 5400)
+                    new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), true, 5400),
+
+                // delisted asset
+                new TestCaseData(delistedEquity, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), false, 0),
             };
         }
 
