@@ -170,6 +170,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
 
+        private bool _historySecondResolutionWarning;
+        private bool _historyDelistedAssetWarning;
+        private bool _historyExpiredAssetWarning;
+
         /// <summary>
         /// Returns true if we're currently connected to the broker
         /// </summary>
@@ -3436,6 +3440,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if (localNow > historicalLimitDate)
                 {
+                    if (!_historyExpiredAssetWarning)
+                    {
+                        var message = request.Symbol.ID.SecurityType == SecurityType.Future ? "IB does not provide historical data of expired futures older than 2 years"
+                            : "IB does not provide historical data of expired options";
+
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryExpired", message));
+                        _historyExpiredAssetWarning = true;
+                    }
                     Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip request of expired asset: {request.Symbol.Value}. {localNow} > {historicalLimitDate}");
                     yield break;
                 }
@@ -3447,6 +3459,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var mapfile = resolver.ResolveMapFile(request.Symbol);
                 if (localNow > mapfile.DelistingDate)
                 {
+                    if (!_historyDelistedAssetWarning)
+                    {
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryDelisted", "IB does not provide historical data of delisted assets"));
+                        _historyDelistedAssetWarning = true;
+                    }
+
                     Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip request of delisted asset: {request.Symbol.Value}. DelistingDate: {mapfile.DelistingDate}");
                     yield break;
                 }
@@ -3479,7 +3497,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     startTimeLocal = minimumLocalStartTime;
                     startTime = startTimeLocal.ConvertFromUtc(exchangeTimeZone);
 
-                    if(startTime > endTime)
+                    if (!_historySecondResolutionWarning)
+                    {
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistorySecondResolution", "IB does not provide Resolution.Second historical data older than 6 months"));
+                        _historySecondResolutionWarning = true;
+                    }
+
+                    if (startTime > endTime)
                     {
                         Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip too old 'Resolution.Second' request {startTimeLocal} < {minimumLocalStartTime}");
                         yield break;
