@@ -1661,7 +1661,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 _subscribedSymbols.Clear();
                 _subscribedTickers.Clear();
-                _underlyings.Clear();
             }
 
             Subscribe(subscribedSymbols);
@@ -2867,13 +2866,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             // processing canonical option and futures symbols
                             var subscribeSymbol = symbol;
 
-                            // we subscribe to the underlying
-                            if (symbol.ID.SecurityType.IsOption() && symbol.IsCanonical())
-                            {
-                                subscribeSymbol = symbol.Underlying;
-                                _underlyings.Add(subscribeSymbol, symbol);
-                            }
-
                             // we ignore futures canonical symbol
                             if (symbol.ID.SecurityType == SecurityType.Future && symbol.IsCanonical())
                             {
@@ -2943,11 +2935,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         lock (_sync)
                         {
                             Log.Trace($"InteractiveBrokersBrokerage.Unsubscribe(): Unsubscribe Request: {symbol.Value}. SubscribedSymbols.Count: {_subscribedSymbols.Count}");
-
-                            if (symbol.ID.SecurityType.IsOption() && symbol.ID.StrikePrice == 0.0m)
-                            {
-                                _underlyings.Remove(symbol.Underlying);
-                            }
 
                             int id;
                             if (_subscribedSymbols.TryRemove(symbol, out id))
@@ -3262,13 +3249,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 };
 
                 _aggregator.Update(tick);
-
-                if (_underlyings.ContainsKey(tick.Symbol))
-                {
-                    var underlyingTick = tick.Clone() as Tick;
-                    underlyingTick.Symbol = _underlyings[tick.Symbol];
-                    _aggregator.Update(underlyingTick);
-                }
             }
         }
 
@@ -3953,7 +3933,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private readonly ConcurrentDictionary<Symbol, int> _subscribedSymbols = new ConcurrentDictionary<Symbol, int>();
         private readonly ConcurrentDictionary<int, SubscriptionEntry> _subscribedTickers = new ConcurrentDictionary<int, SubscriptionEntry>();
-        private readonly Dictionary<Symbol, Symbol> _underlyings = new Dictionary<Symbol, Symbol>();
 
         private class SubscriptionEntry
         {
