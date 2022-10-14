@@ -52,6 +52,7 @@ using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 using Order = QuantConnect.Orders.Order;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using QuantConnect.Data.Auxiliary;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -91,7 +92,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private IAlgorithm _algorithm;
         private bool _loadExistingHoldings;
         private IOrderProvider _orderProvider;
-        private ISecurityProvider _securityProvider;
+        private IMapFileProvider _mapFileProvider;
         private IDataAggregator _aggregator;
         private IB.InteractiveBrokersClient _client;
         private int _ibVersion;
@@ -1097,7 +1098,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _loadExistingHoldings = loadExistingHoldings;
             _algorithm = algorithm;
             _orderProvider = orderProvider;
-            _securityProvider = securityProvider;
+            _mapFileProvider = mapFileProvider;
             _aggregator = aggregator;
             _account = account;
             _host = host;
@@ -3436,6 +3437,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (localNow > historicalLimitDate)
                 {
                     Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip request of expired asset: {request.Symbol.Value}. {localNow} > {historicalLimitDate}");
+                    yield break;
+                }
+            }
+            else if(request.Symbol.ID.SecurityType == SecurityType.Equity)
+            {
+                var localNow = DateTime.UtcNow.ConvertFromUtc(request.ExchangeHours.TimeZone);
+                var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(request.Symbol));
+                var mapfile = resolver.ResolveMapFile(request.Symbol);
+                if (localNow > mapfile.DelistingDate)
+                {
+                    Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip request of delisted asset: {request.Symbol.Value}. DelistingDate: {mapfile.DelistingDate}");
                     yield break;
                 }
             }
