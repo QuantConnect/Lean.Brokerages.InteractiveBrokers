@@ -870,7 +870,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             // just in case we were unlucky, we are reconnecting or similar let's retry with a longer wait
                             if (!HeartBeat(waitTimeMs * 3))
                             {
-                                // we emit the disconnected event so that if the re connection bellow fails it will kill the algorithm
+                                // we emit the disconnected event so that if the re connection below fails it will kill the algorithm
                                 OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. Heart beat failed."));
                                 try
                                 {
@@ -3420,7 +3420,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             // See https://interactivebrokers.github.io/tws-api/historical_limitations.html
-            // We need to check this before creating the contract bellow, which could trigger an IB request that would fail for expired contracts and kill the algorithm
+            // We need to check this before creating the contract below, which could trigger an IB request that would fail for expired contracts and kill the algorithm
             if (request.Symbol.ID.SecurityType.IsOption() || request.Symbol.ID.SecurityType == SecurityType.Future)
             {
                 var localNow = DateTime.UtcNow.ConvertFromUtc(request.ExchangeHours.TimeZone);
