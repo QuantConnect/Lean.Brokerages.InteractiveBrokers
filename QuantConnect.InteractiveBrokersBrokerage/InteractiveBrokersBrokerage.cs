@@ -180,6 +180,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historySecondResolutionWarning;
         private bool _historyDelistedAssetWarning;
         private bool _historyExpiredAssetWarning;
+        private bool _historyOpenInterestWarning;
 
         /// <summary>
         /// Returns true if we're currently connected to the broker
@@ -3410,6 +3411,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // TODO: upgrade IB C# API DLL
                 // In IB API version 973.04, the reqHistoricalTicks function has been added,
                 // which would now enable us to support history requests at Tick resolution.
+                yield break;
+            }
+
+            if (request.TickType == TickType.OpenInterest)
+            {
+                if (!_historyOpenInterestWarning)
+                {
+                    _historyOpenInterestWarning = true;
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryOpenInterest", "IB does not provide open interest historical data"));
+                }
                 yield break;
             }
 
