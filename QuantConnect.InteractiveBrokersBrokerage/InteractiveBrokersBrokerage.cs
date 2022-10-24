@@ -70,7 +70,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// The default gateway version to use
         /// </summary>
-        public static string DefaultVersion { get; } = "1012";
+        public static string DefaultVersion { get; } = "1019";
 
         private IBAutomater.IBAutomater _ibAutomater;
 
@@ -156,6 +156,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // IB requests made through the IB-API must be limited to a maximum of 50 messages/3 second
         private readonly RateGate _messagingRateLimiter = new RateGate(50, TimeSpan.FromSeconds(3));
 
+        // See https://interactivebrokers.github.io/tws-api/historical_limitations.html
+        // Making more than 60 requests within any ten minute period will cause a pacing violation for Small Bars (30 secs or less)
+        private readonly RateGate _historyHighResolutionRateLimiter = new (58, TimeSpan.FromMinutes(10));
+        // The maximum number of simultaneous open historical data requests from the API is 50, we limit the count further so we can server them as best as possible
+        private readonly SemaphoreSlim _concurrentHistoryRequests = new (20);
+
         // additional IB request information, will be matched with errors in the handler, for better error reporting
         private readonly ConcurrentDictionary<int, string> _requestInformation = new ConcurrentDictionary<int, string>();
 
@@ -170,9 +176,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
 
+        private bool _historyHighResolutionRateLimitWarning;
         private bool _historySecondResolutionWarning;
         private bool _historyDelistedAssetWarning;
         private bool _historyExpiredAssetWarning;
+        private bool _historyOpenInterestWarning;
 
         /// <summary>
         /// Returns true if we're currently connected to the broker
@@ -1056,7 +1064,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _aggregator.DisposeSafely();
             _ibAutomater?.Stop();
 
-            _messagingRateLimiter.Dispose();
+            _messagingRateLimiter.DisposeSafely();
+            _concurrentHistoryRequests.DisposeSafely();
+            _historyHighResolutionRateLimiter.DisposeSafely();
         }
 
         /// <summary>
@@ -3404,6 +3414,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 yield break;
             }
 
+            if (request.TickType == TickType.OpenInterest)
+            {
+                if (!_historyOpenInterestWarning)
+                {
+                    _historyOpenInterestWarning = true;
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryOpenInterest", "IB does not provide open interest historical data"));
+                }
+                yield break;
+            }
+
             // See https://interactivebrokers.github.io/tws-api/historical_limitations.html
             // We need to check this before creating the contract below, which could trigger an IB request that would fail for expired contracts and kill the algorithm
             if (request.Symbol.ID.SecurityType.IsOption() || request.Symbol.ID.SecurityType == SecurityType.Future)
@@ -3560,95 +3580,106 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // making multiple requests if needed in order to download the history
             while (endTime >= startTime)
             {
-                var pacing = false;
-                var historyPiece = new List<TradeBar>();
-                var historicalTicker = GetNextId();
+                // before we do anything let's check our rate limits
+                CheckRateLimiting();
+                CheckHighResolutionHistoryRateLimiting(request.Resolution);
+                _concurrentHistoryRequests.Wait();
 
-                _requestInformation[historicalTicker] = $"[Id={historicalTicker}] GetHistory: {request.Symbol.Value} ({GetContractDescription(contract)})";
-
-                EventHandler<IB.HistoricalDataEventArgs> clientOnHistoricalData = (sender, args) =>
+                try
                 {
-                    if (args.RequestId == historicalTicker)
+
+                    var pacing = false;
+                    var historyPiece = new List<TradeBar>();
+                    var historicalTicker = GetNextId();
+
+                    _requestInformation[historicalTicker] = $"[Id={historicalTicker}] GetHistory: {request.Symbol.Value} ({GetContractDescription(contract)})";
+
+                    EventHandler<IB.HistoricalDataEventArgs> clientOnHistoricalData = (sender, args) =>
                     {
-                        var bar = ConvertTradeBar(request.Symbol, request.Resolution, args, priceMagnifier);
-                        if (request.Resolution != Resolution.Daily)
+                        if (args.RequestId == historicalTicker)
                         {
-                            bar.Time = bar.Time.ConvertFromUtc(exchangeTimeZone);
+                            var bar = ConvertTradeBar(request.Symbol, request.Resolution, args, priceMagnifier);
+                            if (request.Resolution != Resolution.Daily)
+                            {
+                                bar.Time = bar.Time.ConvertFromUtc(exchangeTimeZone);
+                            }
+
+                            historyPiece.Add(bar);
+                            dataDownloading.Set();
                         }
+                    };
 
-                        historyPiece.Add(bar);
-                        dataDownloading.Set();
-                    }
-                };
-
-                EventHandler<IB.HistoricalDataEndEventArgs> clientOnHistoricalDataEnd = (sender, args) =>
-                {
-                    if (args.RequestId == historicalTicker)
+                    EventHandler<IB.HistoricalDataEndEventArgs> clientOnHistoricalDataEnd = (sender, args) =>
                     {
-                        dataDownloaded.Set();
-                    }
-                };
-
-                EventHandler<IB.ErrorEventArgs> clientOnError = (sender, args) =>
-                {
-                    if (args.Id == historicalTicker)
-                    {
-                        if (args.Code == 162 && args.Message.Contains("pacing violation"))
-                        {
-                            // pacing violation happened
-                            pacing = true;
-                        }
-                        else
+                        if (args.RequestId == historicalTicker)
                         {
                             dataDownloaded.Set();
                         }
-                    }
-                };
+                    };
 
-                Client.Error += clientOnError;
-                Client.HistoricalData += clientOnHistoricalData;
-                Client.HistoricalDataEnd += clientOnHistoricalDataEnd;
-
-                CheckRateLimiting();
-
-                Client.ClientSocket.reqHistoricalData(historicalTicker, contract, endTime.ToStringInvariant("yyyyMMdd HH:mm:ss UTC"),
-                    duration, resolution, dataType, useRegularTradingHours, 2, false, new List<TagValue>());
-
-                var waitResult = 0;
-                while (waitResult == 0)
-                {
-                    waitResult = WaitHandle.WaitAny(new WaitHandle[] { dataDownloading, dataDownloaded }, timeOut * 1000);
-                }
-
-                Client.Error -= clientOnError;
-                Client.HistoricalData -= clientOnHistoricalData;
-                Client.HistoricalDataEnd -= clientOnHistoricalDataEnd;
-
-                if (waitResult == WaitHandle.WaitTimeout)
-                {
-                    if (pacing)
+                    EventHandler<IB.ErrorEventArgs> clientOnError = (sender, args) =>
                     {
-                        // we received 'pacing violation' error from IB. So we had to wait
-                        Log.Trace("InteractiveBrokersBrokerage::GetHistory() Pacing violation. Paused for {0} secs.", timeOut);
-                        continue;
+                        if (args.Id == historicalTicker)
+                        {
+                            if (args.Code == 162 && args.Message.Contains("pacing violation"))
+                            {
+                                // pacing violation happened
+                                pacing = true;
+                            }
+                            else
+                            {
+                                dataDownloaded.Set();
+                            }
+                        }
+                    };
+
+                    Client.Error += clientOnError;
+                    Client.HistoricalData += clientOnHistoricalData;
+                    Client.HistoricalDataEnd += clientOnHistoricalDataEnd;
+
+                    Client.ClientSocket.reqHistoricalData(historicalTicker, contract, endTime.ToStringInvariant("yyyyMMdd HH:mm:ss UTC"),
+                        duration, resolution, dataType, useRegularTradingHours, 2, false, new List<TagValue>());
+
+                    var waitResult = 0;
+                    while (waitResult == 0)
+                    {
+                        waitResult = WaitHandle.WaitAny(new WaitHandle[] { dataDownloading, dataDownloaded }, timeOut * 1000);
                     }
 
-                    Log.Trace("InteractiveBrokersBrokerage::GetHistory() History request timed out ({0} sec)", timeOut);
-                    break;
-                }
+                    Client.Error -= clientOnError;
+                    Client.HistoricalData -= clientOnHistoricalData;
+                    Client.HistoricalDataEnd -= clientOnHistoricalDataEnd;
 
-                // if no data has been received this time, we exit
-                if (!historyPiece.Any())
+                    if (waitResult == WaitHandle.WaitTimeout)
+                    {
+                        if (pacing)
+                        {
+                            // we received 'pacing violation' error from IB. So we had to wait
+                            Log.Trace("InteractiveBrokersBrokerage::GetHistory() Pacing violation. Paused for {0} secs.", timeOut);
+                            continue;
+                        }
+
+                        Log.Trace("InteractiveBrokersBrokerage::GetHistory() History request timed out ({0} sec)", timeOut);
+                        break;
+                    }
+
+                    // if no data has been received this time, we exit
+                    if (!historyPiece.Any())
+                    {
+                        break;
+                    }
+
+                    var filteredPiece = historyPiece.OrderBy(x => x.Time);
+
+                    history.InsertRange(0, filteredPiece);
+
+                    // moving endTime to the new position to proceed with next request (if needed)
+                    endTime = filteredPiece.First().Time.ConvertToUtc(exchangeTimeZone);
+                }
+                finally
                 {
-                    break;
+                    _concurrentHistoryRequests.Release();
                 }
-
-                var filteredPiece = historyPiece.OrderBy(x => x.Time);
-
-                history.InsertRange(0, filteredPiece);
-
-                // moving endTime to the new position to proceed with next request (if needed)
-                endTime = filteredPiece.First().Time.ConvertToUtc(exchangeTimeZone);
             }
 
             return history;
@@ -3711,6 +3742,28 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Log.Trace("The IB API request has been rate limited.");
 
                 _messagingRateLimiter.WaitToProceed();
+            }
+        }
+
+        private void CheckHighResolutionHistoryRateLimiting(Resolution resolution)
+        {
+            if(resolution != Resolution.Tick && resolution != Resolution.Second)
+            {
+                return;
+            }
+
+            if (!_historyHighResolutionRateLimiter.WaitToProceed(TimeSpan.Zero))
+            {
+                var message = "History request rate limited. IB allows up to 60 requests in a 10 minute period for bars of 30 seconds or less";
+                Log.Trace(message);
+
+                if (!_historyHighResolutionRateLimitWarning)
+                {
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistorySecondResolution", message));
+                    _historyHighResolutionRateLimitWarning = true;
+                }
+
+                _historyHighResolutionRateLimiter.WaitToProceed();
             }
         }
 
