@@ -79,6 +79,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private const string _futuresCmeCrypto = "CMECRYPTO";
 
+        // daily restart is at 23:45 local host time
+        private static TimeSpan _heartBeatTimeLimit = new(23, 0, 0);
+
         // next valid order id (or request id, or ticker id) for this client
         private int _nextValidId;
 
@@ -109,6 +112,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private readonly ManualResetEvent _connectEvent = new ManualResetEvent(false);
         private readonly ManualResetEvent _waitForNextValidId = new ManualResetEvent(false);
+        private readonly ManualResetEvent _connectingInProgress = new ManualResetEvent(false);
         private readonly ManualResetEvent _accountHoldingsResetEvent = new ManualResetEvent(false);
         private Exception _accountHoldingsLastException;
 
@@ -667,6 +671,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             if (IsConnected) return;
 
+            _connectingInProgress.Set();
+
             // we're going to receive fresh values for all account data, so we clear all
             _accountData.Clear();
 
@@ -822,6 +828,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         continue;
                     }
 
+                    _connectingInProgress.Reset();
+
                     // we couldn't connect after several attempts, log the error and throw an exception
                     Log.Error(err);
 
@@ -842,6 +850,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "ConnectionState", "Unexpected, not connected state. Unable to connect to Interactive Brokers. Terminating algorithm."));
             }
+
+            _connectingInProgress.Reset();
         }
 
         private bool HeartBeat(int waitTimeMs)
@@ -852,8 +862,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return true;
             }
 
-            if (!_ibAutomater.IsWithinScheduledServerResetTimes() && IsConnected)
+            if (!_ibAutomater.IsWithinScheduledServerResetTimes() && IsConnected
+                // do not run heart beat if we are close to daily restarts
+                && DateTime.Now.TimeOfDay < _heartBeatTimeLimit
+                // Connect call should of completed completely
+                && !_connectingInProgress.WaitOne(0))
             {
+                // we take the lock to avoid it getting disposed while we are evaluating it
+                lock(_gatewayRestartTokenSource ?? new object())
+                {
+                    if (_gatewayRestartTokenSource != null && !_gatewayRestartTokenSource.IsCancellationRequested)
+                    {
+                        // do not run heart beat if we are restarting
+                        return true;
+                    }
+                }
                 _currentTimeEvent.Reset();
                 // request current time to the server
                 _client.ClientSocket.reqCurrentTime();
@@ -3808,9 +3831,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 var delay = GetRestartDelay();
                 Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): start restart in: {delay}...");
-                // dispose of the previous cancellation token
-                _gatewayRestartTokenSource.DisposeSafely();
-                _gatewayRestartTokenSource = new CancellationTokenSource();
+
+                // we take the lock to avoid it getting disposed while consumers are evaluating it
+                lock (_gatewayRestartTokenSource ?? new object())
+                {
+                    // dispose of the previous cancellation token
+                    _gatewayRestartTokenSource.DisposeSafely();
+                    _gatewayRestartTokenSource = new CancellationTokenSource();
+                }
                 Task.Delay(delay, _gatewayRestartTokenSource.Token).ContinueWith((_) =>
                 {
                     try
