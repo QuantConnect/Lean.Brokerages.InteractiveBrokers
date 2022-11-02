@@ -112,7 +112,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private readonly ManualResetEvent _connectEvent = new ManualResetEvent(false);
         private readonly ManualResetEvent _waitForNextValidId = new ManualResetEvent(false);
-        private readonly ManualResetEvent _connectingInProgress = new ManualResetEvent(false);
         private readonly ManualResetEvent _accountHoldingsResetEvent = new ManualResetEvent(false);
         private Exception _accountHoldingsLastException;
 
@@ -189,7 +188,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Returns true if we're currently connected to the broker
         /// </summary>
-        public override bool IsConnected => _client != null && _client.Connected && !_stateManager.Disconnected1100Fired;
+        public override bool IsConnected => _client != null && _client.Connected && !_stateManager.Disconnected1100Fired && !_stateManager.IsConnecting;
 
         /// <summary>
         /// Returns true if the connected user is a financial advisor
@@ -671,7 +670,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             if (IsConnected) return;
 
-            _connectingInProgress.Set();
+            _stateManager.IsConnecting = true;
 
             // we're going to receive fresh values for all account data, so we clear all
             _accountData.Clear();
@@ -827,8 +826,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         Thread.Sleep(15000);
                         continue;
                     }
-
-                    _connectingInProgress.Reset();
+                    _stateManager.IsConnecting = false;
 
                     // we couldn't connect after several attempts, log the error and throw an exception
                     Log.Error(err);
@@ -836,6 +834,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     throw;
                 }
             }
+            _stateManager.IsConnecting = false;
 
             // if we reached here we should be connected, check just in case
             if (IsConnected)
@@ -850,8 +849,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "ConnectionState", "Unexpected, not connected state. Unable to connect to Interactive Brokers. Terminating algorithm."));
             }
-
-            _connectingInProgress.Reset();
         }
 
         private bool HeartBeat(int waitTimeMs)
@@ -864,9 +861,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             if (!_ibAutomater.IsWithinScheduledServerResetTimes() && IsConnected
                 // do not run heart beat if we are close to daily restarts
-                && DateTime.Now.TimeOfDay < _heartBeatTimeLimit
-                // Connect call should of completed completely
-                && !_connectingInProgress.WaitOne(0))
+                && DateTime.Now.TimeOfDay < _heartBeatTimeLimit)
             {
                 // we take the lock to avoid it getting disposed while we are evaluating it
                 lock(_gatewayRestartTokenSource ?? new object())
