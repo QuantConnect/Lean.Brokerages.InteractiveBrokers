@@ -13,6 +13,8 @@
  * limitations under the License.
 */
 
+using System.Threading;
+
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
     /// <summary>
@@ -22,6 +24,29 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
     {
         private volatile bool _disconnected1100Fired;
         private volatile bool _previouslyInResetTime;
+        private readonly ManualResetEvent _connectingInProgress = new ManualResetEvent(false);
+
+        /// <summary>
+        /// True if we are currently connecting to the IB API
+        /// </summary>
+        public bool IsConnecting
+        {
+            get
+            {
+                return _connectingInProgress.WaitOne(0);
+            }
+            set
+            {
+                if (value)
+                {
+                    _connectingInProgress.Set();
+                }
+                else
+                {
+                    _connectingInProgress.Reset();
+                }
+            }
+        }
 
         /// <summary>
         /// Gets/sets whether the IB client has received a Disconnect (1100) message
@@ -62,6 +87,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             _disconnected1100Fired = false;
             _previouslyInResetTime = false;
+            _connectingInProgress.Reset();
         }
     }
 }
