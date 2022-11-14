@@ -142,11 +142,23 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             { Market.CME, "CME" },
             { Market.NYMEX, "NYMEX" },
-            { Market.COMEX, "COMEX" },
-            { Market.CBOT, "CBOT" },
+            { Market.COMEX, "NYMEX" },
+            { Market.CBOT, "ECBOT" },
             { Market.ICE, "NYBOT" },
             { Market.CFE, "CFE" },
             { Market.NYSELIFFE, "NYSELIFFE" }
+        };
+
+        // TODO: remove this once IB has finised remapping their future contracts
+        private readonly Dictionary<string, string> _specialFuturesExchanges = new Dictionary<string, string>
+        {
+            { "ZO", "CBOT" },
+            { "ZR", "CBOT" },
+            { "2YY", "CBOT" },
+            { "30Y", "CBOT" },
+            { "ALI", "COMEX" },
+            { "QI", "COMEX" },
+            { "QC", "COMEX" },
         };
 
         private readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
@@ -3706,7 +3718,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="securityType">SecurityType of the Symbol</param>
         /// <param name="market">Market of the Symbol</param>
-        private string GetSymbolExchange(SecurityType securityType, string market)
+        /// <param name="ticker">Ticker for the symbol</param>
+        private string GetSymbolExchange(SecurityType securityType, string market, string ticker = null)
         {
             switch (securityType)
             {
@@ -3718,7 +3731,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Futures options share the same market as the underlying Symbol
                 case SecurityType.FutureOption:
                 case SecurityType.Future:
-                    if(_futuresExchanges.TryGetValue(market, out var result))
+                    if (!string.IsNullOrEmpty(ticker) && _specialFuturesExchanges.TryGetValue(ticker, out var result))
+                    {
+                        return result;
+                    }
+                    if(_futuresExchanges.TryGetValue(market, out result))
                     {
                         return result;
                     }
@@ -3735,7 +3752,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="symbol">Symbol to route</param>
         private string GetSymbolExchange(Symbol symbol)
         {
-            return GetSymbolExchange(symbol.SecurityType, symbol.ID.Market);
+            return GetSymbolExchange(symbol.SecurityType, symbol.ID.Market, symbol.ID.Symbol);
         }
 
         /// <summary>
