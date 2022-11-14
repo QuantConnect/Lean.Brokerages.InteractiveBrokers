@@ -77,8 +77,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // Existing orders created in TWS can *only* be cancelled/modified when connected with ClientId = 0
         private const int ClientId = 0;
 
-        private const string _futuresCmeCrypto = "CMECRYPTO";
-
         // daily restart is at 23:45 local host time
         private static TimeSpan _heartBeatTimeLimit = new(23, 0, 0);
 
@@ -142,13 +140,25 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // Prioritized list of exchanges used to find right futures contract
         private readonly Dictionary<string, string> _futuresExchanges = new Dictionary<string, string>
         {
-            { Market.CME, "GLOBEX" },
+            { Market.CME, "CME" },
             { Market.NYMEX, "NYMEX" },
             { Market.COMEX, "NYMEX" },
             { Market.CBOT, "ECBOT" },
             { Market.ICE, "NYBOT" },
             { Market.CFE, "CFE" },
             { Market.NYSELIFFE, "NYSELIFFE" }
+        };
+
+        // TODO: remove this once IB has finised remapping their future contracts
+        private readonly Dictionary<string, string> _specialFuturesExchanges = new Dictionary<string, string>
+        {
+            { "ZO", "CBOT" },
+            { "ZR", "CBOT" },
+            { "2YY", "CBOT" },
+            { "30Y", "CBOT" },
+            { "ALI", "COMEX" },
+            { "QI", "COMEX" },
+            { "QC", "COMEX" },
         };
 
         private readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
@@ -3721,11 +3731,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Futures options share the same market as the underlying Symbol
                 case SecurityType.FutureOption:
                 case SecurityType.Future:
-                    return _futuresExchanges.ContainsKey(market)
-                        ? ticker == "BTC"
-                            ? _futuresCmeCrypto
-                            : _futuresExchanges[market]
-                        : market;
+                    if (!string.IsNullOrEmpty(ticker) && _specialFuturesExchanges.TryGetValue(ticker, out var result))
+                    {
+                        return result;
+                    }
+                    if(_futuresExchanges.TryGetValue(market, out result))
+                    {
+                        return result;
+                    }
+                    return market;
 
                 default:
                     return "Smart";
