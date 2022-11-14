@@ -77,8 +77,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // Existing orders created in TWS can *only* be cancelled/modified when connected with ClientId = 0
         private const int ClientId = 0;
 
-        private const string _futuresCmeCrypto = "CMECRYPTO";
-
         // daily restart is at 23:45 local host time
         private static TimeSpan _heartBeatTimeLimit = new(23, 0, 0);
 
@@ -142,10 +140,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // Prioritized list of exchanges used to find right futures contract
         private readonly Dictionary<string, string> _futuresExchanges = new Dictionary<string, string>
         {
-            { Market.CME, "GLOBEX" },
+            { Market.CME, "CME" },
             { Market.NYMEX, "NYMEX" },
-            { Market.COMEX, "NYMEX" },
-            { Market.CBOT, "ECBOT" },
+            { Market.COMEX, "COMEX" },
+            { Market.CBOT, "CBOT" },
             { Market.ICE, "NYBOT" },
             { Market.CFE, "CFE" },
             { Market.NYSELIFFE, "NYSELIFFE" }
@@ -3708,8 +3706,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="securityType">SecurityType of the Symbol</param>
         /// <param name="market">Market of the Symbol</param>
-        /// <param name="ticker">Ticker for the symbol</param>
-        private string GetSymbolExchange(SecurityType securityType, string market, string ticker = null)
+        private string GetSymbolExchange(SecurityType securityType, string market)
         {
             switch (securityType)
             {
@@ -3721,11 +3718,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Futures options share the same market as the underlying Symbol
                 case SecurityType.FutureOption:
                 case SecurityType.Future:
-                    return _futuresExchanges.ContainsKey(market)
-                        ? ticker == "BTC"
-                            ? _futuresCmeCrypto
-                            : _futuresExchanges[market]
-                        : market;
+                    if(_futuresExchanges.TryGetValue(market, out var result))
+                    {
+                        return result;
+                    }
+                    return market;
 
                 default:
                     return "Smart";
@@ -3738,7 +3735,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="symbol">Symbol to route</param>
         private string GetSymbolExchange(Symbol symbol)
         {
-            return GetSymbolExchange(symbol.SecurityType, symbol.ID.Market, symbol.ID.Symbol);
+            return GetSymbolExchange(symbol.SecurityType, symbol.ID.Market);
         }
 
         /// <summary>
