@@ -2351,7 +2351,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 contract.LastTradeDateOrContractMonth = symbol.ID.Date.ToStringInvariant(DateFormat.EightCharacter);
                 contract.Exchange = GetSymbolExchange(symbol);
 
-                contract.Multiplier = Convert.ToInt32(symbolProperties.ContractMultiplier).ToStringInvariant();
+                contract.Multiplier = GetContractMultiplier(symbolProperties.ContractMultiplier);
 
                 contract.IncludeExpired = includeExpired;
             }
@@ -3334,7 +3334,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Exchange = exchangeSpecifier,
                 SecType = ConvertSecurityType(symbol.SecurityType),
                 IncludeExpired = includeExpired,
-                Multiplier = Convert.ToInt32(symbolProperties.ContractMultiplier).ToStringInvariant()
+                Multiplier = GetContractMultiplier(symbolProperties.ContractMultiplier)
             };
 
             Log.Trace($"InteractiveBrokersBrokerage.LookupSymbols(): Requesting symbol list for {contract.Symbol} ...");
@@ -3384,6 +3384,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             Log.Trace($"InteractiveBrokersBrokerage.LookupSymbols(): Returning {symbols.Count} contract(s) for {contract.Symbol}");
 
             return symbols;
+        }
+
+        private static string GetContractMultiplier(decimal contractMultiplier)
+        {
+            if(contractMultiplier >= 1)
+            {
+                // IB doesn't like 5000.0
+                return Convert.ToInt32(contractMultiplier).ToStringInvariant();
+            }
+            // some like MYM have a contract mutiplier of 0.5
+            return contractMultiplier.ToStringInvariant();
         }
 
         /// <summary>
