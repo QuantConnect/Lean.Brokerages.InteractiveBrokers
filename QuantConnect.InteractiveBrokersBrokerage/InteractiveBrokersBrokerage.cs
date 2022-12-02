@@ -189,6 +189,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)
         private TimeSpan _weeklyRestartUtcTime;
         private DateTime _lastIBAutomaterExitTime;
+        private readonly object _lastIBAutomaterExitTimeLock = new object();
 
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
@@ -3906,38 +3907,49 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
-        /// Recurring task to schedule the weekly gateway restart, which requires 2FA and can be configured by the user
+        /// Recurring task to schedule the weekly gateway restart, which requires 2FA and can be configured by the user.
+        /// This allows to have a scheduled weekly restart that users can configure in order to be able to confirm the weekly 2FA
+        /// request at a expected time.
         /// </summary>
         private void StartGatewayWeeklyRestartTask()
         {
             if (_isDisposeCalled)
             {
+                Log.Trace("InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skipped request: we are disposed");
                 return;
             }
 
             // get the next weekly restart time counting from tomorrow in case today is a Sunday,
             // which will set the delay for today when it should be next Sunday instead
             var restartDate = GetNextWeeklyRestartTimeUtc(DateTime.UtcNow.AddDays(1));
-            // we subtract _defaultRestartDelay because the restart will be scheduled with a delay of _defaultRestartDelay after the IBAutomater is stopped. This way the 2FA confirmation is requested as close to the configured time as possible.
+            // we subtract _defaultRestartDelay because the restart will be scheduled with a delay of _defaultRestartDelay after
+            // the IBAutomater is stopped. This way the 2FA confirmation is requested as close to the configured time as possible.
             var delay = restartDate - DateTime.UtcNow - _defaultRestartDelay;
 
             Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): scheduled weekly restart to {restartDate} (in {delay})");
-
 
             Task.Delay(delay).ContinueWith(_ =>
             {
                 if (_isDisposeCalled)
                 {
+                    Log.Trace("InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: we are disposed");
                     return;
                 }
 
-                // if the gateway hasn't yet exited today, we restart manually
-                if (_lastIBAutomaterExitTime.Date < DateTime.UtcNow.Date)
+                lock (_lastIBAutomaterExitTimeLock)
                 {
-                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
+                    // if the gateway hasn't yet exited today, we restart manually
+                    if (_lastIBAutomaterExitTime.Date < DateTime.UtcNow.Date)
+                    {
+                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
 
-                    // stopping the gateway will make the IBAutomater emit the exit event, which will trigger the restart
-                    _ibAutomater?.Stop();
+                        // stopping the gateway will make the IBAutomater emit the exit event, which will trigger the restart
+                        _ibAutomater?.Stop();
+                    }
+                    else
+                    {
+                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: gateway already exited today and should have been automatically restarted.");
+                    }
                 }
 
                 // schedule the next weekly restart
@@ -3954,12 +3966,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void OnIbAutomaterExited(object sender, ExitedEventArgs e)
         {
+            lock (_lastIBAutomaterExitTimeLock)
+            {
+                _lastIBAutomaterExitTime = DateTime.UtcNow;
+            }
+
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Exit code: {e.ExitCode}");
 
             _stateManager.Reset();
             StopGatewayRestartTask();
-
-            _lastIBAutomaterExitTime = DateTime.UtcNow;
 
             // check if IBGateway was closed because of an IBAutomater error
             var result = _ibAutomater.GetLastStartResult();
@@ -3980,7 +3995,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): error in Disconnect(): {exception}");
                 }
 
-                var delay = GetFullRestartDelay();
+                var delay = GetWeeklyRestartDelay();
 
                 Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Delay before restart: {delay:d'd 'h'h 'm'm 's's'}");
 
@@ -4010,7 +4025,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 : TimeSpan.FromMinutes(5);
         }
 
-        private TimeSpan GetFullRestartDelay()
+        private TimeSpan GetWeeklyRestartDelay()
         {
             // during weekends (including the whole Sunday) we wait until the time configured by the user
             if (_ibAutomater.IsWithinWeekendServerResetTimes() || DateTime.UtcNow.DayOfWeek == DayOfWeek.Sunday)
