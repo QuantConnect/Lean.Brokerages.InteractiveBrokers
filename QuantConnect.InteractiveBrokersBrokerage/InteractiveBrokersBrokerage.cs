@@ -4092,13 +4092,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
-        /// Gets the time (UTC) of the next IBAutomater start attempt, including 2FA.
+        /// Gets the time (UTC) of the next IBAutomater weekly restart on the given time of day
         /// </summary>
-        private DateTime GetNextWeeklyRestartTimeUtc(DateTime? from = null)
+        public static DateTime ComputeNextWeeklyRestartTimeUtc(TimeSpan weeklyRestartUtcTimeOfDay, DateTime? from = null)
         {
             var nextDate = GetNextSundayFromDate((from ?? DateTime.UtcNow).Date);
 
-            return nextDate.Add(_weeklyRestartUtcTime);
+            return nextDate.Add(weeklyRestartUtcTimeOfDay);
+        }
+
+        /// <summary>
+        /// Gets the time (UTC) of the next IBAutomater weekly restart, including 2FA.
+        /// </summary>
+        private DateTime GetNextWeeklyRestartTimeUtc(DateTime? from = null)
+        {
+           return ComputeNextWeeklyRestartTimeUtc(_weeklyRestartUtcTime, from);
         }
 
         private void CheckIbAutomaterError(StartResult result, bool throwException = true)
