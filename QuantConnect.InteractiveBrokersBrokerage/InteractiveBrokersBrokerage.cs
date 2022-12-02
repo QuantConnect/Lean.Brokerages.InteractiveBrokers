@@ -186,10 +186,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private readonly bool _enableDelayedStreamingData = Config.GetBool("ib-enable-delayed-streaming-data");
 
-        // The UTC time at which IBAutomater shoul be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart).
-        // TODO: Should we move this to the constructor or Initialize() method to check whether it is a valid time of the day?
-        private readonly TimeSpan _weeklyRestart2FAConfirmationUtcTime =
-            Config.GetValue<TimeSpan>("ib-weekly-reset-utc-time", GetNextWeekendReconnectionTimeUtc().TimeOfDay);
+        // The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)
+        private TimeSpan _weeklyRestartUtcTime;
         private DateTime _lastIBAutomaterExitTime;
 
         private volatile bool _isDisposeCalled;
@@ -307,7 +305,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string password,
             string tradingMode,
             string agentDescription = IB.AgentDescription.Individual,
-            bool loadExistingHoldings = true)
+            bool loadExistingHoldings = true,
+            TimeSpan? weeklyRestartUtcTime = null)
             : base("Interactive Brokers Brokerage")
         {
             Initialize(
@@ -325,7 +324,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 password,
                 tradingMode,
                 agentDescription = IB.AgentDescription.Individual,
-                loadExistingHoldings = true);
+                loadExistingHoldings = true,
+                weeklyRestartUtcTime: weeklyRestartUtcTime);
         }
 
         /// <summary>
@@ -1136,7 +1136,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string password,
             string tradingMode,
             string agentDescription = IB.AgentDescription.Individual,
-            bool loadExistingHoldings = true)
+            bool loadExistingHoldings = true,
+            TimeSpan? weeklyRestartUtcTime = null)
         {
             if (_isInitialized)
             {
@@ -1172,6 +1173,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             CheckIbAutomaterError(_ibAutomater.Start(false));
 
+            // default the weekly restart to one hour before FX market open (GetNextWeekendReconnectionTimeUtc)
+            _weeklyRestartUtcTime = weeklyRestartUtcTime ?? _defaultWeeklyRestartUtcTime;
             // schedule the weekly IB Gateway restart
             StartGatewayWeeklyRestartTask();
 
@@ -4080,7 +4083,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             var nextDate = GetNextSundayFromDate((from ?? DateTime.UtcNow).Date);
 
-            return nextDate.Add(_weeklyRestart2FAConfirmationUtcTime);
+            return nextDate.Add(_weeklyRestartUtcTime);
         }
 
         private void CheckIbAutomaterError(StartResult result, bool throwException = true)
@@ -4296,5 +4299,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         // the default delay for IBAutomater restart
         private static readonly TimeSpan _defaultRestartDelay = TimeSpan.FromMinutes(5);
+
+        private static TimeSpan _defaultWeeklyRestartUtcTime = GetNextWeekendReconnectionTimeUtc().TimeOfDay;
     }
 }
