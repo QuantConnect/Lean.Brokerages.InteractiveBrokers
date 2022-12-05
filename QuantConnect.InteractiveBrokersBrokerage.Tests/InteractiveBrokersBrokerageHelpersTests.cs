@@ -13,35 +13,43 @@
  * limitations under the License.
 */
 
-using NUnit.Framework;
-using QuantConnect.Algorithm;
-using QuantConnect.Brokerages.InteractiveBrokers;
-using QuantConnect.Data;
-using QuantConnect.Data.Market;
-using QuantConnect.Lean.Engine.DataFeeds;
-using QuantConnect.Logging;
-using QuantConnect.Orders;
-using QuantConnect.Securities;
-using QuantConnect.Tests.Engine;
-using QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Threading;
+
+using NUnit.Framework;
+
+using QuantConnect.Brokerages.InteractiveBrokers;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
     [TestFixture]
     public class InteractiveBrokersBrokerageHelpersTests
     {
-        [TestCaseSource(nameof(StartDatesToComputeRestartDelay))]
-        public void CalculatesTheWeeklyRestartDelay(DateTime from, DateTime sunday)
-        {
-            var timeOfDay = new TimeSpan(9, 30, 0);
-            var time = InteractiveBrokersBrokerage.ComputeNextWeeklyRestartTimeUtc(timeOfDay, from);
+        [Test]
 
-            var expectedTime = sunday.Date.Add(timeOfDay);
+        public void GetsNextSunday()
+        {
+            var baseDate = new DateTime(2022, 12, 5); // Monday
+            Assert.AreEqual(DayOfWeek.Monday, baseDate.DayOfWeek);
+            var expectedNextSunday = new DateTime(2022, 12, 11); // Sunday
+            Assert.AreEqual(DayOfWeek.Sunday, expectedNextSunday.DayOfWeek);
+
+            for (var i = 0; i < 7; i++)
+            {
+                var date = baseDate.AddDays(i);
+                var nextSunday = InteractiveBrokersBrokerage.GetNextSundayFromDate(date);
+
+                Assert.AreEqual(expectedNextSunday, nextSunday);
+            }
+        }
+
+
+        [TestCaseSource(nameof(StartDatesToComputeRestartDelay))]
+        public void CalculatesTheWeeklyRestartDelay(DateTime currentDate, DateTime expectedSunday)
+        {
+            var restartTimeOfDay = new TimeSpan(9, 30, 0);
+            var time = InteractiveBrokersBrokerage.ComputeNextWeeklyRestartTimeUtc(restartTimeOfDay, currentDate);
+
+            var expectedTime = expectedSunday.Date.Add(restartTimeOfDay);
 
             Assert.AreEqual(expectedTime, time);
         }
@@ -56,7 +64,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             // Sunday
             new TestCaseData(
                 new DateTime(2022, 12, 4, 12, 30, 25),  // Sunday
-                new DateTime(2022, 12, 4))   // Next Sunday
+                new DateTime(2022, 12, 4))   // Same Sunday
         };
     }
 }

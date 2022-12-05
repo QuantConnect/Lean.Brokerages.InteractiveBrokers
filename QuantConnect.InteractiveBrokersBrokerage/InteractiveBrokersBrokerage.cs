@@ -3919,12 +3919,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return;
             }
 
+            var utcNow = DateTime.UtcNow;
             // get the next weekly restart time counting from tomorrow in case today is a Sunday,
             // which will set the delay for today when it should be next Sunday instead
-            var restartDate = GetNextWeeklyRestartTimeUtc(DateTime.UtcNow.AddDays(1));
-            // we subtract _defaultRestartDelay because the restart will be scheduled with a delay of _defaultRestartDelay after
-            // the IBAutomater is stopped. This way the 2FA confirmation is requested as close to the configured time as possible.
-            var delay = restartDate - DateTime.UtcNow - _defaultRestartDelay;
+            var restartDate = GetNextWeeklyRestartTimeUtc(utcNow.AddDays(1));
+            // we subtract _defaultRestartDelay to avoid potential race conditions with the IBAutomater.Exited event handler and
+            // to ensure the 2FA confirmation is requested as close to the configured time as possible.
+            var delay = restartDate - utcNow - _defaultRestartDelay;
 
             Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): scheduled weekly restart to {restartDate} (in {delay})");
 
@@ -4022,15 +4023,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // during weekends wait until one hour before FX market open before restarting IBAutomater
              return _ibAutomater.IsWithinWeekendServerResetTimes()
                 ? GetNextWeekendReconnectionTimeUtc() - DateTime.UtcNow
-                : TimeSpan.FromMinutes(5);
+                : _defaultRestartDelay;
         }
 
         private TimeSpan GetWeeklyRestartDelay()
         {
+            var utcNow = DateTime.UtcNow;
             // during weekends (including the whole Sunday) we wait until the time configured by the user
-            if (_ibAutomater.IsWithinWeekendServerResetTimes() || DateTime.UtcNow.DayOfWeek == DayOfWeek.Sunday)
+            if (_ibAutomater.IsWithinWeekendServerResetTimes() || utcNow.DayOfWeek == DayOfWeek.Sunday)
             {
-                var delay = GetNextWeeklyRestartTimeUtc() - DateTime.UtcNow;
+                var delay = GetNextWeeklyRestartTimeUtc(utcNow) - utcNow;
 
                 // if the delay is negative, it means the restart time has already passed for today, so we set it for _defaultRestartDelay
                 if (delay > TimeSpan.Zero)
@@ -4071,7 +4073,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
         }
 
-        private static DateTime GetNextSundayFromDate(DateTime date)
+        public static DateTime GetNextSundayFromDate(DateTime date)
         {
             var daysUntilSunday = (DayOfWeek.Sunday - date.DayOfWeek + 7) % 7;
 
@@ -4094,19 +4096,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Gets the time (UTC) of the next IBAutomater weekly restart on the given time of day
         /// </summary>
-        public static DateTime ComputeNextWeeklyRestartTimeUtc(TimeSpan weeklyRestartUtcTimeOfDay, DateTime? from = null)
+        public static DateTime ComputeNextWeeklyRestartTimeUtc(TimeSpan weeklyRestartUtcTimeOfDay, DateTime currentDate)
         {
-            var nextDate = GetNextSundayFromDate((from ?? DateTime.UtcNow).Date);
+            var nextSunday = GetNextSundayFromDate(currentDate);
 
-            return nextDate.Add(weeklyRestartUtcTimeOfDay);
+            return nextSunday.Date.Add(weeklyRestartUtcTimeOfDay);
         }
 
         /// <summary>
         /// Gets the time (UTC) of the next IBAutomater weekly restart, including 2FA.
         /// </summary>
-        private DateTime GetNextWeeklyRestartTimeUtc(DateTime? from = null)
+        private DateTime GetNextWeeklyRestartTimeUtc(DateTime currentDate)
         {
-           return ComputeNextWeeklyRestartTimeUtc(_weeklyRestartUtcTime, from);
+           return ComputeNextWeeklyRestartTimeUtc(_weeklyRestartUtcTime, currentDate);
         }
 
         private void CheckIbAutomaterError(StartResult result, bool throwException = true)
