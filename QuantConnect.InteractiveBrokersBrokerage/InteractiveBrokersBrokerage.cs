@@ -142,23 +142,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             { Market.CME, "CME" },
             { Market.NYMEX, "NYMEX" },
-            { Market.COMEX, "NYMEX" },
-            { Market.CBOT, "ECBOT" },
+            { Market.COMEX, "COMEX" },
+            { Market.CBOT, "CBOT" },
             { Market.ICE, "NYBOT" },
             { Market.CFE, "CFE" },
             { Market.NYSELIFFE, "NYSELIFFE" }
-        };
-
-        // TODO: remove this once IB has finised remapping their future contracts
-        private readonly Dictionary<string, string> _specialFuturesExchanges = new Dictionary<string, string>
-        {
-            { "ZO", "CBOT" },
-            { "ZR", "CBOT" },
-            { "2YY", "CBOT" },
-            { "30Y", "CBOT" },
-            { "ALI", "COMEX" },
-            { "QI", "COMEX" },
-            { "QC", "COMEX" },
         };
 
         private readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
@@ -3755,11 +3743,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Futures options share the same market as the underlying Symbol
                 case SecurityType.FutureOption:
                 case SecurityType.Future:
-                    if (!string.IsNullOrEmpty(ticker) && _specialFuturesExchanges.TryGetValue(ticker, out var result))
-                    {
-                        return result;
-                    }
-                    if(_futuresExchanges.TryGetValue(market, out result))
+                    if(_futuresExchanges.TryGetValue(market, out var result))
                     {
                         return result;
                     }
