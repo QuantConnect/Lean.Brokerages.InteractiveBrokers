@@ -50,7 +50,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             { "ib-user-name", Config.Get("ib-user-name") },
             { "ib-password", Config.Get("ib-password") },
             { "ib-trading-mode", Config.Get("ib-trading-mode") },
-            { "ib-agent-description", Config.Get("ib-agent-description") }
+            { "ib-agent-description", Config.Get("ib-agent-description") },
+            { "ib-weekly-restart-utc-time", Config.Get("ib-weekly-restart-utc-time") }
         };
 
         /// <summary>
@@ -87,6 +88,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 loadExistingHoldings = Convert.ToBoolean(job.BrokerageData["load-existing-holdings"]);
             }
 
+            TimeSpan? weeklyRestartUtcTime = null;
+            if (job.BrokerageData.TryGetValue("ib-weekly-restart-utc-time", out var weeklyRestartUtcTimeStr) &&
+                !string.IsNullOrEmpty(weeklyRestartUtcTimeStr))
+            {
+                weeklyRestartUtcTime = TimeSpan.Parse(weeklyRestartUtcTimeStr);
+            }
+
             if (errors.Count != 0)
             {
                 // if we had errors then we can't create the instance
@@ -113,7 +121,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 password,
                 tradingMode,
                 agentDescription,
-                loadExistingHoldings);
+                loadExistingHoldings,
+                weeklyRestartUtcTime);
             Composer.Instance.AddPart<IDataQueueHandler>(ib);
 
             return ib;
