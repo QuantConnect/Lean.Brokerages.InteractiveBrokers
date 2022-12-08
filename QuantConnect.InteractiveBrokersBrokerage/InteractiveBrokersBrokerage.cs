@@ -3875,10 +3875,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                // We double the delay each time we try to restart the gateway within a 30 minutes to reduce the number of restarts.
-                // The multiplier is capped so we don't have delays that are too long.
-                var currentRestartCount = Interlocked.Increment(ref _gatewaySoftRestartCount);
-                var delay = GetRestartDelay() * Math.Max(8, Math.Pow(2, currentRestartCount - 1));
+                var delay = GetRestartDelay(Interlocked.Increment(ref _gatewaySoftRestartCount));
                 Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): start restart in: {delay}...");
 
 
@@ -3911,7 +3908,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             _ibAutomater.SoftRestart();
 
                             // Detect rare gateway restart timeouts that could leave the gateway in a stale state
-                            Task.Delay(_gatewayMaxExpectedRestartTime).ContinueWith(_ =>
+                            Task.Delay(_maxExpectedGatewayRestartTime).ContinueWith(_ =>
                             {
                                 if (_isDisposeCalled)
                                 {
@@ -3925,10 +3922,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 }
 
                                 // Restart timeout
-                                if (lastRestartDuration > _gatewayMaxExpectedRestartTime)
+                                if (lastRestartDuration > _maxExpectedGatewayRestartTime)
                                 {
                                     // The gateway should have restarted by now, if it didn't we will try to restart it again
-                                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): soft restart timed out after {_gatewayMaxExpectedRestartTime}. Triggering a new restart...");
+                                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): soft restart timed out after {_maxExpectedGatewayRestartTime}. Triggering a new restart...");
 
                                     if (_gatewaySoftRestartTimedOut)
                                     {
@@ -4074,12 +4071,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
         }
 
-        private TimeSpan GetRestartDelay()
+        private TimeSpan GetRestartDelay(int currentRestartCount)
         {
             // during weekends wait until one hour before FX market open before restarting IBAutomater
              return _ibAutomater.IsWithinWeekendServerResetTimes()
                 ? GetNextWeekendReconnectionTimeUtc() - DateTime.UtcNow
-                : _defaultRestartDelay;
+                // We double the delay each time we try to restart the gateway within a 30 minutes to reduce the number of restarts.
+                // The multiplier is capped so we don't have delays that are too long.
+                : _defaultRestartDelay * Math.Max(8, Math.Pow(2, Math.Max(0, currentRestartCount - 1));
         }
 
         private TimeSpan GetWeeklyRestartDelay()
@@ -4387,6 +4386,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static readonly TimeSpan _defaultWeeklyRestartUtcTime = GetNextWeekendReconnectionTimeUtc().TimeOfDay;
 
-        private static readonly TimeSpan _gatewayMaxExpectedRestartTime = TimeSpan.FromMinutes(10);
+        private static readonly TimeSpan _maxExpectedGatewayRestartTime = TimeSpan.FromMinutes(10);
     }
 }
