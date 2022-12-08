@@ -87,6 +87,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private CancellationTokenSource _gatewayRestartTokenSource;
         private int _gatewaySoftRestartCount;
+        private bool _gatewaySoftRestartTimedOut;
         private DateTime _lastSoftRestartedTime;
         private readonly object _lastSoftRestartedTimeLock = new object();
 
@@ -3922,14 +3923,29 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 {
                                     lastRestartDuration = DateTime.UtcNow - _lastSoftRestartedTime;
                                 }
+
+                                // Restart timeout
                                 if (lastRestartDuration > _gatewayMaxExpectedRestartTime)
                                 {
                                     // The gateway should have restarted by now, if it didn't we will try to restart it again
                                     Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): soft restart timed out after {_gatewayMaxExpectedRestartTime}. Triggering a new restart...");
+
+                                    if (_gatewaySoftRestartTimedOut)
+                                    {
+                                        // The restart timed out more than once in a row, let's send an error message
+                                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterRestartError", "Timeout restarting IB Gateway"));
+                                    }
+
+                                    _gatewaySoftRestartTimedOut = true;
                                     // Let's reset the restart count so the delay is not doubled for this restart
                                     Interlocked.Exchange(ref _gatewaySoftRestartCount, 0);
                                     StopGatewayRestartTask();
                                     StartGatewayRestartTask();
+                                }
+                                else
+                                {
+                                    // The gateway restarted successfully
+                                    _gatewaySoftRestartTimedOut = false;
                                 }
                             });
                         }
@@ -4371,6 +4387,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static readonly TimeSpan _defaultWeeklyRestartUtcTime = GetNextWeekendReconnectionTimeUtc().TimeOfDay;
 
-        private static readonly TimeSpan _gatewayMaxExpectedRestartTime = TimeSpan.FromMinutes(5);
+        private static readonly TimeSpan _gatewayMaxExpectedRestartTime = TimeSpan.FromMinutes(10);
     }
 }
