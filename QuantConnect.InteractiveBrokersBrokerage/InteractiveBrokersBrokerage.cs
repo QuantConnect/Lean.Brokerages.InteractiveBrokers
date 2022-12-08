@@ -86,6 +86,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly object _nextValidIdLocker = new object();
 
         private CancellationTokenSource _gatewayRestartTokenSource;
+        private int _gatewaySoftRestartCount;
 
         private int _port;
         private string _account;
@@ -3846,8 +3847,23 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                var delay = GetRestartDelay();
+                // We double the delay each time we try to restart the gateway within a 30 minutes to reduce the number of restarts
+                var currentRestartCount = Interlocked.Increment(ref _gatewaySoftRestartCount);
+                var delay = GetRestartDelay() * Math.Pow(2, currentRestartCount - 1);
                 Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): start restart in: {delay}...");
+
+                if (currentRestartCount == 1)
+                {
+                    Task.Delay(TimeSpan.FromMinutes(30)).ContinueWith(_ =>
+                    {
+                        if (_isDisposeCalled)
+                        {
+                            return;
+                        }
+
+                        Interlocked.Exchange(ref _gatewaySoftRestartCount, 0);
+                    });
+                }
 
                 // we take the lock to avoid it getting disposed while consumers are evaluating it
                 lock (_gatewayRestartTokenSource ?? new object())
