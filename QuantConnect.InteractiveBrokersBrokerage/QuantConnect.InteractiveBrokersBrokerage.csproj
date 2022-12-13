@@ -28,18 +28,18 @@
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
   </ItemGroup>
-	
+
   <ItemGroup>
 	  <PackageReference Include="QuantConnect.Brokerages" Version="2.5.*" />
-	  <PackageReference Include="QuantConnect.IBAutomater" Version="2.0.69">
-		<!-- 
+	  <PackageReference Include="QuantConnect.IBAutomater" Version="2.0.70">
+		<!--
             Content files of dependencies are excluded by default.
 			This allows content files to be available in project where nuget will be consumed.
         -->
         <PrivateAssets>analyzers;build</PrivateAssets>
       </PackageReference>
   </ItemGroup>
-	
+
   <ItemGroup>
 	<None Include="InteractiveBrokers\IB-symbol-map.json" Pack="True">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -56,5 +56,5 @@
 		<PackageCopyToOutput>true</PackageCopyToOutput>
 	</None>
   </ItemGroup>
-	
+
 </Project>
