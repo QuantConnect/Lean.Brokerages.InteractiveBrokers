@@ -136,6 +136,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ConcurrentDictionary<string, ContractDetails> _contractDetails = new ConcurrentDictionary<string, ContractDetails>();
 
         private InteractiveBrokersSymbolMapper _symbolMapper;
+        private readonly HashSet<string> _invalidContracts = new();
 
         // Prioritized list of exchanges used to find right futures contract
         private readonly Dictionary<string, string> _futuresExchanges = new Dictionary<string, string>
@@ -2061,7 +2062,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             catch (Exception exception)
             {
-                Log.Error($"InteractiveBrokersBrokerage.HandlePortfolioUpdates(): {exception}");
+                var contractStr = e.Contract?.ToString();
+                lock (_invalidContracts)
+                {
+                    // only log these exceptions once per contracts to avoid a lot of noise in the logs we get them many times
+                    if (string.IsNullOrEmpty(contractStr) || _invalidContracts.Add(contractStr))
+                    {
+                        Log.Error($"InteractiveBrokersBrokerage.HandlePortfolioUpdates(): {exception}");
+                    }
+                }
 
                 if (e.Position != 0)
                 {
