@@ -684,7 +684,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var attempt = 1;
             const int maxAttempts = 5;
 
-            var subscribedSymbolsCount = _subscribedSymbols.Skip(0).Count();
+            var subscribedSymbolsCount = _subscriptionManager.GetSubscribedSymbols().Count();
             if (subscribedSymbolsCount > 0)
             {
                 Log.Trace($"InteractiveBrokersBrokerage.Connect(): Data subscription count {subscribedSymbolsCount}, restoring data subscriptions is required");
@@ -867,17 +867,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             if (!_ibAutomater.IsWithinScheduledServerResetTimes() && IsConnected
                 // do not run heart beat if we are close to daily restarts
-                && DateTime.Now.TimeOfDay < _heartBeatTimeLimit)
+                && DateTime.Now.TimeOfDay < _heartBeatTimeLimit
+                // do not run heart beat if we are restarting
+                && !IsRestartInProgress())
             {
-                // we take the lock to avoid it getting disposed while we are evaluating it
-                lock(_gatewayRestartTokenSource ?? new object())
-                {
-                    if (_gatewayRestartTokenSource != null && !_gatewayRestartTokenSource.IsCancellationRequested)
-                    {
-                        // do not run heart beat if we are restarting
-                        return true;
-                    }
-                }
                 _currentTimeEvent.Reset();
                 // request current time to the server
                 _client.ClientSocket.reqCurrentTime();
@@ -1697,7 +1690,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             List<Symbol> subscribedSymbols;
             lock (_sync)
             {
-                subscribedSymbols = _subscribedSymbols.Keys.ToList();
+                subscribedSymbols = _subscriptionManager.GetSubscribedSymbols().ToList();
 
                 _subscribedSymbols.Clear();
                 _subscribedTickers.Clear();
@@ -2901,6 +2894,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="symbols">The symbols to be added keyed by SecurityType</param>
         private bool Subscribe(IEnumerable<Symbol> symbols)
         {
+            if (!CanHandleSubscriptionRequest(symbols, "subscribe"))
+            {
+                return true;
+            }
+
             try
             {
                 foreach (var symbol in symbols)
@@ -2968,12 +2966,30 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _aggregator.Remove(dataConfig);
         }
 
+        private bool CanHandleSubscriptionRequest(IEnumerable<Symbol> symbols, string message)
+        {
+            var result = !IsRestartInProgress() && IsConnected;
+            if (!result)
+            {
+                // skip while restarting and not connected, once restart has ended and we are connected
+                // we will restore data subscriptions asking the _subscriptionManager we want to avoid the race condition where
+                // we are subscribing mid restart and we send IB an invalid request Id
+                Log.Trace($"InteractiveBrokersBrokerage.CanHandleSubscription(): skip request for [{string.Join(",", symbols)}] {message}");
+            }
+            return result;
+        }
+
         /// <summary>
         /// Removes the specified symbols to the subscription
         /// </summary>
         /// <param name="symbols">The symbols to be removed keyed by SecurityType</param>
         private bool Unsubscribe(IEnumerable<Symbol> symbols)
         {
+            if (!CanHandleSubscriptionRequest(symbols, "unsubscribe"))
+            {
+                return true;
+            }
+
             try
             {
                 foreach (var symbol in symbols)
@@ -3833,10 +3849,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void StopGatewayRestartTask()
         {
-            if (_gatewayRestartTokenSource != null && !_gatewayRestartTokenSource.IsCancellationRequested)
+            if (IsRestartInProgress())
             {
                 _gatewayRestartTokenSource.Cancel();
                 Log.Trace($"InteractiveBrokersBrokerage.StopGatewayRestartTask(): cancelled");
+            }
+        }
+
+        private bool IsRestartInProgress()
+        {
+            // we take the lock to avoid it getting disposed while we are evaluating it
+            lock (_gatewayRestartTokenSource ?? new object())
+            {
+                // check if we are restarting
+                return _gatewayRestartTokenSource != null && !_gatewayRestartTokenSource.IsCancellationRequested;
             }
         }
 
@@ -3847,7 +3873,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             try
             {
-                if (_isDisposeCalled || _gatewayRestartTokenSource != null && !_gatewayRestartTokenSource.IsCancellationRequested)
+                if (_isDisposeCalled || IsRestartInProgress())
                 {
                     // if we are disposed or we already triggered the restart skip a new call
                     var message = _isDisposeCalled ? "we are disposed" : "restart task already scheduled";
