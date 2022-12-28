@@ -69,7 +69,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             {
                 GuaranteedComboRouting = true
             };
-            var group = new GroupOrderManager(legCount: orderType != OrderType.ComboLegLimit ? 3 : 2, quantity: 2);
+            var group = new GroupOrderManager(1, legCount: orderType != OrderType.ComboLegLimit ? 3 : 2, quantity: 2);
 
             var comboOrderUnderlying = BuildOrder(orderType, Symbols.SPY, 100, comboLimitPrice, group, algo.Transactions.GetIncrementOrderId(),
                 underlyingLimitPrice, orderProperties);
@@ -92,16 +92,19 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 orders.Add(comboOrderPut);
             }
 
-            brokerage.OrderStatusChanged += (_, orderEvent) =>
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
             {
-                events.Add(orderEvent);
+                events.AddRange(orderEvents);
 
                 foreach (var order in orders)
                 {
-                    if (orderEvent.OrderId == order.Id)
+                    foreach (var orderEvent in orderEvents)
                     {
-                        // update the order like the BTH would do
-                        order.Status = orderEvent.Status;
+                        if (orderEvent.OrderId == order.Id)
+                        {
+                            // update the order like the BTH would do
+                            order.Status = orderEvent.Status;
+                        }
                     }
                 }
 

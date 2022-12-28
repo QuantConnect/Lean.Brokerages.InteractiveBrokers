@@ -53,6 +53,7 @@ using Order = QuantConnect.Orders.Order;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using QuantConnect.Data.Auxiliary;
+using static QLNet.SobolBrownianGenerator;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -1238,7 +1239,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 exchange = Market.CBOE.ToUpperInvariant();
             }
 
-            var isComboOrder = orders.Count > 0;
+            var isComboOrder = order.GroupOrderManager != null;
             var contract = CreateContract(orders[0].Symbol, false, orders, exchange);
 
             int ibOrderId;
@@ -1667,18 +1668,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
                 else
                 {
-                    foreach (var order in orders)
+                    OnOrderEvents(orders.Where(order => order != null).Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
                     {
-                        if (order != null)
-                        {
-                            var orderEvent = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
-                            {
-                                Status = OrderStatus.Invalid,
-                                Message = message
-                            };
-                            OnOrderEvent(orderEvent);
-                        }
-                    }
+                        Status = OrderStatus.Invalid,
+                        Message = message
+                    }).ToList());
                 }
             }
 
@@ -1816,6 +1810,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
+                var orderEvents = new List<OrderEvent>(orders.Count);
                 foreach (var order in orders)
                 {
                     int id;
@@ -1837,14 +1832,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         }
                         else
                         {
-                            // fire the event
-                            OnOrderEvent(new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero, "Interactive Brokers Order Event")
+                            orderEvents.Add(new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero, "Interactive Brokers Order Event")
                             {
                                 Status = isUpdate ? OrderStatus.UpdateSubmitted : status
                             });
                         }
                     }
                 }
+
+                // fire the events
+                OnOrderEvents(orderEvents);
             }
             catch (Exception err)
             {
@@ -1905,6 +1902,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if(executionDetails.Contract.SecType == IB.SecurityType.Bag)
                 {
+                    Log.Trace("InteractiveBrokersBrokerage.HandleExecutionDetails(): executionDetails.Contract.SecType = IB.SecurityType.Bag");
                     return;
                 }
 
@@ -2017,42 +2015,80 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 !string.IsNullOrWhiteSpace(orderProperties.Account) && execution.AcctNumber == orderProperties.Account;
         }
 
+        private readonly ConcurrentDictionary<int, Tuple<Order, IB.ExecutionDetailsEventArgs, CommissionReport>> _pendingGroupOrdersForFilling = new();
+
+        private Order TryGetOrderForFilling(int orderId)
+        {
+            _pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters);
+            return fillingParameters?.Item1;
+        }
+        private void CacheOrderForFilling(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
+        {
+            _pendingGroupOrdersForFilling[order.Id] = Tuple.Create(order, executionDetails, commissionReport);
+        }
+
+        private void RemoveCachedOrdersForFilling(List<Order> orders)
+        {
+            for (var i = 0; i < orders.Count; i++)
+            {
+                _pendingGroupOrdersForFilling.TryRemove(orders[i].Id, out _);
+            }
+        }
+
         /// <summary>
         /// Emits an order fill (or partial fill) including the actual IB commission paid
         /// </summary>
         private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
         {
-            var absoluteQuantity = order.AbsoluteQuantity;
-            if (order is IGroupOrder groupedOrder)
+            if (!order.TryGetGroupOrders(TryGetOrderForFilling, out var orders))
             {
-                absoluteQuantity = order.AbsoluteQuantity * Math.Abs(groupedOrder.GroupOrderManager.Quantity);
-            }
-            var currentQuantityFilled = Convert.ToInt32(executionDetails.Execution.Shares);
-            var totalQuantityFilled = Convert.ToInt32(executionDetails.Execution.CumQty);
-            var remainingQuantity = Convert.ToInt32(absoluteQuantity - totalQuantityFilled);
-            var price = NormalizePriceToLean(executionDetails.Execution.Price, order.Symbol);
-            var orderFee = new OrderFee(new CashAmount(
-                Convert.ToDecimal(commissionReport.Commission),
-                commissionReport.Currency.ToUpperInvariant()));
-
-            // set order status based on remaining quantity
-            var status = remainingQuantity > 0 ? OrderStatus.PartiallyFilled : OrderStatus.Filled;
-
-            // mark sells as negative quantities
-            var fillQuantity = order.Direction == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
-            var orderEvent = new OrderEvent(order, DateTime.UtcNow, orderFee, "Interactive Brokers Order Fill Event")
-            {
-                Status = status,
-                FillPrice = price,
-                FillQuantity = fillQuantity
-            };
-            if (remainingQuantity != 0)
-            {
-                orderEvent.Message += " - " + remainingQuantity + " remaining";
+                CacheOrderForFilling(order, executionDetails, commissionReport);
+                // we won't continue until we have all the orders in the group ready for filling
+                return;
             }
 
-            // fire the order fill event
-            OnOrderEvent(orderEvent);
+            // let's remove the orders from the cache, we are emitting all the fill events now
+            RemoveCachedOrdersForFilling(orders);
+
+            Log.Trace($"InteractiveBrokersBrokerage.EmitOrderFill(): Filling {orders.Count} orders!!!!!!!!");
+
+            var fillEvents = new List<OrderEvent>(orders.Count);
+            for (var i = 0; i < orders.Count; i++)
+            {
+                var absoluteQuantity = order.AbsoluteQuantity;
+                if (order.GroupOrderManager != null)
+                {
+                    absoluteQuantity = order.AbsoluteQuantity * Math.Abs(order.GroupOrderManager.Quantity);
+                }
+                var currentQuantityFilled = Convert.ToInt32(executionDetails.Execution.Shares);
+                var totalQuantityFilled = Convert.ToInt32(executionDetails.Execution.CumQty);
+                var remainingQuantity = Convert.ToInt32(absoluteQuantity - totalQuantityFilled);
+                var price = NormalizePriceToLean(executionDetails.Execution.Price, order.Symbol);
+                var orderFee = new OrderFee(new CashAmount(
+                    Convert.ToDecimal(commissionReport.Commission),
+                    commissionReport.Currency.ToUpperInvariant()));
+
+                // set order status based on remaining quantity
+                var status = remainingQuantity > 0 ? OrderStatus.PartiallyFilled : OrderStatus.Filled;
+
+                // mark sells as negative quantities
+                var fillQuantity = order.Direction == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
+                var orderEvent = new OrderEvent(order, DateTime.UtcNow, orderFee, "Interactive Brokers Order Fill Event")
+                {
+                    Status = status,
+                    FillPrice = price,
+                    FillQuantity = fillQuantity
+                };
+                if (remainingQuantity != 0)
+                {
+                    orderEvent.Message += " - " + remainingQuantity + " remaining";
+                }
+
+                fillEvents.Add(orderEvent);
+            }
+
+            // fire the order fill events
+            OnOrderEvents(fillEvents);
         }
 
         /// <summary>
@@ -2112,11 +2148,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             decimal quantity;
 
             var order = orders[0];
-            if (orders.Count > 1)
+            if (order.GroupOrderManager != null)
             {
-                var groupOrder = order as IGroupOrder;
-                quantity = groupOrder.GroupOrderManager.Quantity;
-                direction = groupOrder.GroupOrderManager.Direction;
+                quantity = order.GroupOrderManager.Quantity;
+                direction = order.GroupOrderManager.Direction;
             }
             else
             {
@@ -2278,7 +2313,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             if (contract.SecType == IB.SecurityType.Bag)
             {
-                var group = new GroupOrderManager(contract.ComboLegs.Count, quantity);
+                var group = new GroupOrderManager(_algorithm.Transactions.GetIncrementGroupOrderManagerId(), contract.ComboLegs.Count, quantity);
 
                 var orderType = OrderType.ComboMarket;
                 if (ibOrder.LmtPrice != 0)
@@ -4342,16 +4377,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _pendingGroupOrders.TryGetValue(orderId, out var order);
             return order;
         }
-        private void RemoveCachedOrders(List<Order> orderIds)
-        {
-            for (var i = 0; i < orderIds.Count; i++)
-            {
-                _pendingGroupOrders.TryRemove(orderIds[i].Id, out _);
-            }
-        }
+
         private void CacheOrder(Order order)
         {
             _pendingGroupOrders[order.Id] = order;
+        }
+
+        private void RemoveCachedOrders(List<Order> orders)
+        {
+            for (var i = 0; i < orders.Count; i++)
+            {
+                _pendingGroupOrders.TryRemove(orders[i].Id, out _);
+            }
         }
 
         private void AddGuaranteedTag(InteractiveBrokersOrderProperties orderProperties, IBApi.Order ibOrder)
