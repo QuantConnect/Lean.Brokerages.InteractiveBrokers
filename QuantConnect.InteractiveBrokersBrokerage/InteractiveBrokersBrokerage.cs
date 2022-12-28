@@ -819,8 +819,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         }
                     }
 
-                    // enable logging at Warning level
-                    _client.ClientSocket.setServerLogLevel(3);
+                    // set logging level at SYSTEM least detail, avoid java io exceptions coming from IB
+                    _client.ClientSocket.setServerLogLevel(1);
 
                     break;
                 }
