@@ -3840,11 +3840,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterOutputDataReceived(): {e.Data}");
-
-            if (e.Data.Contains("java.io.IOException: write beyond end of stream"))
-            {
-                StartGatewayRestartTask();
-            }
         }
 
         private void StopGatewayRestartTask()
