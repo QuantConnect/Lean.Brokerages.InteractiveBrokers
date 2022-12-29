@@ -51,7 +51,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0)]
         [TestCase(OrderType.ComboLimit, 250, 0, 0, 0)] // limit price that will never fill
-        [TestCase(OrderType.ComboLegLimit, 0, 350, 10, -1)]
+        [TestCase(OrderType.ComboLegLimit, 0, 383.92, 7.6, -1)]
         public void SendComboOrder(OrderType orderType, decimal comboLimitPrice, decimal underlyingLimitPrice, decimal callLimitPrice, decimal putLimitPrice)
         {
             var algo = new AlgorithmStub();
@@ -67,17 +67,17 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var orderProperties = new InteractiveBrokersOrderProperties
             {
-                GuaranteedComboRouting = true
+                GuaranteedComboRouting = orderType == OrderType.ComboLimit
             };
             var group = new GroupOrderManager(1, legCount: orderType != OrderType.ComboLegLimit ? 3 : 2, quantity: 2);
 
-            var comboOrderUnderlying = BuildOrder(orderType, Symbols.SPY, 100, comboLimitPrice, group, algo.Transactions.GetIncrementOrderId(),
-                underlyingLimitPrice, orderProperties);
+            var comboOrderUnderlying = BuildOrder(orderType, Symbols.SPY, 100, comboLimitPrice, group,
+                underlyingLimitPrice, orderProperties, algo.Transactions);
 
             var callSymbol = Symbol.CreateOption(Symbols.SPY, Market.USA, OptionStyle.American, OptionRight.Call,
-                        380, new DateTime(2022, 11, 4)); //new DateTime(2022, 09, 28))
-            var comboOrderCall = BuildOrder(orderType, callSymbol, 1, comboLimitPrice, group, algo.Transactions.GetIncrementOrderId(),
-                callLimitPrice, orderProperties);
+                        377, new DateTime(2023, 1, 3)); //new DateTime(2022, 09, 28))
+            var comboOrderCall = BuildOrder(orderType, callSymbol, 1, comboLimitPrice, group,
+                callLimitPrice, orderProperties, algo.Transactions);
 
             using var manualResetEvent = new ManualResetEvent(false);
             var events = new List<OrderEvent>();
@@ -86,9 +86,9 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             if (orderType != OrderType.ComboLegLimit)
             {
                 var putSymbol = Symbol.CreateOption(Symbols.SPY, Market.USA, OptionStyle.American, OptionRight.Put,
-                            360, new DateTime(2022, 11, 4)); //new DateTime(2022, 09, 28))
-                var comboOrderPut = BuildOrder(orderType, putSymbol, 1, comboLimitPrice, group, algo.Transactions.GetIncrementOrderId(),
-                    putLimitPrice, orderProperties);
+                            377, new DateTime(2023, 1, 3)); //new DateTime(2022, 09, 28))
+                var comboOrderPut = BuildOrder(orderType, putSymbol, 1, comboLimitPrice, group,
+                    putLimitPrice, orderProperties, algo.Transactions);
                 orders.Add(comboOrderPut);
             }
 
@@ -129,25 +129,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
             else
             {
-                Assert.AreEqual(9, events.Count);
+                Assert.AreEqual(6, events.Count);
                 Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Submitted));
-                Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.PartiallyFilled));
                 Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Filled));
             }
-        }
-
-        private Order BuildOrder(OrderType orderType, Symbol symbol, decimal quantity, decimal comboLimitPrice,
-            GroupOrderManager group, int id, decimal legLimitPrice, IOrderProperties orderProperties)
-        {
-            var limitPrice = comboLimitPrice;
-            if (legLimitPrice != 0)
-            {
-                limitPrice = legLimitPrice;
-            }
-            var request = new SubmitOrderRequest(orderType, symbol.SecurityType, symbol, quantity, 0,
-                limitPrice, 0, DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
-            request.SetOrderId(id);
-            return Order.CreateOrder(request);
         }
 
         [Test(Description = "Requires an existing IB connection with the same user credentials.")]
@@ -391,6 +376,20 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             brokerage.Connect();
 
             return brokerage;
+        }
+
+        private Order BuildOrder(OrderType orderType, Symbol symbol, decimal quantity, decimal comboLimitPrice,
+            GroupOrderManager group, decimal legLimitPrice, IOrderProperties orderProperties, SecurityTransactionManager securityTransactionManager)
+        {
+            var limitPrice = comboLimitPrice;
+            if (legLimitPrice != 0)
+            {
+                limitPrice = legLimitPrice;
+            }
+            var request = new SubmitOrderRequest(orderType, symbol.SecurityType, symbol, quantity, 0,
+                limitPrice, 0, DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
+            securityTransactionManager.SetOrderId(request);
+            return Order.CreateOrder(request);
         }
     }
 }

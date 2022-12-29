@@ -1841,7 +1841,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
 
                 // fire the events
-                OnOrderEvents(orderEvents);
+                if (orderEvents.Count > 0)
+                {
+                    OnOrderEvents(orderEvents);
+                }
             }
             catch (Exception err)
             {
@@ -2024,7 +2027,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
         private void CacheOrderForFilling(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
         {
-            _pendingGroupOrdersForFilling[order.Id] = Tuple.Create(order, executionDetails, commissionReport);
+            _pendingGroupOrdersForFilling.TryAdd(order.Id, Tuple.Create(order, executionDetails, commissionReport));
         }
 
         private void RemoveCachedOrdersForFilling(List<Order> orders)
@@ -2040,40 +2043,45 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
         {
+            // we will cache the order either way, we will need it to be in the pending orders collection
+            CacheOrderForFilling(order, executionDetails, commissionReport);
+
             if (!order.TryGetGroupOrders(TryGetOrderForFilling, out var orders))
             {
-                CacheOrderForFilling(order, executionDetails, commissionReport);
                 // we won't continue until we have all the orders in the group ready for filling
                 return;
             }
 
-            // let's remove the orders from the cache, we are emitting all the fill events now
-            RemoveCachedOrdersForFilling(orders);
 
             Log.Trace($"InteractiveBrokersBrokerage.EmitOrderFill(): Filling {orders.Count} orders!!!!!!!!");
 
             var fillEvents = new List<OrderEvent>(orders.Count);
             for (var i = 0; i < orders.Count; i++)
             {
-                var absoluteQuantity = order.AbsoluteQuantity;
-                if (order.GroupOrderManager != null)
+                var targetOrder = orders[i];
+                var fillDetails = _pendingGroupOrdersForFilling[targetOrder.Id];
+                var targetOrderExecutionDetails = fillDetails.Item2;
+                var targetOrderCommissionReport = fillDetails.Item3;
+
+                var absoluteQuantity = targetOrder.AbsoluteQuantity;
+                if (targetOrder.GroupOrderManager != null)
                 {
-                    absoluteQuantity = order.AbsoluteQuantity * Math.Abs(order.GroupOrderManager.Quantity);
+                    absoluteQuantity = targetOrder.AbsoluteQuantity * Math.Abs(targetOrder.GroupOrderManager.Quantity);
                 }
-                var currentQuantityFilled = Convert.ToInt32(executionDetails.Execution.Shares);
-                var totalQuantityFilled = Convert.ToInt32(executionDetails.Execution.CumQty);
+                var currentQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.Shares);
+                var totalQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.CumQty);
                 var remainingQuantity = Convert.ToInt32(absoluteQuantity - totalQuantityFilled);
-                var price = NormalizePriceToLean(executionDetails.Execution.Price, order.Symbol);
+                var price = NormalizePriceToLean(targetOrderExecutionDetails.Execution.Price, targetOrder.Symbol);
                 var orderFee = new OrderFee(new CashAmount(
-                    Convert.ToDecimal(commissionReport.Commission),
-                    commissionReport.Currency.ToUpperInvariant()));
+                    Convert.ToDecimal(targetOrderCommissionReport.Commission),
+                    targetOrderCommissionReport.Currency.ToUpperInvariant()));
 
                 // set order status based on remaining quantity
                 var status = remainingQuantity > 0 ? OrderStatus.PartiallyFilled : OrderStatus.Filled;
 
                 // mark sells as negative quantities
-                var fillQuantity = order.Direction == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
-                var orderEvent = new OrderEvent(order, DateTime.UtcNow, orderFee, "Interactive Brokers Order Fill Event")
+                var fillQuantity = targetOrder.Direction == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
+                var orderEvent = new OrderEvent(targetOrder, DateTime.UtcNow, orderFee, "Interactive Brokers Order Fill Event")
                 {
                     Status = status,
                     FillPrice = price,
@@ -2089,6 +2097,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // fire the order fill events
             OnOrderEvents(fillEvents);
+
+            // let's remove the orders from the cache, we are emitting all the fill events now
+            RemoveCachedOrdersForFilling(orders);
         }
 
         /// <summary>
