@@ -124,7 +124,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ConcurrentDictionary<int, ManualResetEventSlim> _pendingOrderResponse = new();
 
         // tracks the pending orders in the group before emitting the fill events
-        private readonly ConcurrentDictionary<int, Tuple<Order, IB.ExecutionDetailsEventArgs, CommissionReport>> _pendingGroupOrdersForFilling = new();
+        private readonly ConcurrentDictionary<int, PendingFillingEventDetails> _pendingGroupOrdersForFilling = new();
+
+        private Thread _comboOrdersFillTimeoutMonitorThread;
+
+        // helps the combo orders fill timeout monitor thread track and emit pending fills
+        private readonly BlockingCollection<PendingFillingEventDetails> _pendingFillingEventDetails = new();
 
         // Cancellation tokens for the group orders fill timeout tasks for each group
         private readonly ConcurrentDictionary<long, CancellationTokenSource> _forceFillEventsCancellationTokens = new();
@@ -1084,6 +1089,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _isDisposeCalled = true;
 
             _heartBeatThread.StopSafely(TimeSpan.FromSeconds(10), _cancellationTokenSource);
+            _comboOrdersFillTimeoutMonitorThread.StopSafely(TimeSpan.FromSeconds(10), _cancellationTokenSource);
 
             if (_client != null)
             {
@@ -1222,6 +1228,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // initialize our heart beat thread
             RunHeartBeatThread();
+
+            // initialize the combo orders fill timeout monitor thread
+            RunComboOrdersFillTimeoutMonitorThread();
         }
 
         /// <summary>
@@ -2026,17 +2035,31 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 !string.IsNullOrWhiteSpace(orderProperties.Account) && execution.AcctNumber == orderProperties.Account;
         }
 
+        private class PendingFillingEventDetails
+        {
+            public Order Order { get; set; }
+            public IB.ExecutionDetailsEventArgs ExecutionDetails { get; set; }
+            public CommissionReport CommissionReport { get; set; }
+            public DateTime UtcTime { get; set;  }
+        }
+
         private Order TryGetOrderForFilling(int orderId)
         {
             _pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters);
-            return fillingParameters?.Item1;
+            return fillingParameters?.Order;
         }
         private void CacheOrderForFilling(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
         {
-            _pendingGroupOrdersForFilling.TryAdd(order.Id, Tuple.Create(order, executionDetails, commissionReport));
+            _pendingGroupOrdersForFilling.TryAdd(order.Id, new PendingFillingEventDetails
+            {
+                Order = order,
+                ExecutionDetails = executionDetails,
+                CommissionReport = commissionReport,
+                UtcTime = DateTime.UtcNow
+            });
         }
 
-        private List<Tuple<Order, IB.ExecutionDetailsEventArgs, CommissionReport>> RemoveCachedOrdersForFilling(List<Order> orders)
+        private List<PendingFillingEventDetails> RemoveCachedOrdersForFilling(List<Order> orders)
         {
             return orders
                 .Select(order =>
@@ -2045,6 +2068,45 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return details;
                 })
                 .ToList();
+        }
+
+        private void RunComboOrdersFillTimeoutMonitorThread()
+        {
+            _comboOrdersFillTimeoutMonitorThread = new Thread(() =>
+            {
+                Log.Trace("InteractiveBrokersBrokerage.RunComboOrdersFillTimeoutMonitorThread(): starting...");
+                try
+                {
+                    while (!_cancellationTokenSource.IsCancellationRequested)
+                    {
+                        var details = _pendingFillingEventDetails.Take();
+
+                        Thread.Sleep(details.UtcTime + _comboOrderFillTimeout - DateTime.UtcNow);
+
+                        EmitOrderFill(details.Order, details.ExecutionDetails, details.CommissionReport, forceFillEmission: true);
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // expected
+                }
+                catch (OperationCanceledException)
+                {
+                    // expected
+                }
+                catch (Exception e)
+                {
+                    Log.Error(e, "ComboOrdersFillTimeoutMonitor");
+                }
+
+                Log.Trace("InteractiveBrokersBrokerage.RunComboOrdersFillTimeoutMonitorThread(): ended");
+            })
+            {
+                IsBackground = true,
+                Name = "ComboOrdersFillTimeoutMonitorThread"
+            };
+
+            _comboOrdersFillTimeoutMonitorThread.Start();
         }
 
         /// <summary>
@@ -2056,6 +2118,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport, bool forceFillEmission = false)
         {
             List<Order> orders = null;
+            List<PendingFillingEventDetails> pendingOrdersFillDetails = null;
 
             if (!forceFillEmission)
             {
@@ -2064,63 +2127,43 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // if this is a combo order, we will try to wait for all orders to fill before emitting the events
                 if (!order.TryGetGroupOrders(TryGetOrderForFilling, out orders))
                 {
-                    // after the first order filled in the combo, we will wait a certain time for the others to emit the events.
-                    if (!_forceFillEventsCancellationTokens.TryGetValue(order.GroupOrderManager.Id, out var cancellationTokenSource))
+                    _pendingFillingEventDetails.Add(new PendingFillingEventDetails
                     {
-                        cancellationTokenSource = new CancellationTokenSource();
-                        if (_forceFillEventsCancellationTokens.TryAdd(order.GroupOrderManager.Id, cancellationTokenSource))
-                        {
-                            Task.Delay(_comboOrderFillTimeout, cancellationTokenSource.Token).ContinueWith(_ =>
-                            {
-                                if (!cancellationTokenSource.IsCancellationRequested)
-                                {
-                                    EmitOrderFill(order, executionDetails, commissionReport, true);
-                                }
-                            });
-                        }
-                    }
+                        Order = order,
+                        ExecutionDetails = executionDetails,
+                        CommissionReport = commissionReport,
+                        UtcTime = DateTime.UtcNow
+                    });
 
                     return;
                 }
 
-                // all orders are filled, let's cancel the task so it does not time out
-                if (_forceFillEventsCancellationTokens.TryRemove(order.GroupOrderManager.Id, out var tokenSource))
-                {
-                    tokenSource.Cancel();
-                }
+                pendingOrdersFillDetails = RemoveCachedOrdersForFilling(orders);
             }
             else
             {
-                // remove the token so other fills can emit the events when they come
-                if (_forceFillEventsCancellationTokens.TryRemove(order.GroupOrderManager.Id, out var tokenSource))
-                {
-                    tokenSource.Cancel();
-                }
-
                 // time out waiting for all orders in the combo to fill, let's  get the orders we have so far and emit the events for them
-                orders = _pendingGroupOrdersForFilling
-                    .Where(kvp => kvp.Value.Item1.GroupOrderManager.Id == order.GroupOrderManager.Id)
-                    .Select(kvp => kvp.Value.Item1)
+                pendingOrdersFillDetails = _pendingGroupOrdersForFilling
+                    .Where(kvp => kvp.Value.Order.GroupOrderManager.Id == order.GroupOrderManager.Id)
+                    .Select(kvp => kvp.Value)
                     .ToList();
+                RemoveCachedOrdersForFilling(pendingOrdersFillDetails.Select(x => x.Order).ToList());
             }
 
-            var fillEvents = new List<OrderEvent>(orders.Count);
+            var fillEvents = new List<OrderEvent>(pendingOrdersFillDetails.Count);
 
-            // let's remove the orders from the cache, we are emitting the fill events now
-            var pendingOrders = RemoveCachedOrdersForFilling(orders);
-
-            for (var i = 0; i < orders.Count; i++)
+            for (var i = 0; i < pendingOrdersFillDetails.Count; i++)
             {
-                var targetOrder = orders[i];
-                var fillDetails = pendingOrders[i];
+                var fillDetails = pendingOrdersFillDetails[i];
                 if (fillDetails == null)
                 {
                     // the event for this order has already been emitted
                     continue;
                 }
 
-                var targetOrderExecutionDetails = fillDetails.Item2;
-                var targetOrderCommissionReport = fillDetails.Item3;
+                var targetOrder = fillDetails.Order;
+                var targetOrderExecutionDetails = fillDetails.ExecutionDetails;
+                var targetOrderCommissionReport = fillDetails.CommissionReport;
 
                 var absoluteQuantity = targetOrder.AbsoluteQuantity;
                 if (targetOrder.GroupOrderManager != null)
