@@ -53,7 +53,6 @@ using Order = QuantConnect.Orders.Order;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using QuantConnect.Data.Auxiliary;
-using static QLNet.SobolBrownianGenerator;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -67,6 +66,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// During market open there can be some extra delay and resource constraint so let's be generous
         /// </summary>
         private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 60 * 5));
+
+        /// <summary>
+        /// The maximum time to wait for all fills in a combo order before we start emitting the fill events
+        /// </summary>
+        private static readonly TimeSpan _comboOrderFillTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-combo-order-fill-timeout", 30));
 
         /// <summary>
         /// The default gateway version to use
@@ -118,6 +122,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         // tracks pending brokerage order responses. In some cases we've seen orders been placed and they never get through to IB
         private readonly ConcurrentDictionary<int, ManualResetEventSlim> _pendingOrderResponse = new();
+
+        // tracks the pending orders in the group before emitting the fill events
+        private readonly ConcurrentDictionary<int, Tuple<Order, IB.ExecutionDetailsEventArgs, CommissionReport>> _pendingGroupOrdersForFilling = new();
+
+        // Cancellation tokens for the group orders fill timeout tasks for each group
+        private readonly ConcurrentDictionary<long, CancellationTokenSource> _forceFillEventsCancellationTokens = new();
 
         // tracks requested order updates, so we can flag Submitted order events as updates
         private readonly ConcurrentDictionary<int, int> _orderUpdates = new ConcurrentDictionary<int, int>();
@@ -1239,7 +1249,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 exchange = Market.CBOE.ToUpperInvariant();
             }
 
-            var isComboOrder = order.GroupOrderManager != null;
             var contract = CreateContract(orders[0].Symbol, false, orders, exchange);
 
             int ibOrderId;
@@ -1905,7 +1914,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if(executionDetails.Contract.SecType == IB.SecurityType.Bag)
                 {
-                    Log.Trace("InteractiveBrokersBrokerage.HandleExecutionDetails(): executionDetails.Contract.SecType = IB.SecurityType.Bag");
                     return;
                 }
 
@@ -2018,8 +2026,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 !string.IsNullOrWhiteSpace(orderProperties.Account) && execution.AcctNumber == orderProperties.Account;
         }
 
-        private readonly ConcurrentDictionary<int, Tuple<Order, IB.ExecutionDetailsEventArgs, CommissionReport>> _pendingGroupOrdersForFilling = new();
-
         private Order TryGetOrderForFilling(int orderId)
         {
             _pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters);
@@ -2030,36 +2036,89 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _pendingGroupOrdersForFilling.TryAdd(order.Id, Tuple.Create(order, executionDetails, commissionReport));
         }
 
-        private void RemoveCachedOrdersForFilling(List<Order> orders)
+        private List<Tuple<Order, IB.ExecutionDetailsEventArgs, CommissionReport>> RemoveCachedOrdersForFilling(List<Order> orders)
         {
-            for (var i = 0; i < orders.Count; i++)
-            {
-                _pendingGroupOrdersForFilling.TryRemove(orders[i].Id, out _);
-            }
+            return orders
+                .Select(order =>
+                {
+                    _pendingGroupOrdersForFilling.TryRemove(order.Id, out var details);
+                    return details;
+                })
+                .ToList();
         }
 
         /// <summary>
-        /// Emits an order fill (or partial fill) including the actual IB commission paid
+        /// Emits an order fill (or partial fill) including the actual IB commission paid.
+        ///
+        /// For combo orders, it will wait until all the orders in the group have filled before emitting the events.
+        /// If all orders in the group are not filled within a certain time, it will emit the events for the orders that have filled so far.
         /// </summary>
-        private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
+        private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport, bool forceFillEmission = false)
         {
-            // we will cache the order either way, we will need it to be in the pending orders collection
-            CacheOrderForFilling(order, executionDetails, commissionReport);
+            List<Order> orders = null;
 
-            if (!order.TryGetGroupOrders(TryGetOrderForFilling, out var orders))
+            if (!forceFillEmission)
             {
-                // we won't continue until we have all the orders in the group ready for filling
-                return;
+                CacheOrderForFilling(order, executionDetails, commissionReport);
+
+                // if this is a combo order, we will try to wait for all orders to fill before emitting the events
+                if (!order.TryGetGroupOrders(TryGetOrderForFilling, out orders))
+                {
+                    // after the first order filled in the combo, we will wait a certain time for the others to emit the events.
+                    if (!_forceFillEventsCancellationTokens.TryGetValue(order.GroupOrderManager.Id, out var cancellationTokenSource))
+                    {
+                        cancellationTokenSource = new CancellationTokenSource();
+                        if (_forceFillEventsCancellationTokens.TryAdd(order.GroupOrderManager.Id, cancellationTokenSource))
+                        {
+                            Task.Delay(_comboOrderFillTimeout, cancellationTokenSource.Token).ContinueWith(_ =>
+                            {
+                                if (!cancellationTokenSource.IsCancellationRequested)
+                                {
+                                    EmitOrderFill(order, executionDetails, commissionReport, true);
+                                }
+                            });
+                        }
+                    }
+
+                    return;
+                }
+
+                // all orders are filled, let's cancel the task so it does not time out
+                if (_forceFillEventsCancellationTokens.TryRemove(order.GroupOrderManager.Id, out var tokenSource))
+                {
+                    tokenSource.Cancel();
+                }
+            }
+            else
+            {
+                // remove the token so other fills can emit the events when they come
+                if (_forceFillEventsCancellationTokens.TryRemove(order.GroupOrderManager.Id, out var tokenSource))
+                {
+                    tokenSource.Cancel();
+                }
+
+                // time out waiting for all orders in the combo to fill, let's  get the orders we have so far and emit the events for them
+                orders = _pendingGroupOrdersForFilling
+                    .Where(kvp => kvp.Value.Item1.GroupOrderManager.Id == order.GroupOrderManager.Id)
+                    .Select(kvp => kvp.Value.Item1)
+                    .ToList();
             }
 
-
-            Log.Trace($"InteractiveBrokersBrokerage.EmitOrderFill(): Filling {orders.Count} orders!!!!!!!!");
-
             var fillEvents = new List<OrderEvent>(orders.Count);
+
+            // let's remove the orders from the cache, we are emitting the fill events now
+            var pendingOrders = RemoveCachedOrdersForFilling(orders);
+
             for (var i = 0; i < orders.Count; i++)
             {
                 var targetOrder = orders[i];
-                var fillDetails = _pendingGroupOrdersForFilling[targetOrder.Id];
+                var fillDetails = pendingOrders[i];
+                if (fillDetails == null)
+                {
+                    // the event for this order has already been emitted
+                    continue;
+                }
+
                 var targetOrderExecutionDetails = fillDetails.Item2;
                 var targetOrderCommissionReport = fillDetails.Item3;
 
@@ -2097,9 +2156,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // fire the order fill events
             OnOrderEvents(fillEvents);
-
-            // let's remove the orders from the cache, we are emitting all the fill events now
-            RemoveCachedOrdersForFilling(orders);
         }
 
         /// <summary>
@@ -2567,6 +2623,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         ConId = legContractDetails.Contract.ConId,
                         Action = ConvertOrderDirection(order.Direction),
                         Ratio = (int)order.Quantity,
+                        Exchange = legContractDetails.Contract.Exchange
 
                         // TODO: order properties?
                         //Exchange
@@ -3712,13 +3769,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 yield break;
             }
 
-            // preparing the data for IB request
-            var contract = CreateContract(request.Symbol, includeExpired: true);
-            var resolution = ConvertResolution(request.Resolution);
-            var duration = ConvertResolutionToDuration(request.Resolution);
-            var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
-            var endTime = request.Resolution == Resolution.Daily ? request.EndTimeUtc.Date : request.EndTimeUtc;
-
             // See https://interactivebrokers.github.io/tws-api/historical_limitations.html
             // We need to check this before creating the contract below, which could trigger an IB request that would fail for expired contracts and kill the algorithm
             if (request.Symbol.ID.SecurityType.IsOption() || request.Symbol.ID.SecurityType == SecurityType.Future)
@@ -3773,7 +3823,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _symbolExchangeTimeZones.Add(request.Symbol, exchangeTimeZone);
             }
 
+            // preparing the data for IB request
+            var contract = CreateContract(request.Symbol, includeExpired: true);
+            var resolution = ConvertResolution(request.Resolution);
+            var duration = ConvertResolutionToDuration(request.Resolution);
+
+            var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
             var startTimeLocal = startTime.ConvertFromUtc(exchangeTimeZone);
+            var endTime = request.Resolution == Resolution.Daily ? request.EndTimeUtc.Date : request.EndTimeUtc;
             var endTimeLocal = request.EndTimeUtc.ConvertFromUtc(exchangeTimeZone);
 
             // See https://interactivebrokers.github.io/tws-api/historical_limitations.html

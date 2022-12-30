@@ -67,7 +67,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var orderProperties = new InteractiveBrokersOrderProperties
             {
-                GuaranteedComboRouting = orderType == OrderType.ComboLimit
+                GuaranteedComboRouting = orderType != OrderType.ComboLegLimit
             };
             var group = new GroupOrderManager(1, legCount: orderType != OrderType.ComboLegLimit ? 3 : 2, quantity: 2);
 
