@@ -129,7 +129,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private Thread _comboOrdersFillTimeoutMonitorThread;
 
         // helps the combo orders fill timeout monitor thread track and emit pending fills
-        private readonly BlockingCollection<PendingFillingEventDetails> _pendingFillingEventDetails = new();
+        private readonly ConcurrentQueue<PendingFillingEventDetails> _pendingFillingEventDetails = new();
+        private readonly ManualResetEvent _pendingFillingEventDetailsEvent = new(false);
 
         // Cancellation tokens for the group orders fill timeout tasks for each group
         private readonly ConcurrentDictionary<long, CancellationTokenSource> _forceFillEventsCancellationTokens = new();
@@ -2079,9 +2080,23 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     while (!_cancellationTokenSource.IsCancellationRequested)
                     {
-                        var details = _pendingFillingEventDetails.Take();
+                        if (WaitHandle.WaitAny(new [] { _pendingFillingEventDetailsEvent, _cancellationTokenSource.Token.WaitHandle }) != 0)
+                        {
+                            break;
+                        }
 
-                        Thread.Sleep(details.UtcTime + _comboOrderFillTimeout - DateTime.UtcNow);
+                        _pendingFillingEventDetailsEvent.Reset();
+
+                        if (!_pendingFillingEventDetails.TryDequeue(out var details))
+                        {
+                            continue;
+                        }
+
+                        if (_cancellationTokenSource.Token.WaitHandle.WaitOne(details.UtcTime + _comboOrderFillTimeout - DateTime.UtcNow))
+                        {
+                            // cancel signal
+                            break;
+                        }
 
                         EmitOrderFill(details.Order, details.ExecutionDetails, details.CommissionReport, forceFillEmission: true);
                     }
@@ -2127,13 +2142,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // if this is a combo order, we will try to wait for all orders to fill before emitting the events
                 if (!order.TryGetGroupOrders(TryGetOrderForFilling, out orders))
                 {
-                    _pendingFillingEventDetails.Add(new PendingFillingEventDetails
+                    _pendingFillingEventDetails.Enqueue(new PendingFillingEventDetails
                     {
                         Order = order,
                         ExecutionDetails = executionDetails,
                         CommissionReport = commissionReport,
                         UtcTime = DateTime.UtcNow
                     });
+                    _pendingFillingEventDetailsEvent.Set();
 
                     return;
                 }
