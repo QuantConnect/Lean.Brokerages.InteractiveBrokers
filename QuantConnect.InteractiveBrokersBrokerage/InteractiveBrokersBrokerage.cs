@@ -126,11 +126,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // tracks the pending orders in the group before emitting the fill events
         private readonly ConcurrentDictionary<int, PendingFillingEventDetails> _pendingGroupOrdersForFilling = new();
 
-        private Thread _comboOrdersFillTimeoutMonitorThread;
-
-        // helps the combo orders fill timeout monitor thread track and emit pending fills
-        private readonly ConcurrentQueue<PendingFillingEventDetails> _pendingFillingEventDetails = new();
-        private readonly ManualResetEvent _pendingFillingEventDetailsEvent = new(false);
+        private readonly ComboOrdersFillTimeoutMonitor _comboOrdersFillTimeoutMonitor = new();
 
         // Cancellation tokens for the group orders fill timeout tasks for each group
         private readonly ConcurrentDictionary<long, CancellationTokenSource> _forceFillEventsCancellationTokens = new();
@@ -1090,7 +1086,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _isDisposeCalled = true;
 
             _heartBeatThread.StopSafely(TimeSpan.FromSeconds(10), _cancellationTokenSource);
-            _comboOrdersFillTimeoutMonitorThread.StopSafely(TimeSpan.FromSeconds(10), _cancellationTokenSource);
+            _comboOrdersFillTimeoutMonitor.Stop();
 
             if (_client != null)
             {
@@ -1231,7 +1227,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             RunHeartBeatThread();
 
             // initialize the combo orders fill timeout monitor thread
-            RunComboOrdersFillTimeoutMonitorThread();
+            _comboOrdersFillTimeoutMonitor.Run(EmitOrderFill, _cancellationTokenSource);
         }
 
         /// <summary>
@@ -2044,11 +2040,100 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             public DateTime UtcTime { get; set;  }
         }
 
+        /// <summary>
+        /// Monitors combo orders fill events coming from IB in order to timeout waiting for every order in the group for emitting events back to Lean
+        /// </summary>
+        private class ComboOrdersFillTimeoutMonitor
+        {
+            private Thread _thread;
+
+            private readonly ConcurrentQueue<PendingFillingEventDetails> _pendingFillingEventDetails = new();
+
+            private readonly ManualResetEvent _pendingFillingEventDetailsEvent = new(false);
+
+            private CancellationTokenSource _cancellationTokenSource;
+
+            public void Run(Action<Order, IB.ExecutionDetailsEventArgs, CommissionReport, bool> callback, CancellationTokenSource cancellationTokenSource)
+            {
+                _cancellationTokenSource = cancellationTokenSource;
+                _thread = new Thread(() =>
+                {
+                    Log.Trace("ComboOrdersFillTimeoutMonitor.Run(): starting...");
+                    try
+                    {
+                        while (!_cancellationTokenSource.IsCancellationRequested)
+                        {
+                            if (!TryGetNextPendingFill(out var details))
+                            {
+                                if (WaitHandle.WaitAny(new[] { _pendingFillingEventDetailsEvent, _cancellationTokenSource.Token.WaitHandle }) != 0)
+                                {
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                if (_cancellationTokenSource.Token.WaitHandle.WaitOne(details.UtcTime + _comboOrderFillTimeout - DateTime.UtcNow))
+                                {
+                                    // cancel signal
+                                    break;
+                                }
+
+                                callback(details.Order, details.ExecutionDetails, details.CommissionReport, true);
+                            }
+                        }
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // expected
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // expected
+                    }
+                    catch (Exception e)
+                    {
+                        Log.Error(e, "ComboOrdersFillTimeoutMonitor");
+                    }
+
+                    Log.Trace("ComboOrdersFillTimeoutMonitor.Run(): ended");
+                })
+                {
+                    IsBackground = true,
+                    Name = "ComboOrdersFillTimeoutMonitorThread"
+                };
+
+                _thread.Start();
+            }
+
+            public void Stop()
+            {
+                _thread?.StopSafely(TimeSpan.FromSeconds(10), _cancellationTokenSource);
+            }
+
+            public void AddPendingFill(PendingFillingEventDetails details)
+            {
+                _pendingFillingEventDetails.Enqueue(details);
+                _pendingFillingEventDetailsEvent.Set();
+            }
+
+            private bool TryGetNextPendingFill(out PendingFillingEventDetails details)
+            {
+                if (!_pendingFillingEventDetails.TryDequeue(out details))
+                {
+                    return false;
+                }
+
+                _pendingFillingEventDetailsEvent.Reset();
+                return true;
+            }
+        }
+
         private Order TryGetOrderForFilling(int orderId)
         {
             _pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters);
             return fillingParameters?.Order;
         }
+
         private void CacheOrderForFilling(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
         {
             _pendingGroupOrdersForFilling.TryAdd(order.Id, new PendingFillingEventDetails
@@ -2071,59 +2156,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 .ToList();
         }
 
-        private void RunComboOrdersFillTimeoutMonitorThread()
-        {
-            _comboOrdersFillTimeoutMonitorThread = new Thread(() =>
-            {
-                Log.Trace("InteractiveBrokersBrokerage.RunComboOrdersFillTimeoutMonitorThread(): starting...");
-                try
-                {
-                    while (!_cancellationTokenSource.IsCancellationRequested)
-                    {
-                        if (WaitHandle.WaitAny(new [] { _pendingFillingEventDetailsEvent, _cancellationTokenSource.Token.WaitHandle }) != 0)
-                        {
-                            break;
-                        }
-
-                        _pendingFillingEventDetailsEvent.Reset();
-
-                        if (!_pendingFillingEventDetails.TryDequeue(out var details))
-                        {
-                            continue;
-                        }
-
-                        if (_cancellationTokenSource.Token.WaitHandle.WaitOne(details.UtcTime + _comboOrderFillTimeout - DateTime.UtcNow))
-                        {
-                            // cancel signal
-                            break;
-                        }
-
-                        EmitOrderFill(details.Order, details.ExecutionDetails, details.CommissionReport, forceFillEmission: true);
-                    }
-                }
-                catch (ObjectDisposedException)
-                {
-                    // expected
-                }
-                catch (OperationCanceledException)
-                {
-                    // expected
-                }
-                catch (Exception e)
-                {
-                    Log.Error(e, "ComboOrdersFillTimeoutMonitor");
-                }
-
-                Log.Trace("InteractiveBrokersBrokerage.RunComboOrdersFillTimeoutMonitorThread(): ended");
-            })
-            {
-                IsBackground = true,
-                Name = "ComboOrdersFillTimeoutMonitorThread"
-            };
-
-            _comboOrdersFillTimeoutMonitorThread.Start();
-        }
-
         /// <summary>
         /// Emits an order fill (or partial fill) including the actual IB commission paid.
         ///
@@ -2142,14 +2174,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // if this is a combo order, we will try to wait for all orders to fill before emitting the events
                 if (!order.TryGetGroupOrders(TryGetOrderForFilling, out orders))
                 {
-                    _pendingFillingEventDetails.Enqueue(new PendingFillingEventDetails
+                    _comboOrdersFillTimeoutMonitor.AddPendingFill(new PendingFillingEventDetails
                     {
                         Order = order,
                         ExecutionDetails = executionDetails,
                         CommissionReport = commissionReport,
                         UtcTime = DateTime.UtcNow
                     });
-                    _pendingFillingEventDetailsEvent.Set();
 
                     return;
                 }
