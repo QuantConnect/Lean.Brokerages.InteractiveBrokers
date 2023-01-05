@@ -26,29 +26,26 @@ using QuantConnect.Configuration;
 using QuantConnect.Orders;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 using Order = QuantConnect.Orders.Order;
-using QuantConnect.Logging;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
     [TestFixture]
     public class ComboOrdersFillTimeoutMonitorTests
     {
-        private static ComboOrdersFillTimeoutMonitor _monitor;
-
-        private static int _callbackCallsCount;
-
-        private static int _enqueuedItemsCount;
-
-        private static ConcurrentBag<Tuple<DateTime, DateTime>> _monitorCallbackCallTimes;
-
-        private static AutoResetEvent _signalStopEvent = new(false);
+        private TimeSpan _timeout;
+        private ComboOrdersFillTimeoutMonitor _monitor;
+        private int _callbackCallsCount;
+        private int _enqueuedItemsCount;
+        private ConcurrentBag<Tuple<DateTime, DateTime>> _monitorCallbackCallTimes;
+        private AutoResetEvent _signalStopEvent = new(false);
+        private ITimeProvider _timeProvider;
 
         [SetUp]
         public void SetUp()
         {
-            Config.Set("ib-combo-order-fill-timeout", 1);
-
-            _monitor = new ComboOrdersFillTimeoutMonitor();
+            _timeout = TimeSpan.FromSeconds(1);
+            _timeProvider = RealTimeProvider.Instance;
+            _monitor = new ComboOrdersFillTimeoutMonitor(_timeProvider, _timeout);
             _callbackCallsCount = 0;
             _enqueuedItemsCount = 0;
             _monitorCallbackCallTimes = new ();
@@ -66,13 +63,14 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [TestCase(0)]
         public void DequeuesAtTheRightTimes(double factor)
         {
-            var cancellationTokenSource = new CancellationTokenSource();
-            _monitor.Run(MonitorCallback, cancellationTokenSource);
+            _monitor.TimeoutEvent += _monitor_TimeoutEvent;
+            _monitor.Start();
 
             EnqueueCallbackCall(factor);
 
             _signalStopEvent.WaitOne();
             _monitor.Stop();
+            _monitor.TimeoutEvent -= _monitor_TimeoutEvent;
 
             Assert.AreEqual(3, _callbackCallsCount);
             foreach (var callTimes in _monitorCallbackCallTimes)
@@ -82,26 +80,23 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
-        private static void MonitorCallback(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commisionReport,
-            bool forceFillEmission)
+        private void _monitor_TimeoutEvent(object sender, PendingFillEvent e)
         {
-            _monitorCallbackCallTimes.Add(Tuple.Create(DateTime.UtcNow - _timeout, order.Time));
+            _monitorCallbackCallTimes.Add(Tuple.Create(DateTime.UtcNow - _timeout, e.Order.Time));
             if (Interlocked.Increment(ref _callbackCallsCount) == 3)
             {
                 _signalStopEvent.Set();
             }
         }
 
-        private static void EnqueueCallbackCall(double factor)
+        private void EnqueueCallbackCall(double factor)
         {
             var now = DateTime.UtcNow;
-            _monitor.AddPendingFill(new PendingFillingEventDetails()
-            {
-                Order = Order.CreateOrder(new SubmitOrderRequest(OrderType.ComboMarket, SecurityType.Option, Symbols.SPY, 1, 0, 0, now, "")),
-                ExecutionDetails = new IB.ExecutionDetailsEventArgs(1, new Contract(), new Execution()),
-                CommissionReport = new CommissionReport(),
-                UtcTime = now
-            });
+            _monitor.AddPendingFill(
+                Order.CreateOrder(new SubmitOrderRequest(OrderType.ComboMarket, SecurityType.Option, Symbols.SPY, 1, 0, 0, now, "")),
+                new IB.ExecutionDetailsEventArgs(1, new Contract(), new Execution()),
+                new CommissionReport()
+            );
 
             Thread.Sleep(_timeout * factor);
 
@@ -112,7 +107,5 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             EnqueueCallbackCall(factor);
         }
-
-        private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(Config.GetInt("ib-combo-order-fill-timeout"));
     }
 }

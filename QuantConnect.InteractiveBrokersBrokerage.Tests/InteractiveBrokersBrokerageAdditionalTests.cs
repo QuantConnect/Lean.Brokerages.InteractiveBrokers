@@ -51,11 +51,14 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0)]
         [TestCase(OrderType.ComboLimit, 250, 0, 0, 0)] // limit price that will never fill
-        [TestCase(OrderType.ComboLegLimit, 0, 383.92, 7.6, -1)]
+
+        [TestCase(OrderType.ComboLegLimit, 0, 350, 1, -1)]
         public void SendComboOrder(OrderType orderType, decimal comboLimitPrice, decimal underlyingLimitPrice, decimal callLimitPrice, decimal putLimitPrice)
         {
             var algo = new AlgorithmStub();
             var orderProvider = new OrderProvider();
+            // wait for the previous run to finish, avoid any race condition
+            Thread.Sleep(2000);
             using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio, new AggregationManager(), TestGlobals.MapFileProvider);
             brokerage.Connect();
 
@@ -65,17 +68,14 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 brokerage.CancelOrder(order);
             }
 
-            var orderProperties = new InteractiveBrokersOrderProperties
-            {
-                GuaranteedComboRouting = orderType != OrderType.ComboLegLimit
-            };
+            var orderProperties = new InteractiveBrokersOrderProperties();
             var group = new GroupOrderManager(1, legCount: orderType != OrderType.ComboLegLimit ? 3 : 2, quantity: 2);
 
             var comboOrderUnderlying = BuildOrder(orderType, Symbols.SPY, 100, comboLimitPrice, group,
                 underlyingLimitPrice, orderProperties, algo.Transactions);
 
             var callSymbol = Symbol.CreateOption(Symbols.SPY, Market.USA, OptionStyle.American, OptionRight.Call,
-                        377, new DateTime(2023, 1, 3)); //new DateTime(2022, 09, 28))
+                        377, new DateTime(2023, 1, 6));
             var comboOrderCall = BuildOrder(orderType, callSymbol, 1, comboLimitPrice, group,
                 callLimitPrice, orderProperties, algo.Transactions);
 
@@ -86,7 +86,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             if (orderType != OrderType.ComboLegLimit)
             {
                 var putSymbol = Symbol.CreateOption(Symbols.SPY, Market.USA, OptionStyle.American, OptionRight.Put,
-                            377, new DateTime(2023, 1, 3)); //new DateTime(2022, 09, 28))
+                            377, new DateTime(2023, 1, 6));
                 var comboOrderPut = BuildOrder(orderType, putSymbol, 1, comboLimitPrice, group,
                     putLimitPrice, orderProperties, algo.Transactions);
                 orders.Add(comboOrderPut);
@@ -108,7 +108,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                     }
                 }
 
-                if (orders.All(o => o.Status.IsClosed()) || orderType == OrderType.ComboLimit && orders.All(o => o.Status == OrderStatus.Submitted))
+                if (orders.All(o => o.Status.IsClosed()) || (orderType == OrderType.ComboLimit || orderType == OrderType.ComboLegLimit) && orders.All(o => o.Status == OrderStatus.Submitted))
                 {
                     manualResetEvent.Set();
                 }
@@ -121,15 +121,15 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 var response = brokerage.PlaceOrder(order);
             }
 
-            Assert.IsTrue(manualResetEvent.WaitOne(TimeSpan.FromSeconds(60)));
-            if (orderType == OrderType.ComboLimit)
+            Assert.IsTrue(manualResetEvent.WaitOne(TimeSpan.FromSeconds(30)));
+            if (orderType == OrderType.ComboLimit || orderType == OrderType.ComboLegLimit)
             {
                 Assert.AreEqual(3, events.Count);
                 Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Submitted));
             }
             else
             {
-                Assert.AreEqual(6, events.Count);
+                Assert.AreEqual(9, events.Count);
                 Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Submitted));
                 Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Filled));
             }

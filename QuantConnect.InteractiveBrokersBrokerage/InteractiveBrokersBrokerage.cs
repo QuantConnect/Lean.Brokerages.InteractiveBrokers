@@ -68,6 +68,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 60 * 5));
 
         /// <summary>
+        /// The maximum time to wait for all fills in a combo order before we start emitting the fill events
+        /// </summary>
+        private static readonly TimeSpan _comboOrderFillTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-combo-order-fill-timeout", 30));
+
+        /// <summary>
         /// The default gateway version to use
         /// </summary>
         public static string DefaultVersion { get; } = "1020";
@@ -119,9 +124,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ConcurrentDictionary<int, ManualResetEventSlim> _pendingOrderResponse = new();
 
         // tracks the pending orders in the group before emitting the fill events
-        private readonly ConcurrentDictionary<int, PendingFillingEventDetails> _pendingGroupOrdersForFilling = new();
+        private readonly Dictionary<int, List<PendingFillEvent>> _pendingGroupOrdersForFilling = new();
 
-        private readonly ComboOrdersFillTimeoutMonitor _comboOrdersFillTimeoutMonitor = new();
+        private readonly ComboOrdersFillTimeoutMonitor _comboOrdersFillTimeoutMonitor = new(RealTimeProvider.Instance, _comboOrderFillTimeout);
 
         // tracks requested order updates, so we can flag Submitted order events as updates
         private readonly ConcurrentDictionary<int, int> _orderUpdates = new ConcurrentDictionary<int, int>();
@@ -1219,7 +1224,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             RunHeartBeatThread();
 
             // initialize the combo orders fill timeout monitor thread
-            _comboOrdersFillTimeoutMonitor.Run(EmitOrderFill, _cancellationTokenSource);
+            _comboOrdersFillTimeoutMonitor.TimeoutEvent += (object sender, PendingFillEvent e) =>
+            {
+                EmitOrderFill(e.Order, e.ExecutionDetails, e.CommissionReport, true);
+            };
+            _comboOrdersFillTimeoutMonitor.Start();
         }
 
         /// <summary>
@@ -1912,6 +1921,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if(executionDetails.Contract.SecType == IB.SecurityType.Bag)
                 {
+                    // for combo order we get an initial event but later we get a global event for each leg in the combo
                     return;
                 }
 
@@ -1974,6 +1984,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if (executionDetails.Contract.SecType == IB.SecurityType.Bag)
                 {
+                    // for combo order we get an initial event but later we get a global event for each leg in the combo
                     return;
                 }
 
@@ -2026,30 +2037,27 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private Order TryGetOrderForFilling(int orderId)
         {
-            _pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters);
-            return fillingParameters?.Order;
-        }
-
-        private void CacheOrderForFilling(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
-        {
-            _pendingGroupOrdersForFilling.TryAdd(order.Id, new PendingFillingEventDetails
+            if(_pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters))
             {
-                Order = order,
-                ExecutionDetails = executionDetails,
-                CommissionReport = commissionReport,
-                UtcTime = DateTime.UtcNow
-            });
+                return fillingParameters.First().Order;
+            }
+            return null;
         }
 
-        private List<PendingFillingEventDetails> RemoveCachedOrdersForFilling(List<Order> orders)
+        private List<PendingFillEvent> RemoveCachedOrdersForFilling(Order order)
         {
-            return orders
-                .Select(order =>
+            var pendingOrdersFillDetails = new List<PendingFillEvent>(order.GroupOrderManager.OrderIds.Count);
+
+            foreach (var ordersId in order.GroupOrderManager.OrderIds)
+            {
+                if (_pendingGroupOrdersForFilling.TryGetValue(ordersId, out var details))
                 {
-                    _pendingGroupOrdersForFilling.TryRemove(order.Id, out var details);
-                    return details;
-                })
-                .ToList();
+                    pendingOrdersFillDetails.AddRange(details);
+                    _pendingGroupOrdersForFilling.Remove(ordersId);
+                }
+            }
+
+            return pendingOrdersFillDetails;
         }
 
         /// <summary>
@@ -2060,37 +2068,27 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport, bool forceFillEmission = false)
         {
-            List<Order> orders = null;
-            List<PendingFillingEventDetails> pendingOrdersFillDetails = null;
+            List<PendingFillEvent> pendingOrdersFillDetails = null;
 
-            if (!forceFillEmission)
+            lock (_pendingGroupOrdersForFilling)
             {
-                CacheOrderForFilling(order, executionDetails, commissionReport);
-
-                // if this is a combo order, we will try to wait for all orders to fill before emitting the events
-                if (!order.TryGetGroupOrders(TryGetOrderForFilling, out orders))
+                if (!forceFillEmission)
                 {
-                    _comboOrdersFillTimeoutMonitor.AddPendingFill(new PendingFillingEventDetails
+                    if (!_pendingGroupOrdersForFilling.TryGetValue(order.Id, out var pendingFillsForOrder))
                     {
-                        Order = order,
-                        ExecutionDetails = executionDetails,
-                        CommissionReport = commissionReport,
-                        UtcTime = DateTime.UtcNow
-                    });
+                        _pendingGroupOrdersForFilling[order.Id] = pendingFillsForOrder = new();
+                    }
+                    pendingFillsForOrder.Add(new PendingFillEvent { Order = order, ExecutionDetails = executionDetails, CommissionReport = commissionReport });
 
-                    return;
+                    // if this is a combo order, we will try to wait for all orders to fill before emitting the events
+                    if (!order.TryGetGroupOrders(TryGetOrderForFilling, out _))
+                    {
+                        _comboOrdersFillTimeoutMonitor.AddPendingFill(order, executionDetails, commissionReport);
+                        return;
+                    }
                 }
 
-                pendingOrdersFillDetails = RemoveCachedOrdersForFilling(orders);
-            }
-            else
-            {
-                // time out waiting for all orders in the combo to fill, let's  get the orders we have so far and emit the events for them
-                pendingOrdersFillDetails = _pendingGroupOrdersForFilling
-                    .Where(kvp => kvp.Value.Order.GroupOrderManager.Id == order.GroupOrderManager.Id)
-                    .Select(kvp => kvp.Value)
-                    .ToList();
-                RemoveCachedOrdersForFilling(pendingOrdersFillDetails.Select(x => x.Order).ToList());
+                pendingOrdersFillDetails = RemoveCachedOrdersForFilling(order);
             }
 
             var fillEvents = new List<OrderEvent>(pendingOrdersFillDetails.Count);
@@ -2098,11 +2096,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             for (var i = 0; i < pendingOrdersFillDetails.Count; i++)
             {
                 var fillDetails = pendingOrdersFillDetails[i];
-                if (fillDetails == null)
-                {
-                    // the event for this order has already been emitted
-                    continue;
-                }
 
                 var targetOrder = fillDetails.Order;
                 var targetOrderExecutionDetails = fillDetails.ExecutionDetails;
@@ -2140,8 +2133,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 fillEvents.Add(orderEvent);
             }
 
-            // fire the order fill events
-            OnOrderEvents(fillEvents);
+            if (fillEvents.Count > 0)
+            {
+                // fire the order fill events
+                OnOrderEvents(fillEvents);
+            }
         }
 
         /// <summary>
@@ -2274,7 +2270,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (comboLegLimitOrder != null)
             {
                 // Combo per-leg prices are only supported for non-guaranteed smart combos with two legs
-                AddGuaranteedTag(orderProperties, ibOrder);
+                AddGuaranteedTag(ibOrder, true);
 
                 // comboLegLimitOrder inherits from LimitOrder so we process it's 'if' first
                 ibOrder.OrderComboLegs = new();
@@ -2310,13 +2306,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             else if(comboLimitOrder != null)
             {
-                AddGuaranteedTag(orderProperties, ibOrder);
+                AddGuaranteedTag(ibOrder, false);
                 var baseContract = CreateContract(order.Symbol, includeExpired: false);
                 ibOrder.LmtPrice = NormalizePriceToBrokerage(comboLimitOrder.GroupOrderManager.LimitPrice, baseContract, order.Symbol);
             }
             else if (comboMarketOrder != null)
             {
-                AddGuaranteedTag(orderProperties, ibOrder);
+                AddGuaranteedTag(ibOrder, false);
             }
 
             // add financial advisor properties
@@ -2366,6 +2362,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             if (contract.SecType == IB.SecurityType.Bag)
             {
+                // this is a combo order
                 var group = new GroupOrderManager(_algorithm.Transactions.GetIncrementGroupOrderManagerId(), contract.ComboLegs.Count, quantity);
 
                 var orderType = OrderType.ComboMarket;
@@ -2610,13 +2607,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         Action = ConvertOrderDirection(order.Direction),
                         Ratio = (int)order.Quantity,
                         Exchange = legContractDetails.Contract.Exchange
-
-                        // TODO: order properties?
-                        //Exchange
-                        //OpenClose
-                        //ExemptCode
-                        //ShortSaleSlot
-                        //DesignatedLocation
                     });
                 }
             }
@@ -4445,20 +4435,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
         }
 
-        private void AddGuaranteedTag(InteractiveBrokersOrderProperties orderProperties, IBApi.Order ibOrder)
+        private void AddGuaranteedTag(IBApi.Order ibOrder, bool nonGuaranteed)
         {
-            if (orderProperties != null && orderProperties.GuaranteedComboRouting.HasValue)
+            ibOrder.SmartComboRoutingParams = new List<TagValue>
             {
-                ibOrder.SmartComboRoutingParams = new List<TagValue>();
-                if (!orderProperties.GuaranteedComboRouting.Value)
-                {
-                    ibOrder.SmartComboRoutingParams.Add(new TagValue("NonGuaranteed", "1"));
-                }
-                else
-                {
-                    ibOrder.SmartComboRoutingParams.Add(new TagValue("NonGuaranteed", "0"));
-                }
-            }
+                new TagValue("NonGuaranteed", nonGuaranteed ? "1" : "0")
+            };
         }
 
         private readonly ConcurrentDictionary<Symbol, int> _subscribedSymbols = new ConcurrentDictionary<Symbol, int>();
