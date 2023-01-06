@@ -59,6 +59,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             _thread = new Thread(() =>
             {
+                var endOfThreadLog = () =>
+                {
+                    Log.Trace("ComboOrdersFillTimeoutMonitor.Start(): ended");
+                };
+
                 Log.Trace("ComboOrdersFillTimeoutMonitor.Start(): starting...");
                 try
                 {
@@ -77,12 +82,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         }
 
                         var wait = details.ExpirationTime - _timeProvider.GetUtcNow();
-                        if (!_cancellationTokenSource.IsCancellationRequested &&
-                            wait > TimeSpan.Zero &&
-                            _cancellationTokenSource.Token.WaitHandle.WaitOne(wait))
+                        while (!_cancellationTokenSource.IsCancellationRequested && wait > TimeSpan.Zero)
                         {
-                            // cancel signal
-                            break;
+                            if (_cancellationTokenSource.Token.WaitHandle.WaitOne(wait))
+                            {
+                                // cancel signal
+                                endOfThreadLog();
+                                return;
+                            }
+                            wait = details.ExpirationTime - _timeProvider.GetUtcNow();
                         }
 
                         TimeoutEvent?.Invoke(this, details);
@@ -101,7 +109,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Log.Error(e, "ComboOrdersFillTimeoutMonitor");
                 }
 
-                Log.Trace("ComboOrdersFillTimeoutMonitor.Start(): ended");
+                endOfThreadLog();
             })
             {
                 IsBackground = true,

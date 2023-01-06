@@ -26,6 +26,7 @@ using QuantConnect.Configuration;
 using QuantConnect.Orders;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 using Order = QuantConnect.Orders.Order;
+using QuantConnect.Lean.Engine.DataFeeds;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
@@ -38,13 +39,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         private int _enqueuedItemsCount;
         private ConcurrentBag<Tuple<DateTime, DateTime>> _monitorCallbackCallTimes;
         private AutoResetEvent _signalStopEvent = new(false);
-        private ITimeProvider _timeProvider;
+        private ManualTimeProvider _timeProvider;
 
         [SetUp]
         public void SetUp()
         {
             _timeout = TimeSpan.FromSeconds(1);
-            _timeProvider = RealTimeProvider.Instance;
+            _timeProvider = new(new DateTime(2023, 1, 6, 9, 30, 0));
             _monitor = new ComboOrdersFillTimeoutMonitor(_timeProvider, _timeout);
             _callbackCallsCount = 0;
             _enqueuedItemsCount = 0;
@@ -57,20 +58,70 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Config.Reset();
         }
 
-        [TestCase(1.5)]
-        [TestCase(0.5)]
-        [TestCase(1)]
-        [TestCase(0)]
-        public void DequeuesAtTheRightTimes(double factor)
+        [Test]
+        public void DequeuesAtTheRightTimesForSingleEvent()
         {
-            _monitor.TimeoutEvent += _monitor_TimeoutEvent;
+            _monitor.TimeoutEvent += TimeoutEventHandler;
             _monitor.Start();
 
-            EnqueueCallbackCall(factor);
+            _monitor.AddPendingFill(
+                Order.CreateOrder(new SubmitOrderRequest(OrderType.ComboMarket, SecurityType.Option, Symbols.SPY, 1, 0, 0, _timeProvider.GetUtcNow(), "")),
+                new IB.ExecutionDetailsEventArgs(1, new Contract(), new Execution()),
+                new CommissionReport()
+            );
 
-            _signalStopEvent.WaitOne();
+            Thread.Sleep(_timeout * 2);
+            Assert.AreEqual(0, _callbackCallsCount);
+
+            _timeProvider.Advance(_timeout);
+
+            Assert.IsTrue(_signalStopEvent.WaitOne(_timeout * 2));
+
             _monitor.Stop();
-            _monitor.TimeoutEvent -= _monitor_TimeoutEvent;
+            _monitor.TimeoutEvent -= TimeoutEventHandler;
+
+            Assert.AreEqual(1, _callbackCallsCount);
+            foreach (var callTimes in _monitorCallbackCallTimes)
+            {
+                var diff = (callTimes.Item2 - callTimes.Item1).Duration();
+                Assert.LessOrEqual(diff, TimeSpan.FromMilliseconds(150));
+            }
+        }
+
+        private void TimeoutEventHandler(object sender, PendingFillEvent e)
+        {
+            _monitorCallbackCallTimes.Add(Tuple.Create(_timeProvider.GetUtcNow() - _timeout, e.Order.Time));
+            Interlocked.Increment(ref _callbackCallsCount);
+            _signalStopEvent.Set();
+        }
+
+        [Test]
+        public void DequeuesAtTheRightTimesForMultipleEvents()
+        {
+            _monitor.TimeoutEvent += TimeoutEventHandlerMultipleFills;
+            _monitor.Start();
+
+            for (var i = 0; i < 3; i++)
+            {
+                _monitor.AddPendingFill(
+                    Order.CreateOrder(new SubmitOrderRequest(OrderType.ComboMarket, SecurityType.Option, Symbols.SPY, 1, 0, 0, _timeProvider.GetUtcNow(), "")),
+                    new IB.ExecutionDetailsEventArgs(1, new Contract(), new Execution()),
+                    new CommissionReport()
+                );
+
+                _timeProvider.Advance(_timeout / 4);
+            }
+
+            for (var i = 0; i < 3; i++)
+            {
+                Assert.AreEqual(i, _callbackCallsCount);
+                _timeProvider.Advance(_timeout / 4);
+                Assert.IsTrue(_signalStopEvent.WaitOne(_timeout * 2));
+                Assert.AreEqual(i + 1, _callbackCallsCount);
+            }
+
+            _monitor.Stop();
+            _monitor.TimeoutEvent -= TimeoutEventHandlerMultipleFills;
 
             Assert.AreEqual(3, _callbackCallsCount);
             foreach (var callTimes in _monitorCallbackCallTimes)
@@ -80,32 +131,11 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
-        private void _monitor_TimeoutEvent(object sender, PendingFillEvent e)
+        private void TimeoutEventHandlerMultipleFills(object sender, PendingFillEvent e)
         {
-            _monitorCallbackCallTimes.Add(Tuple.Create(DateTime.UtcNow - _timeout, e.Order.Time));
-            if (Interlocked.Increment(ref _callbackCallsCount) == 3)
-            {
-                _signalStopEvent.Set();
-            }
-        }
-
-        private void EnqueueCallbackCall(double factor)
-        {
-            var now = DateTime.UtcNow;
-            _monitor.AddPendingFill(
-                Order.CreateOrder(new SubmitOrderRequest(OrderType.ComboMarket, SecurityType.Option, Symbols.SPY, 1, 0, 0, now, "")),
-                new IB.ExecutionDetailsEventArgs(1, new Contract(), new Execution()),
-                new CommissionReport()
-            );
-
-            Thread.Sleep(_timeout * factor);
-
-            if (++_enqueuedItemsCount == 3)
-            {
-                return;
-            }
-
-            EnqueueCallbackCall(factor);
+            _monitorCallbackCallTimes.Add(Tuple.Create(_timeProvider.GetUtcNow() - _timeout, e.Order.Time));
+            Interlocked.Increment(ref _callbackCallsCount);
+            _signalStopEvent.Set();
         }
     }
 }
