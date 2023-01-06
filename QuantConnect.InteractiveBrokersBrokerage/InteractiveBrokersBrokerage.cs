@@ -2387,18 +2387,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         legLimitPrice = ibOrder.OrderComboLegs[i].Price;
                     }
-                    result.Add(ConvertOrder(ibOrder, orderType, comboLeg.Ratio * quantitySignLeg, legLimitPrice, contractDetails.Contract, group));
+                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType, comboLeg.Ratio * quantitySignLeg, legLimitPrice, contractDetails.Contract, group));
                 }
             }
             else
             {
-                result.Add(ConvertOrder(ibOrder, ConvertOrderType(ibOrder), quantity, ibOrder.LmtPrice, contract, null));
+                result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity, ibOrder.LmtPrice, contract, null));
             }
 
             return result;
         }
 
-        private Order ConvertOrder(IBApi.Order ibOrder, OrderType orderType, decimal quantity, double limitPrice, Contract contract, GroupOrderManager groupOrderManager)
+        private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity, double limitPrice, Contract contract, GroupOrderManager groupOrderManager)
         {
             // this function is called by GetOpenOrders which is mainly used by the setup handler to
             // initialize algorithm state.  So the only time we'll be executing this code is when the account
@@ -2440,7 +2440,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case OrderType.StopMarket:
                     order = new StopMarketOrder(mappedSymbol,
                         quantity,
-                        NormalizePriceToLean(ibOrder.AuxPrice, mappedSymbol),
+                        NormalizePriceToLean(auxPrice, mappedSymbol),
                         new DateTime()
                         );
                     break;
@@ -2448,7 +2448,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case OrderType.StopLimit:
                     order = new StopLimitOrder(mappedSymbol,
                         quantity,
-                        NormalizePriceToLean(ibOrder.AuxPrice, mappedSymbol),
+                        NormalizePriceToLean(auxPrice, mappedSymbol),
                         NormalizePriceToLean(limitPrice, mappedSymbol),
                         new DateTime()
                         );
@@ -2457,7 +2457,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case OrderType.LimitIfTouched:
                     order = new LimitIfTouchedOrder(mappedSymbol,
                         quantity,
-                        NormalizePriceToLean(ibOrder.AuxPrice, mappedSymbol),
+                        NormalizePriceToLean(auxPrice, mappedSymbol),
                         NormalizePriceToLean(limitPrice, mappedSymbol),
                         new DateTime()
                     );
@@ -2493,8 +2493,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     throw new InvalidEnumArgumentException("orderType", (int)orderType, typeof(OrderType));
             }
 
-            order.BrokerId.Add(ibOrder.OrderId.ToStringInvariant());
-            order.Properties.TimeInForce = ConvertTimeInForce(ibOrder.Tif, ibOrder.GoodTillDate);
+            order.BrokerId.Add(ibOrderId.ToStringInvariant());
+            order.Properties.TimeInForce = ConvertTimeInForce(timeInForce, goodTillDate);
 
             return order;
         }
@@ -2605,7 +2605,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         ConId = legContractDetails.Contract.ConId,
                         Action = ConvertOrderDirection(order.Direction),
-                        Ratio = (int)order.Quantity,
+                        // the ratio is absolute the action above specifies if we are selling or buying
+                        Ratio = Math.Abs((int)order.Quantity),
                         Exchange = legContractDetails.Contract.Exchange
                     });
                 }
