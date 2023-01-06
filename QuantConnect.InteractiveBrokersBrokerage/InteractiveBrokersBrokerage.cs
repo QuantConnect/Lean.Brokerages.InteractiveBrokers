@@ -68,6 +68,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 60 * 5));
 
         /// <summary>
+        /// The maximum time to wait for all fills in a combo order before we start emitting the fill events
+        /// </summary>
+        private static readonly TimeSpan _comboOrderFillTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-combo-order-fill-timeout", 30));
+
+        /// <summary>
         /// The default gateway version to use
         /// </summary>
         public static string DefaultVersion { get; } = "1020";
@@ -113,8 +118,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ManualResetEvent _accountHoldingsResetEvent = new ManualResetEvent(false);
         private Exception _accountHoldingsLastException;
 
+        private readonly ConcurrentDictionary<int, Order> _pendingGroupOrders = new();
+
         // tracks pending brokerage order responses. In some cases we've seen orders been placed and they never get through to IB
         private readonly ConcurrentDictionary<int, ManualResetEventSlim> _pendingOrderResponse = new();
+
+        // tracks the pending orders in the group before emitting the fill events
+        private readonly Dictionary<int, List<PendingFillEvent>> _pendingGroupOrdersForFilling = new();
+
+        private readonly ComboOrdersFillTimeoutMonitor _comboOrdersFillTimeoutMonitor = new(RealTimeProvider.Instance, _comboOrderFillTimeout);
 
         // tracks requested order updates, so we can flag Submitted order events as updates
         private readonly ConcurrentDictionary<int, int> _orderUpdates = new ConcurrentDictionary<int, int>();
@@ -539,7 +551,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // convert results to Lean Orders outside the eventhandler to avoid nesting requests, as conversion may request
             // contract details
-            return orders.Select(orderContract => ConvertOrder(orderContract.Order, orderContract.Contract)).ToList();
+            return orders.Select(orderContract => ConvertOrders(orderContract.Order, orderContract.Contract)).SelectMany(orders => orders).ToList();
         }
 
         /// <summary>
@@ -1071,6 +1083,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _isDisposeCalled = true;
 
             _heartBeatThread.StopSafely(TimeSpan.FromSeconds(10), _cancellationTokenSource);
+            _comboOrdersFillTimeoutMonitor.Stop();
 
             if (_client != null)
             {
@@ -1209,6 +1222,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // initialize our heart beat thread
             RunHeartBeatThread();
+
+            // initialize the combo orders fill timeout monitor thread
+            _comboOrdersFillTimeoutMonitor.TimeoutEvent += (object sender, PendingFillEvent e) =>
+            {
+                EmitOrderFill(e.Order, e.ExecutionDetails, e.CommissionReport, true);
+            };
+            _comboOrdersFillTimeoutMonitor.Start();
         }
 
         /// <summary>
@@ -1219,6 +1239,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="exchange">The exchange to send the order to, defaults to "Smart" to use IB's smart routing</param>
         private void IBPlaceOrder(Order order, bool needsNewId, string exchange = null)
         {
+            if (!order.TryGetGroupOrders(TryGetOrder, out var orders))
+            {
+                // some order of the group is missing but cache the new one
+                CacheOrder(order);
+                return;
+            }
+            RemoveCachedOrders(orders);
+
             // MOO/MOC require directed option orders.
             // We resolve non-equity markets in the `CreateContract` method.
             if (exchange == null &&
@@ -1228,14 +1256,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 exchange = Market.CBOE.ToUpperInvariant();
             }
 
-            var contract = CreateContract(order.Symbol, false, exchange);
+            var contract = CreateContract(orders[0].Symbol, false, orders, exchange);
 
             int ibOrderId;
             if (needsNewId)
             {
                 // the order ids are generated for us by the SecurityTransactionManaer
                 var id = GetNextId();
-                order.BrokerId.Add(id.ToStringInvariant());
+                foreach (var newOrder in orders)
+                {
+                    newOrder.BrokerId.Add(id.ToStringInvariant());
+                }
                 ibOrderId = id;
             }
             else if (order.BrokerId.Any())
@@ -1259,30 +1290,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             else
             {
-                var outsideRth = false;
-
-                if (order.Type == OrderType.Limit ||
-                    order.Type == OrderType.LimitIfTouched ||
-                    order.Type == OrderType.StopMarket ||
-                    order.Type == OrderType.StopLimit)
-                {
-                    var orderProperties = order.Properties as InteractiveBrokersOrderProperties;
-                    if (orderProperties != null)
-                    {
-                        outsideRth = orderProperties.OutsideRegularTradingHours;
-                    }
-                }
-
                 ManualResetEventSlim eventSlim = null;
-                if (order.Type != OrderType.MarketOnOpen)
+                if (order.Type != OrderType.MarketOnOpen && order.Type != OrderType.ComboLegLimit)
                 {
                     _pendingOrderResponse[ibOrderId] = eventSlim = new ManualResetEventSlim(false);
                 }
 
-                var ibOrder = ConvertOrder(order, contract, ibOrderId, outsideRth);
+                var ibOrder = ConvertOrder(orders, contract, ibOrderId);
                 _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
 
-                if (order.Type != OrderType.MarketOnOpen)
+                if (order.Type != OrderType.MarketOnOpen && order.Type != OrderType.ComboLegLimit)
                 {
                     if (!eventSlim.Wait(_responseTimeout))
                     {
@@ -1660,19 +1677,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Log.Trace($"InteractiveBrokersBrokerage.HandleError.InvalidateOrder(): IBOrderId: {requestId} ErrorCode: {message}");
 
                 // invalidate the order
-                var order = _orderProvider.GetOrderByBrokerageId(requestId);
-                if (order != null)
+                var orders = _orderProvider.GetOrdersByBrokerageId(requestId);
+                if (orders.IsNullOrEmpty())
                 {
-                    var orderEvent = new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
-                    {
-                        Status = OrderStatus.Invalid,
-                        Message = message
-                    };
-                    OnOrderEvent(orderEvent);
+                    Log.Error($"InteractiveBrokersBrokerage.HandleError.InvalidateOrder(): Unable to locate order with BrokerageID {requestId}");
                 }
                 else
                 {
-                    Log.Error($"InteractiveBrokersBrokerage.HandleError.InvalidateOrder(): Unable to locate order with BrokerageID {requestId}");
+                    OnOrderEvents(orders.Where(order => order != null).Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
+                    {
+                        Status = OrderStatus.Invalid,
+                        Message = message
+                    }).ToList());
                 }
             }
 
@@ -1795,8 +1811,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                var order = _orderProvider.GetOrderByBrokerageId(update.OrderId);
-                if (order == null)
+                var orders = _orderProvider.GetOrdersByBrokerageId(update.OrderId);
+                if (orders == null)
                 {
                     Log.Error("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): Unable to locate order with BrokerageID " + update.OrderId);
                     return;
@@ -1810,31 +1826,40 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                int id;
-                // if we get a Submitted status and we had placed an order update, this new event is flagged as an update
-                var isUpdate = status == OrderStatus.Submitted && _orderUpdates.TryRemove(order.Id, out id);
-
-                // IB likes to duplicate/triplicate some events, so we fire non-fill events only if status changed
-                if (status != order.Status || isUpdate)
+                var orderEvents = new List<OrderEvent>(orders.Count);
+                foreach (var order in orders)
                 {
-                    if (order.Status.IsClosed())
+                    int id;
+                    // if we get a Submitted status and we had placed an order update, this new event is flagged as an update
+                    var isUpdate = status == OrderStatus.Submitted && _orderUpdates.TryRemove(order.Id, out id);
+
+                    // IB likes to duplicate/triplicate some events, so we fire non-fill events only if status changed
+                    if (status != order.Status || isUpdate)
                     {
-                        // if the order is already in a closed state, we ignore the event
-                        Log.Trace("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): ignoring update in closed state - order.Status: " + order.Status + ", status: " + status);
-                    }
-                    else if (order.Status == OrderStatus.PartiallyFilled && (status == OrderStatus.New || status == OrderStatus.Submitted) && !isUpdate)
-                    {
-                        // if we receive a New or Submitted event when already partially filled, we ignore it
-                        Log.Trace("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): ignoring status " + status + " after partial fills");
-                    }
-                    else
-                    {
-                        // fire the event
-                        OnOrderEvent(new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero, "Interactive Brokers Order Event")
+                        if (order.Status.IsClosed())
                         {
-                            Status = isUpdate ? OrderStatus.UpdateSubmitted : status
-                        });
+                            // if the order is already in a closed state, we ignore the event
+                            Log.Trace("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): ignoring update in closed state - order.Status: " + order.Status + ", status: " + status);
+                        }
+                        else if (order.Status == OrderStatus.PartiallyFilled && (status == OrderStatus.New || status == OrderStatus.Submitted) && !isUpdate)
+                        {
+                            // if we receive a New or Submitted event when already partially filled, we ignore it
+                            Log.Trace("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): ignoring status " + status + " after partial fills");
+                        }
+                        else
+                        {
+                            orderEvents.Add(new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero, "Interactive Brokers Order Event")
+                            {
+                                Status = isUpdate ? OrderStatus.UpdateSubmitted : status
+                            });
+                        }
                     }
+                }
+
+                // fire the events
+                if (orderEvents.Count > 0)
+                {
+                    OnOrderEvents(orderEvents);
                 }
             }
             catch (Exception err)
@@ -1894,7 +1919,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                var order = _orderProvider.GetOrderByBrokerageId(executionDetails.Execution.OrderId);
+                if(executionDetails.Contract.SecType == IB.SecurityType.Bag)
+                {
+                    // for combo order we get an initial event but later we get a global event for each leg in the combo
+                    return;
+                }
+
+                var mappedSymbol = MapSymbol(executionDetails.Contract);
+                var order = _orderProvider.GetOrdersByBrokerageId(executionDetails.Execution.OrderId).SingleOrDefault(o => o.Symbol == mappedSymbol);
                 if (order == null)
                 {
                     Log.Error("InteractiveBrokersBrokerage.HandleExecutionDetails(): Unable to locate order with BrokerageID " + executionDetails.Execution.OrderId);
@@ -1950,7 +1982,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                var order = _orderProvider.GetOrderByBrokerageId(executionDetails.Execution.OrderId);
+                if (executionDetails.Contract.SecType == IB.SecurityType.Bag)
+                {
+                    // for combo order we get an initial event but later we get a global event for each leg in the combo
+                    return;
+                }
+
+                var mappedSymbol = MapSymbol(executionDetails.Contract);
+                var order = _orderProvider.GetOrdersByBrokerageId(executionDetails.Execution.OrderId).SingleOrDefault(o => o.Symbol == mappedSymbol);
                 if (order == null)
                 {
                     Log.Error("InteractiveBrokersBrokerage.HandleExecutionDetails(): Unable to locate order with BrokerageID " + executionDetails.Execution.OrderId);
@@ -1996,37 +2035,117 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 !string.IsNullOrWhiteSpace(orderProperties.Account) && execution.AcctNumber == orderProperties.Account;
         }
 
-        /// <summary>
-        /// Emits an order fill (or partial fill) including the actual IB commission paid
-        /// </summary>
-        private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
+        private Order TryGetOrderForFilling(int orderId)
         {
-            var currentQuantityFilled = Convert.ToInt32(executionDetails.Execution.Shares);
-            var totalQuantityFilled = Convert.ToInt32(executionDetails.Execution.CumQty);
-            var remainingQuantity = Convert.ToInt32(order.AbsoluteQuantity - totalQuantityFilled);
-            var price = NormalizePriceToLean(executionDetails.Execution.Price, order.Symbol);
-            var orderFee = new OrderFee(new CashAmount(
-                Convert.ToDecimal(commissionReport.Commission),
-                commissionReport.Currency.ToUpperInvariant()));
-
-            // set order status based on remaining quantity
-            var status = remainingQuantity > 0 ? OrderStatus.PartiallyFilled : OrderStatus.Filled;
-
-            // mark sells as negative quantities
-            var fillQuantity = order.Direction == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
-            var orderEvent = new OrderEvent(order, DateTime.UtcNow, orderFee, "Interactive Brokers Order Fill Event")
+            if(_pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters))
             {
-                Status = status,
-                FillPrice = price,
-                FillQuantity = fillQuantity
-            };
-            if (remainingQuantity != 0)
+                return fillingParameters.First().Order;
+            }
+            return null;
+        }
+
+        private List<PendingFillEvent> RemoveCachedOrdersForFilling(Order order)
+        {
+            if(order.GroupOrderManager == null)
             {
-                orderEvent.Message += " - " + remainingQuantity + " remaining";
+                // not a combo order
+                _pendingGroupOrdersForFilling.TryGetValue(order.Id, out var details);
+                _pendingGroupOrdersForFilling.Remove(order.Id);
+                return details;
             }
 
-            // fire the order fill event
-            OnOrderEvent(orderEvent);
+            var pendingOrdersFillDetails = new List<PendingFillEvent>(order.GroupOrderManager.OrderIds.Count);
+
+            foreach (var ordersId in order.GroupOrderManager.OrderIds)
+            {
+                if (_pendingGroupOrdersForFilling.TryGetValue(ordersId, out var details))
+                {
+                    pendingOrdersFillDetails.AddRange(details);
+                    _pendingGroupOrdersForFilling.Remove(ordersId);
+                }
+            }
+
+            return pendingOrdersFillDetails;
+        }
+
+        /// <summary>
+        /// Emits an order fill (or partial fill) including the actual IB commission paid.
+        ///
+        /// For combo orders, it will wait until all the orders in the group have filled before emitting the events.
+        /// If all orders in the group are not filled within a certain time, it will emit the events for the orders that have filled so far.
+        /// </summary>
+        private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport, bool forceFillEmission = false)
+        {
+            List<PendingFillEvent> pendingOrdersFillDetails = null;
+
+            lock (_pendingGroupOrdersForFilling)
+            {
+                if (!forceFillEmission)
+                {
+                    if (!_pendingGroupOrdersForFilling.TryGetValue(order.Id, out var pendingFillsForOrder))
+                    {
+                        _pendingGroupOrdersForFilling[order.Id] = pendingFillsForOrder = new();
+                    }
+                    pendingFillsForOrder.Add(new PendingFillEvent { Order = order, ExecutionDetails = executionDetails, CommissionReport = commissionReport });
+
+                    // if this is a combo order, we will try to wait for all orders to fill before emitting the events
+                    if (!order.TryGetGroupOrders(TryGetOrderForFilling, out _))
+                    {
+                        _comboOrdersFillTimeoutMonitor.AddPendingFill(order, executionDetails, commissionReport);
+                        return;
+                    }
+                }
+
+                pendingOrdersFillDetails = RemoveCachedOrdersForFilling(order);
+            }
+
+            var fillEvents = new List<OrderEvent>(pendingOrdersFillDetails.Count);
+
+            for (var i = 0; i < pendingOrdersFillDetails.Count; i++)
+            {
+                var fillDetails = pendingOrdersFillDetails[i];
+
+                var targetOrder = fillDetails.Order;
+                var targetOrderExecutionDetails = fillDetails.ExecutionDetails;
+                var targetOrderCommissionReport = fillDetails.CommissionReport;
+
+                var absoluteQuantity = targetOrder.AbsoluteQuantity;
+                if (targetOrder.GroupOrderManager != null)
+                {
+                    absoluteQuantity = targetOrder.AbsoluteQuantity * Math.Abs(targetOrder.GroupOrderManager.Quantity);
+                }
+                var currentQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.Shares);
+                var totalQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.CumQty);
+                var remainingQuantity = Convert.ToInt32(absoluteQuantity - totalQuantityFilled);
+                var price = NormalizePriceToLean(targetOrderExecutionDetails.Execution.Price, targetOrder.Symbol);
+                var orderFee = new OrderFee(new CashAmount(
+                    Convert.ToDecimal(targetOrderCommissionReport.Commission),
+                    targetOrderCommissionReport.Currency.ToUpperInvariant()));
+
+                // set order status based on remaining quantity
+                var status = remainingQuantity > 0 ? OrderStatus.PartiallyFilled : OrderStatus.Filled;
+
+                // mark sells as negative quantities
+                var fillQuantity = targetOrder.Direction == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
+                var orderEvent = new OrderEvent(targetOrder, DateTime.UtcNow, orderFee, "Interactive Brokers Order Fill Event")
+                {
+                    Status = status,
+                    FillPrice = price,
+                    FillQuantity = fillQuantity
+                };
+                if (remainingQuantity != 0)
+                {
+                    orderEvent.Message += " - " + remainingQuantity + " remaining";
+                }
+
+                fillEvents.Add(orderEvent);
+            }
+
+            if (fillEvents.Count > 0)
+            {
+                // fire the order fill events
+                OnOrderEvents(fillEvents);
+            }
         }
 
         /// <summary>
@@ -2080,15 +2199,43 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Converts a QC order to an IB order
         /// </summary>
-        private IBApi.Order ConvertOrder(Order order, Contract contract, int ibOrderId, bool outsideRth)
+        private IBApi.Order ConvertOrder(List<Order> orders, Contract contract, int ibOrderId)
         {
+            OrderDirection direction;
+            decimal quantity;
+
+            var order = orders[0];
+            if (order.GroupOrderManager != null)
+            {
+                quantity = order.GroupOrderManager.Quantity;
+                direction = order.GroupOrderManager.Direction;
+            }
+            else
+            {
+                direction = order.Direction;
+                quantity = order.Quantity;
+            }
+
+            var outsideRth = false;
+            var orderProperties = order.Properties as InteractiveBrokersOrderProperties;
+            if (order.Type == OrderType.Limit ||
+                order.Type == OrderType.LimitIfTouched ||
+                order.Type == OrderType.StopMarket ||
+                order.Type == OrderType.StopLimit)
+            {
+                if (orderProperties != null)
+                {
+                    outsideRth = orderProperties.OutsideRegularTradingHours;
+                }
+            }
+
             var ibOrder = new IBApi.Order
             {
                 ClientId = ClientId,
                 OrderId = ibOrderId,
                 Account = _account,
-                Action = ConvertOrderDirection(order.Direction),
-                TotalQuantity = (int)Math.Abs(order.Quantity),
+                Action = ConvertOrderDirection(direction),
+                TotalQuantity = (int)Math.Abs(quantity),
                 OrderType = ConvertOrderType(order.Type),
                 AllOrNone = false,
                 Tif = ConvertTimeInForce(order),
@@ -2125,7 +2272,27 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var stopMarketOrder = order as StopMarketOrder;
             var stopLimitOrder = order as StopLimitOrder;
             var limitIfTouchedOrder = order as LimitIfTouchedOrder;
-            if (limitOrder != null)
+            var comboLimitOrder = order as ComboLimitOrder;
+            var comboLegLimitOrder = order as ComboLegLimitOrder;
+            var comboMarketOrder = order as ComboMarketOrder;
+            if (comboLegLimitOrder != null)
+            {
+                // Combo per-leg prices are only supported for non-guaranteed smart combos with two legs
+                AddGuaranteedTag(ibOrder, true);
+
+                // comboLegLimitOrder inherits from LimitOrder so we process it's 'if' first
+                ibOrder.OrderComboLegs = new();
+                foreach (var comboLegLimit in orders.OfType<ComboLegLimitOrder>().OrderBy(o => o.Id))
+                {
+                    var legContract = CreateContract(comboLegLimit.Symbol, includeExpired: false);
+
+                    ibOrder.OrderComboLegs.Add(new OrderComboLeg
+                    {
+                        Price = NormalizePriceToBrokerage(comboLegLimit.LimitPrice, legContract, comboLegLimit.Symbol)
+                    });
+                }
+            }
+            else if(limitOrder != null)
             {
                 ibOrder.LmtPrice = NormalizePriceToBrokerage(limitOrder.LimitPrice, contract, order.Symbol);
             }
@@ -2145,13 +2312,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ibOrder.LmtPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.LimitPrice, contract, order.Symbol, minTick);
                 ibOrder.AuxPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.TriggerPrice, contract, order.Symbol, minTick);
             }
+            else if(comboLimitOrder != null)
+            {
+                AddGuaranteedTag(ibOrder, false);
+                var baseContract = CreateContract(order.Symbol, includeExpired: false);
+                ibOrder.LmtPrice = NormalizePriceToBrokerage(comboLimitOrder.GroupOrderManager.LimitPrice, baseContract, order.Symbol);
+            }
+            else if (comboMarketOrder != null)
+            {
+                AddGuaranteedTag(ibOrder, false);
+            }
 
             // add financial advisor properties
             if (IsFinancialAdvisor)
             {
                 // https://interactivebrokers.github.io/tws-api/financial_advisor.html#gsc.tab=0
 
-                var orderProperties = order.Properties as InteractiveBrokersOrderProperties;
                 if (orderProperties != null)
                 {
                     if (!string.IsNullOrWhiteSpace(orderProperties.Account))
@@ -2186,7 +2362,51 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return ibOrder;
         }
 
-        private Order ConvertOrder(IBApi.Order ibOrder, Contract contract)
+        private List<Order> ConvertOrders(IBApi.Order ibOrder, Contract contract)
+        {
+            var result = new List<Order>();
+            var quantitySign = ConvertOrderDirection(ibOrder.Action) == OrderDirection.Sell ? -1 : 1;
+            var quantity = Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign;
+
+            if (contract.SecType == IB.SecurityType.Bag)
+            {
+                // this is a combo order
+                var group = new GroupOrderManager(_algorithm.Transactions.GetIncrementGroupOrderManagerId(), contract.ComboLegs.Count, quantity);
+
+                var orderType = OrderType.ComboMarket;
+                if (ibOrder.LmtPrice != double.MaxValue)
+                {
+                    orderType = OrderType.ComboLimit;
+                }
+                else if (!ibOrder.OrderComboLegs.IsNullOrEmpty() && ibOrder.OrderComboLegs.Any(p => p.Price != double.MaxValue))
+                {
+                    orderType = OrderType.ComboLegLimit;
+                }
+
+                for (var i = 0; i < contract.ComboLegs.Count; i++)
+                {
+                    var comboLeg = contract.ComboLegs[i];
+                    var comboLegContract = new Contract { ConId = comboLeg.ConId };
+                    var contractDetails = GetContractDetails(comboLegContract, string.Empty);
+                    var quantitySignLeg = ConvertOrderDirection(comboLeg.Action) == OrderDirection.Sell ? -1 : 1;
+
+                    var legLimitPrice = ibOrder.LmtPrice;
+                    if (ibOrder.OrderComboLegs.Count == contract.ComboLegs.Count)
+                    {
+                        legLimitPrice = ibOrder.OrderComboLegs[i].Price;
+                    }
+                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType, comboLeg.Ratio * quantitySignLeg, legLimitPrice, contractDetails.Contract, group));
+                }
+            }
+            else
+            {
+                result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity, ibOrder.LmtPrice, contract, null));
+            }
+
+            return result;
+        }
+
+        private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity, double limitPrice, Contract contract, GroupOrderManager groupOrderManager)
         {
             // this function is called by GetOpenOrders which is mainly used by the setup handler to
             // initialize algorithm state.  So the only time we'll be executing this code is when the account
@@ -2195,62 +2415,85 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             Order order;
             var mappedSymbol = MapSymbol(contract);
-            var direction = ConvertOrderDirection(ibOrder.Action);
-            var quantitySign = direction == OrderDirection.Sell ? -1 : 1;
-            var orderType = ConvertOrderType(ibOrder);
             switch (orderType)
             {
                 case OrderType.Market:
                     order = new MarketOrder(mappedSymbol,
-                        Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign,
+                        quantity,
                         new DateTime() // not sure how to get this data
                         );
                     break;
 
                 case OrderType.MarketOnOpen:
                     order = new MarketOnOpenOrder(mappedSymbol,
-                        Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign,
+                        quantity,
                         new DateTime());
                     break;
 
                 case OrderType.MarketOnClose:
                     order = new MarketOnCloseOrder(mappedSymbol,
-                        Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign,
+                        quantity,
                         new DateTime()
                         );
                     break;
 
                 case OrderType.Limit:
                     order = new LimitOrder(mappedSymbol,
-                        Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign,
-                        NormalizePriceToLean(ibOrder.LmtPrice, mappedSymbol),
+                        quantity,
+                        NormalizePriceToLean(limitPrice, mappedSymbol),
                         new DateTime()
                         );
                     break;
 
                 case OrderType.StopMarket:
                     order = new StopMarketOrder(mappedSymbol,
-                        Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign,
-                        NormalizePriceToLean(ibOrder.AuxPrice, mappedSymbol),
+                        quantity,
+                        NormalizePriceToLean(auxPrice, mappedSymbol),
                         new DateTime()
                         );
                     break;
 
                 case OrderType.StopLimit:
                     order = new StopLimitOrder(mappedSymbol,
-                        Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign,
-                        NormalizePriceToLean(ibOrder.AuxPrice, mappedSymbol),
-                        NormalizePriceToLean(ibOrder.LmtPrice, mappedSymbol),
+                        quantity,
+                        NormalizePriceToLean(auxPrice, mappedSymbol),
+                        NormalizePriceToLean(limitPrice, mappedSymbol),
                         new DateTime()
                         );
                     break;
 
                 case OrderType.LimitIfTouched:
                     order = new LimitIfTouchedOrder(mappedSymbol,
-                        Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign,
-                        NormalizePriceToLean(ibOrder.AuxPrice, mappedSymbol),
-                        NormalizePriceToLean(ibOrder.LmtPrice, mappedSymbol),
+                        quantity,
+                        NormalizePriceToLean(auxPrice, mappedSymbol),
+                        NormalizePriceToLean(limitPrice, mappedSymbol),
                         new DateTime()
+                    );
+                    break;
+
+                case OrderType.ComboMarket:
+                    order = new ComboMarketOrder(mappedSymbol,
+                        quantity,
+                        new DateTime(),
+                        groupOrderManager
+                    );
+                    break;
+
+                case OrderType.ComboLimit:
+                    order = new ComboLimitOrder(mappedSymbol,
+                        quantity,
+                        NormalizePriceToLean(limitPrice, mappedSymbol),
+                        new DateTime(),
+                        groupOrderManager
+                    );
+                    break;
+
+                case OrderType.ComboLegLimit:
+                    order = new ComboLegLimitOrder(mappedSymbol,
+                        quantity,
+                        NormalizePriceToLean(limitPrice, mappedSymbol),
+                        new DateTime(),
+                        groupOrderManager
                     );
                     break;
 
@@ -2258,9 +2501,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     throw new InvalidEnumArgumentException("orderType", (int)orderType, typeof(OrderType));
             }
 
-            order.BrokerId.Add(ibOrder.OrderId.ToStringInvariant());
-
-            order.Properties.TimeInForce = ConvertTimeInForce(ibOrder.Tif, ibOrder.GoodTillDate);
+            order.BrokerId.Add(ibOrderId.ToStringInvariant());
+            order.Properties.TimeInForce = ConvertTimeInForce(timeInForce, goodTillDate);
 
             return order;
         }
@@ -2272,7 +2514,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="includeExpired">Include expired contracts</param>
         /// <param name="exchange">The exchange where the order will be placed, defaults to 'Smart'</param>
         /// <returns>A new IB contract for the order</returns>
-        private Contract CreateContract(Symbol symbol, bool includeExpired, string exchange = null)
+        private Contract CreateContract(Symbol symbol, bool includeExpired, List<Order> orders = null, string exchange = null)
         {
             var securityType = ConvertSecurityType(symbol.SecurityType);
             var ibSymbol = _symbolMapper.GetBrokerageSymbol(symbol);
@@ -2321,7 +2563,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if (symbol.ID.SecurityType == SecurityType.FutureOption)
                 {
-                    var underlyingContract = CreateContract(symbol.Underlying, includeExpired, exchange);
+                    var underlyingContract = CreateContract(symbol.Underlying, includeExpired, null, exchange);
                     if (underlyingContract == null)
                     {
                         Log.Error($"CreateContract(): Failed to create the underlying future IB contract {symbol}");
@@ -2357,6 +2599,26 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 contract.Multiplier = GetContractMultiplier(symbolProperties.ContractMultiplier);
 
                 contract.IncludeExpired = includeExpired;
+            }
+
+            if (orders != null && orders.Count > 1)
+            {
+                // this is a combo order!
+                contract.ComboLegs = new();
+                contract.SecType = IB.SecurityType.Bag;
+                foreach (var order in orders.OrderBy(o => o.Id))
+                {
+                    var legContract = CreateContract(order.Symbol, includeExpired: false);
+                    var legContractDetails = GetContractDetails(legContract, order.Symbol.Value);
+                    contract.ComboLegs.Add(new ComboLeg
+                    {
+                        ConId = legContractDetails.Contract.ConId,
+                        Action = ConvertOrderDirection(order.Direction),
+                        // the ratio is absolute the action above specifies if we are selling or buying
+                        Ratio = Math.Abs((int)order.Quantity),
+                        Exchange = legContractDetails.Contract.Exchange
+                    });
+                }
             }
 
             return contract;
@@ -2406,6 +2668,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case OrderType.LimitIfTouched: return IB.OrderType.LimitIfTouched;
                 case OrderType.MarketOnOpen: return IB.OrderType.Market;
                 case OrderType.MarketOnClose: return IB.OrderType.MarketOnClose;
+                case OrderType.ComboLegLimit: return IB.OrderType.Limit;
+                case OrderType.ComboLimit: return IB.OrderType.Limit;
+                case OrderType.ComboMarket: return IB.OrderType.Market;
                 default:
                     throw new InvalidEnumArgumentException(nameof(type), (int)type, typeof(OrderType));
             }
@@ -2919,7 +3184,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             }
 
                             var id = GetNextId();
-                            var contract = CreateContract(subscribeSymbol, false);
+                            var contract = CreateContract(subscribeSymbol, includeExpired: false);
                             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(subscribeSymbol.ID.Market, subscribeSymbol, subscribeSymbol.SecurityType, Currencies.USD);
                             var priceMagnifier = symbolProperties.PriceMagnifier;
 
@@ -3479,6 +3744,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 yield break;
             }
 
+
             if (request.TickType == TickType.OpenInterest)
             {
                 if (!_historyOpenInterestWarning)
@@ -3544,7 +3810,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             // preparing the data for IB request
-            var contract = CreateContract(request.Symbol, true);
+            var contract = CreateContract(request.Symbol, includeExpired: true);
             var resolution = ConvertResolution(request.Resolution);
             var duration = ConvertResolutionToDuration(request.Resolution);
 
@@ -4156,6 +4422,37 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             Log.Trace($"InteractiveBrokersBrokerage.HandleManagedAccounts(): Account list: {e.AccountList}");
         }
 
+        /// <summary>
+        /// We cache the original orders when they are part of a group. We don't ask the order provider because we would get a clone
+        /// and we want to be able to modify the original setting the brokerage id
+        /// </summary>
+        private Order TryGetOrder(int orderId)
+        {
+            _pendingGroupOrders.TryGetValue(orderId, out var order);
+            return order;
+        }
+
+        private void CacheOrder(Order order)
+        {
+            _pendingGroupOrders[order.Id] = order;
+        }
+
+        private void RemoveCachedOrders(List<Order> orders)
+        {
+            for (var i = 0; i < orders.Count; i++)
+            {
+                _pendingGroupOrders.TryRemove(orders[i].Id, out _);
+            }
+        }
+
+        private void AddGuaranteedTag(IBApi.Order ibOrder, bool nonGuaranteed)
+        {
+            ibOrder.SmartComboRoutingParams = new List<TagValue>
+            {
+                new TagValue("NonGuaranteed", nonGuaranteed ? "1" : "0")
+            };
+        }
+
         private readonly ConcurrentDictionary<Symbol, int> _subscribedSymbols = new ConcurrentDictionary<Symbol, int>();
         private readonly ConcurrentDictionary<int, SubscriptionEntry> _subscribedTickers = new ConcurrentDictionary<int, SubscriptionEntry>();
 
@@ -4321,13 +4618,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // these are warning messages from IB
         private static readonly HashSet<int> WarningCodes = new HashSet<int>
         {
-            102, 104, 105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 201, 303,313,314,315,319,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,385,386,387,388,389,390,391,392,393,394,395,396,397,398,399,400,402,403,404,405,406,407,408,409,410,411,412,413,417,418,419,420,421,422,423,424,425,426,427,428,429,430,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,450,10002,10003,10006,10007,10008,10009,10010,10011,10012,10014,10018,10019,10020,10052,10147,10148,10149,2100,2101,2102,2109,2148
+            102, 104, 105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 201, 303,312,313,314,315,319,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,385,386,387,388,389,390,391,392,393,394,395,396,397,398,399,400,402,403,404,405,406,407,408,409,410,411,412,413,417,418,419,420,421,422,423,424,425,426,427,428,429,430,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,450,10002,10003,10006,10007,10008,10009,10010,10011,10012,10014,10018,10019,10020,10052,10147,10148,10149,2100,2101,2102,2109,2148
         };
 
         // these require us to issue invalidated order events
         private static readonly HashSet<int> InvalidatingCodes = new HashSet<int>
         {
-            105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 147, 148, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 163, 167, 168, 201, 313,314,315,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,387,388,389,390,391,392,393,394,395,396,397,398,400,401,402,403,405,406,407,408,409,410,411,412,413,417,418,419,421,423,424,427,428,429,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,10002,10006,10007,10008,10009,10010,10011,10012,10014,10020,2102
+            105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 147, 148, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 163, 167, 168, 201,312,313,314,315,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,387,388,389,390,391,392,393,394,395,396,397,398,400,401,402,403,405,406,407,408,409,410,411,412,413,417,418,419,421,423,424,427,428,429,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,463,10002,10006,10007,10008,10009,10010,10011,10012,10014,10020,10058,2102
         };
 
         // these are warning messages not sent as brokerage message events
