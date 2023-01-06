@@ -2050,6 +2050,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 // not a combo order
                 _pendingGroupOrdersForFilling.TryGetValue(order.Id, out var details);
+                _pendingGroupOrdersForFilling.Remove(order.Id);
                 return details;
             }
 
@@ -2373,11 +2374,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var group = new GroupOrderManager(_algorithm.Transactions.GetIncrementGroupOrderManagerId(), contract.ComboLegs.Count, quantity);
 
                 var orderType = OrderType.ComboMarket;
-                if (ibOrder.LmtPrice != 0)
+                if (ibOrder.LmtPrice != double.MaxValue)
                 {
                     orderType = OrderType.ComboLimit;
                 }
-                else if (!ibOrder.OrderComboLegs.IsNullOrEmpty() && ibOrder.OrderComboLegs.Any(p => p.Price != 0))
+                else if (!ibOrder.OrderComboLegs.IsNullOrEmpty() && ibOrder.OrderComboLegs.Any(p => p.Price != double.MaxValue))
                 {
                     orderType = OrderType.ComboLegLimit;
                 }
