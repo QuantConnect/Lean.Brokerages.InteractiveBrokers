@@ -2046,6 +2046,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private List<PendingFillEvent> RemoveCachedOrdersForFilling(Order order)
         {
+            if(order.GroupOrderManager == null)
+            {
+                // not a combo order
+                _pendingGroupOrdersForFilling.TryGetValue(order.Id, out var details);
+                return details;
+            }
+
             var pendingOrdersFillDetails = new List<PendingFillEvent>(order.GroupOrderManager.OrderIds.Count);
 
             foreach (var ordersId in order.GroupOrderManager.OrderIds)
@@ -2593,8 +2600,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 contract.IncludeExpired = includeExpired;
             }
 
-            if (orders != null)
+            if (orders != null && orders.Count > 1)
             {
+                // this is a combo order!
                 contract.ComboLegs = new();
                 contract.SecType = IB.SecurityType.Bag;
                 foreach (var order in orders.OrderBy(o => o.Id))
