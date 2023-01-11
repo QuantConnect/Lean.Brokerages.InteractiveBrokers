@@ -3637,7 +3637,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // IB requests for full option chains are rate limited and responses can be delayed up to a minute for each underlying,
                 // so we fetch them from the OCC website instead of using the IB API.
                 // For futures options, we fetch the option chain from CME.
-                symbols.AddRange(_algorithm.OptionChainProvider.GetOptionContractList(symbol.Underlying, DateTime.Today));
+                symbols.AddRange(_algorithm.OptionChainProvider.GetOptionContractList(symbol, DateTime.Today));
             }
             else if (symbol.SecurityType == SecurityType.Future)
             {
