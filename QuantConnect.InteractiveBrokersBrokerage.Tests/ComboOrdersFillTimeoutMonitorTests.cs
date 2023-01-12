@@ -36,7 +36,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         private TimeSpan _timeout;
         private ComboOrdersFillTimeoutMonitor _monitor;
         private int _callbackCallsCount;
-        private int _enqueuedItemsCount;
         private ConcurrentBag<Tuple<DateTime, DateTime>> _monitorCallbackCallTimes;
         private AutoResetEvent _signalStopEvent = new(false);
         private ManualTimeProvider _timeProvider;
@@ -48,14 +47,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             _timeProvider = new(new DateTime(2023, 1, 6, 9, 30, 0));
             _monitor = new ComboOrdersFillTimeoutMonitor(_timeProvider, _timeout);
             _callbackCallsCount = 0;
-            _enqueuedItemsCount = 0;
             _monitorCallbackCallTimes = new ();
-        }
-
-        [TearDown]
-        public void TearDown()
-        {
-            Config.Reset();
         }
 
         [Test]
