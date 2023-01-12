@@ -1315,7 +1315,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static string GetUniqueKey(Contract contract)
         {
-            return $"{contract.ToString().ToUpperInvariant()} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right}";
+            // for IB trading class can be different depending on the contract flavor, e.g. index options SPX & SPXW
+            return $"{contract.ToString().ToUpperInvariant()} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right} {contract.TradingClass}";
         }
 
         /// <summary>
@@ -2555,9 +2556,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 // Subtract a day from Index Options, since their last trading date
                 // is on the day before the expiry.
-                contract.LastTradeDateOrContractMonth = symbol.ID.Date
-                    .AddDays(symbol.SecurityType == SecurityType.IndexOption ? -1 : 0)
-                    .ToStringInvariant(DateFormat.EightCharacter);
+                var lastTradeDate = symbol.ID.Date;
+                if (symbol.SecurityType == SecurityType.IndexOption)
+                {
+                    lastTradeDate = IndexOptionSymbol.GetLastTradingDate(symbol.ID.Symbol, symbol.ID.Date);
+                }
+                contract.LastTradeDateOrContractMonth = lastTradeDate.ToStringInvariant(DateFormat.EightCharacter);
 
                 contract.Right = symbol.ID.OptionRight == OptionRight.Call ? IB.RightType.Call : IB.RightType.Put;
 
@@ -3050,6 +3054,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (securityType.IsOption())
                 {
                     var expiryDate = DateTime.ParseExact(contract.LastTradeDateOrContractMonth, DateFormat.EightCharacter, CultureInfo.InvariantCulture);
+                    if (securityType == SecurityType.IndexOption && !string.IsNullOrEmpty(contract.TradingClass))
+                    {
+                        // the option flavor ticket is in the trading class for IB, see related 'GetTradingClass'
+                        ibSymbol = contract.TradingClass;
+                    }
                     var right = contract.Right == IB.RightType.Call ? OptionRight.Call : OptionRight.Put;
                     var strike = Convert.ToDecimal(contract.Strike);
 
@@ -3637,7 +3646,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // IB requests for full option chains are rate limited and responses can be delayed up to a minute for each underlying,
                 // so we fetch them from the OCC website instead of using the IB API.
                 // For futures options, we fetch the option chain from CME.
-                symbols.AddRange(_algorithm.OptionChainProvider.GetOptionContractList(symbol.Underlying, DateTime.Today));
+                symbols.AddRange(_algorithm.OptionChainProvider.GetOptionContractList(symbol, DateTime.Today));
             }
             else if (symbol.SecurityType == SecurityType.Future)
             {

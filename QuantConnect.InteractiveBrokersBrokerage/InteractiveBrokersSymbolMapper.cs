@@ -28,6 +28,7 @@ using IBApi;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Logging;
 using QuantConnect.Securities;
+using QuantConnect.Securities.IndexOption;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -163,12 +164,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         // Index Options have their expiry offset from their last trading date by one day. We add one day
                         // to get the expected expiration date.
                         return Symbol.CreateOption(
-                            Symbol.Create(brokerageSymbol, SecurityType.Index, market),
+                            Symbol.Create(IndexOptionSymbol.MapToUnderlying(brokerageSymbol), SecurityType.Index, market),
+                            brokerageSymbol,
                             market,
                             securityType.DefaultOptionStyle(),
                             optionRight,
                             strike,
-                            expirationDate.AddDays(1));
+                            IndexOptionSymbol.GetExpiryDate(brokerageSymbol, expirationDate));
 
                     case SecurityType.FutureOption:
                         var future = FuturesOptionsUnderlyingMapper.GetUnderlyingFutureFromFutureOption(
