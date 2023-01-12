@@ -30,7 +30,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         public void IndexOptionBrokerageSymbol(string option)
         {
             var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
-            var indexOption = Symbol.CreateOption(Symbols.SPX, option, OptionStyle.European, OptionRight.Call, 3800, new DateTime(2023, 1, 12));
+            var indexOption = Symbol.CreateOption(Symbols.SPX, option, Market.USA, OptionStyle.European, OptionRight.Call, 3800, new DateTime(2023, 1, 12));
             var brokerageSymbol = mapper.GetBrokerageSymbol(indexOption);
 
             Assert.AreEqual("SPX", brokerageSymbol);
