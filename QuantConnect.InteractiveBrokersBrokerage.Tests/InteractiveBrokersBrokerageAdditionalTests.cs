@@ -71,7 +71,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 brokerage.CancelOrder(order);
             }
 
-            var optionsExpiration = new DateTime(2023, 1, 6);
+            var optionsExpiration = new DateTime(2023, 3, 17);
             var orderProperties = new InteractiveBrokersOrderProperties();
             var group = new GroupOrderManager(1, legCount: orderType != OrderType.ComboLegLimit ? 3 : 2, quantity: comboDirection == OrderDirection.Buy ? 2 : -2);
 
@@ -125,17 +125,36 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 var response = brokerage.PlaceOrder(order);
             }
 
-            Assert.IsTrue(manualResetEvent.WaitOne(TimeSpan.FromSeconds(30)));
+            Assert.IsTrue(manualResetEvent.WaitOne(TimeSpan.FromSeconds(60)));
             if (orderType == OrderType.ComboLimit || orderType == OrderType.ComboLegLimit)
             {
-                Assert.AreEqual(3, events.Count);
-                Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Submitted));
+                Assert.AreEqual(orders.Count, events.Count);
+                Assert.IsTrue(events.All(oe => oe.Status == OrderStatus.Submitted));
             }
             else
             {
-                Assert.AreEqual(9, events.Count);
-                Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Submitted));
-                Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Filled));
+                // The orders could haven been filled in partial fills (expect 9 events: 3 submitted, and 6 partial fills)
+                // or in a single fill (expect 6 events: 3 submitted, and 3 filled)
+                if (events.Any(oe => oe.Status == OrderStatus.PartiallyFilled))
+                {
+                    Assert.AreEqual(9, events.Count);
+                    Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Submitted));
+                    Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.PartiallyFilled));
+                    Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Filled));
+                }
+                else
+                {
+                    Assert.AreEqual(6, events.Count);
+                    Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Submitted));
+                    Assert.AreEqual(3, events.Count(oe => oe.Status == OrderStatus.Filled));
+                }
+
+                foreach (var order in orders)
+                {
+                    Assert.AreEqual(
+                        order.GroupQuantity,
+                        events.Select(oe => oe.OrderId == order.Id && oe.Status.IsFill() ? oe.FillQuantity : 0).Sum());
+                }
             }
         }
 

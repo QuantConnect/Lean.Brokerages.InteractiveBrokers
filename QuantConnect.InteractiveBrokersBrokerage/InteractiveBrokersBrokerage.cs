@@ -2127,7 +2127,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var status = remainingQuantity > 0 ? OrderStatus.PartiallyFilled : OrderStatus.Filled;
 
                 // mark sells as negative quantities
-                var fillQuantity = targetOrder.Direction == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
+                var fillQuantity = targetOrder.GroupDirection == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
                 var orderEvent = new OrderEvent(targetOrder, DateTime.UtcNow, orderFee, "Interactive Brokers Order Fill Event")
                 {
                     Status = status,
