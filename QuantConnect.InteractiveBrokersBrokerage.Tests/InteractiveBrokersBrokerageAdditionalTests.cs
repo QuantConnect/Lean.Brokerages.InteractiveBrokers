@@ -152,7 +152,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 foreach (var order in orders)
                 {
                     Assert.AreEqual(
-                        order.GroupQuantity,
+                        order.Quantity,
                         events.Select(oe => oe.OrderId == order.Id && oe.Status.IsFill() ? oe.FillQuantity : 0).Sum());
                 }
             }

@@ -2127,7 +2127,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var status = remainingQuantity > 0 ? OrderStatus.PartiallyFilled : OrderStatus.Filled;
 
                 // mark sells as negative quantities
-                var fillQuantity = targetOrder.GroupDirection == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
+                var fillQuantity = targetOrder.Direction == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
                 var orderEvent = new OrderEvent(targetOrder, DateTime.UtcNow, orderFee, "Interactive Brokers Order Fill Event")
                 {
                     Status = status,
@@ -2619,7 +2619,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         ConId = legContractDetails.Contract.ConId,
                         Action = ConvertOrderDirection(order.Direction),
                         // the ratio is absolute the action above specifies if we are selling or buying
-                        Ratio = Math.Abs((int)order.Quantity),
+                        Ratio = Math.Abs((int)order.Quantity.GetOrderLegRatio(order.GroupOrderManager)),
                         Exchange = legContractDetails.Contract.Exchange
                     });
                 }
