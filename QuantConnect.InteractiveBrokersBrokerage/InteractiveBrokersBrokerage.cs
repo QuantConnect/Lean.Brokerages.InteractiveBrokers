@@ -2392,7 +2392,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         legLimitPrice = ibOrder.OrderComboLegs[i].Price;
                     }
-                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType, comboLeg.Ratio * quantity, legLimitPrice, contractDetails.Contract, group));
+                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType, comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, contractDetails.Contract, group));
                 }
             }
             else
