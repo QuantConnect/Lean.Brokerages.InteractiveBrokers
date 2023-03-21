@@ -2111,10 +2111,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var targetOrderCommissionReport = fillDetails.CommissionReport;
 
                 var absoluteQuantity = targetOrder.AbsoluteQuantity;
-                if (targetOrder.GroupOrderManager != null)
-                {
-                    absoluteQuantity = targetOrder.AbsoluteQuantity * Math.Abs(targetOrder.GroupOrderManager.Quantity);
-                }
                 var currentQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.Shares);
                 var totalQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.CumQty);
                 var remainingQuantity = Convert.ToInt32(absoluteQuantity - totalQuantityFilled);
@@ -2396,7 +2392,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         legLimitPrice = ibOrder.OrderComboLegs[i].Price;
                     }
-                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType, comboLeg.Ratio * quantitySignLeg, legLimitPrice, contractDetails.Contract, group));
+                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType, comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, contractDetails.Contract, group));
                 }
             }
             else
@@ -2614,12 +2610,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     var legContract = CreateContract(order.Symbol, includeExpired: false);
                     var legContractDetails = GetContractDetails(legContract, order.Symbol.Value);
+                    var ratio = order.Quantity.GetOrderLegRatio(order.GroupOrderManager);
                     contract.ComboLegs.Add(new ComboLeg
                     {
                         ConId = legContractDetails.Contract.ConId,
-                        Action = ConvertOrderDirection(order.Direction),
+                        Action = ConvertOrderDirection(ratio > 0 ? OrderDirection.Buy : OrderDirection.Sell),
                         // the ratio is absolute the action above specifies if we are selling or buying
-                        Ratio = Math.Abs((int)order.Quantity),
+                        Ratio = Math.Abs((int)ratio),
                         Exchange = legContractDetails.Contract.Exchange
                     });
                 }
