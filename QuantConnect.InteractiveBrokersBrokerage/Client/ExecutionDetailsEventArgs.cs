@@ -53,7 +53,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// </summary>
         public override string ToString()
         {
-            return $"RequestId: {RequestId}, Symbol: {Contract.Symbol}, OrderId: {Execution.OrderId}, Time: {Execution.Time}, Side: {Execution.Side}, Shares: {Execution.Shares}, Price: {Execution.Price}, CumQty: {Execution.CumQty}, PermId: {Execution.PermId}, Account: {Execution.AcctNumber}, ExecId: {Execution.ExecId}";
+            return $"Liquidation: {Execution.Liquidation} ClientId {Execution.ClientId} RequestId: {RequestId}, Symbol: {Contract.Symbol}, OrderId: {Execution.OrderId}, Time: {Execution.Time}, Side: {Execution.Side}, Shares: {Execution.Shares}, Price: {Execution.Price}, CumQty: {Execution.CumQty}, PermId: {Execution.PermId}, Account: {Execution.AcctNumber}, ExecId: {Execution.ExecId}";
         }
     }
 }
