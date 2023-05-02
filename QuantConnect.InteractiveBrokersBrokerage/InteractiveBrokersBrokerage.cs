@@ -2014,9 +2014,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var order = _orderProvider.GetOrdersByBrokerageId(executionDetails.Execution.OrderId).SingleOrDefault(o => o.Symbol == mappedSymbol);
             if (order == null)
             {
-                if (executionDetails.Execution.OrderId == -1)
+                if (executionDetails.Execution.Liquidation == 1)
                 {
                     var currentQuantityFilled = Convert.ToInt32(executionDetails.Execution.Shares);
+                    if (executionDetails.Execution.Side == "SLD")
+                    {
+                        // BOT for bought, SLD for sold
+                        currentQuantityFilled *= -1;
+                    }
                     order = new MarketOrder(mappedSymbol, currentQuantityFilled, DateTime.UtcNow, "Brokerage Liquidation");
                     // this event will add the order into the lean engine
                     OnNewBrokerageOrderNotification(new NewBrokerageOrderNotificationEventArgs(order));
