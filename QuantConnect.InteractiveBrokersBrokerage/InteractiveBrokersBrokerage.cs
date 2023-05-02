@@ -1926,11 +1926,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                var mappedSymbol = MapSymbol(executionDetails.Contract);
-                var order = _orderProvider.GetOrdersByBrokerageId(executionDetails.Execution.OrderId).SingleOrDefault(o => o.Symbol == mappedSymbol);
+                var order = GetOrder(executionDetails);
                 if (order == null)
                 {
-                    Log.Error("InteractiveBrokersBrokerage.HandleExecutionDetails(): Unable to locate order with BrokerageID " + executionDetails.Execution.OrderId);
                     return;
                 }
 
@@ -1989,11 +1987,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                var mappedSymbol = MapSymbol(executionDetails.Contract);
-                var order = _orderProvider.GetOrdersByBrokerageId(executionDetails.Execution.OrderId).SingleOrDefault(o => o.Symbol == mappedSymbol);
+                var order = GetOrder(executionDetails);
                 if (order == null)
                 {
-                    Log.Error("InteractiveBrokersBrokerage.HandleExecutionDetails(): Unable to locate order with BrokerageID " + executionDetails.Execution.OrderId);
                     return;
                 }
 
@@ -2010,6 +2006,33 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 Log.Error("InteractiveBrokersBrokerage.HandleCommissionReport(): " + err);
             }
+        }
+
+        private Order GetOrder(IB.ExecutionDetailsEventArgs executionDetails)
+        {
+            var mappedSymbol = MapSymbol(executionDetails.Contract);
+            var order = _orderProvider.GetOrdersByBrokerageId(executionDetails.Execution.OrderId).SingleOrDefault(o => o.Symbol == mappedSymbol);
+            if (order == null)
+            {
+                if (executionDetails.Execution.Liquidation == 1)
+                {
+                    var currentQuantityFilled = Convert.ToInt32(executionDetails.Execution.Shares);
+                    if (executionDetails.Execution.Side == "SLD")
+                    {
+                        // BOT for bought, SLD for sold
+                        currentQuantityFilled *= -1;
+                    }
+                    order = new MarketOrder(mappedSymbol, currentQuantityFilled, DateTime.UtcNow, "Brokerage Liquidation");
+                    // this event will add the order into the lean engine
+                    OnNewBrokerageOrderNotification(new NewBrokerageOrderNotificationEventArgs(order));
+                }
+                else
+                {
+                    Log.Error("InteractiveBrokersBrokerage.HandleExecutionDetails(): Unable to locate order with BrokerageID " + executionDetails.Execution.OrderId);
+                }
+            }
+
+            return order;
         }
 
         /// <summary>
