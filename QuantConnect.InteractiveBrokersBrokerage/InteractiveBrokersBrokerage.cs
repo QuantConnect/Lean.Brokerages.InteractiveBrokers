@@ -75,7 +75,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// The default gateway version to use
         /// </summary>
-        public static string DefaultVersion { get; } = "1023";
+        public static string DefaultVersion { get; } = "1020";
 
         private IBAutomater.IBAutomater _ibAutomater;
 
