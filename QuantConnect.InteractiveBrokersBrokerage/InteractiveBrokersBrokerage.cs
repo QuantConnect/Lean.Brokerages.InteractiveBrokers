@@ -923,6 +923,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 }
                                 Connect();
                             }
+                            else
+                            {
+                                Log.Trace("InteractiveBrokersBrokerage.HeartBeat(): succeeded!");
+                            }
                         }
                     }
                 }
