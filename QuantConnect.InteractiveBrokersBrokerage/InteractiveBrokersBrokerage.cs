@@ -75,7 +75,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// The default gateway version to use
         /// </summary>
-        public static string DefaultVersion { get; } = "1020";
+        public static string DefaultVersion { get; } = "1023";
 
         private IBAutomater.IBAutomater _ibAutomater;
 
@@ -433,7 +433,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     var eventSlim = new ManualResetEventSlim(false);
                     _pendingOrderResponse[orderId] = eventSlim;
 
-                    _client.ClientSocket.cancelOrder(orderId);
+                    _client.ClientSocket.cancelOrder(orderId, string.Empty);
 
                     if (!eventSlim.Wait(_responseTimeout))
                     {
@@ -923,6 +923,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 }
                                 Connect();
                             }
+                            else
+                            {
+                                Log.Trace("InteractiveBrokersBrokerage.HeartBeat(): succeeded!");
+                            }
                         }
                     }
                 }
@@ -1093,6 +1097,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             _aggregator.DisposeSafely();
             _ibAutomater?.Stop();
+            _ibAutomater.DisposeSafely();
 
             _messagingRateLimiter.DisposeSafely();
             _concurrentHistoryRequests.DisposeSafely();
@@ -2355,11 +2360,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         // order for a single managed account
                         ibOrder.Account = orderProperties.Account;
                     }
-                    else if (!string.IsNullOrWhiteSpace(orderProperties.FaProfile))
-                    {
-                        // order for an account profile
-                        ibOrder.FaProfile = orderProperties.FaProfile;
-                    }
                     else if (!string.IsNullOrWhiteSpace(orderProperties.FaGroup))
                     {
                         // order for an account group
@@ -2953,6 +2953,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns></returns>
         private string ConvertResolutionToDuration(Resolution resolution)
         {
+            // TODO: we should take into account the actual requested time span to be more efficient
             switch (resolution)
             {
                 case Resolution.Tick:
@@ -3456,7 +3457,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Modifies the quantity received from IB based on the security type
         /// </summary>
-        public int AdjustQuantity(SecurityType type, int size)
+        public decimal AdjustQuantity(SecurityType type, decimal size)
         {
             switch (type)
             {
@@ -3961,7 +3962,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             var bar = ConvertTradeBar(request.Symbol, request.Resolution, args, priceMagnifier);
                             if (request.Resolution != Resolution.Daily)
                             {
-                                bar.Time = bar.Time.ConvertFromUtc(exchangeTimeZone);
+                                bar.Time = bar.Time.ConvertFromUtc(exchangeTimeZone)
+                                    // let's make sure to round down to the requested resolution, if requesting hourly, non extended market hours, IB returns 9:30 for the first bar
+                                    .RoundDown(request.Resolution.ToTimeSpan());
                             }
 
                             historyPiece.Add(bar);

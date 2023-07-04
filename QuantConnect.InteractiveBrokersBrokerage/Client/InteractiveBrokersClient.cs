@@ -200,7 +200,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="e">The exception that occurred.</param>
         public override void error(Exception e)
         {
-            error(-1, -1, e.ToString());
+            error(-1, -1, e.ToString(), string.Empty);
         }
 
         /// <summary>
@@ -209,7 +209,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="str">This is the text of the error message.</param>
         public override void error(string str)
         {
-            error(-1, -1, str);
+            error(-1, -1, str, string.Empty);
         }
 
         /// <summary>
@@ -218,7 +218,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="id">The request identifier that generated the error.</param>
         /// <param name="errorCode">The code identifying the error.</param>
         /// <param name="errorMsg">The description of the error.</param>
-        public override void error(int id, int errorCode, string errorMsg)
+        /// <param name="advancedOrderRejectJson">Advanced order reject description in json format</param>
+        public override void error(int id, int errorCode, string errorMsg, string advancedOrderRejectJson)
         {
             OnError(new ErrorEventArgs(id, errorCode, errorMsg));
         }
@@ -251,7 +252,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="tickerId">The request's unique identifier.</param>
         /// <param name="field">The type of size being received.</param>
         /// <param name="size">The actual size.</param>
-        public override void tickSize(int tickerId, int field, int size)
+        public override void tickSize(int tickerId, int field, decimal size)
         {
             OnTickSize(new TickSizeEventArgs(tickerId, field, size));
         }
@@ -330,8 +331,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="unrealisedPnl">The difference between the current market value of your open positions and the average cost, or Value - Average Cost.</param>
         /// <param name="realisedPnl">Shows your profit on closed positions, which is the difference between your entry execution cost (execution price + commissions to open the position) and exit execution cost ((execution price + commissions to close the position)</param>
         /// <param name="accountName">The name of the account to which the message applies.  Useful for Financial Advisor sub-account messages.</param>
-        public override void updatePortfolio(Contract contract, double position, double marketPrice, double marketValue, double averageCost,
-            double unrealisedPnl, double realisedPnl, string accountName)
+        public override void updatePortfolio(Contract contract, decimal position, double marketPrice, double marketValue, double averageCost,
+            double realisedPnl, double unrealisedPnl, string accountName)
         {
             var positionValue = Convert.ToInt32(position);
             OnUpdatePortfolio(new UpdatePortfolioEventArgs(contract, positionValue, marketPrice, marketValue, averageCost, unrealisedPnl, realisedPnl,
@@ -361,7 +362,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="clientId">The ID of the client (or TWS) that placed the order. Note that TWS orders have a fixed clientId and orderId of 0 that distinguishes them from API orders.</param>
         /// <param name="whyHeld">This field is used to identify an order held when TWS is trying to locate shares for a short sell. The value used to indicate this is 'locate'.</param>
         /// <param name="mktCapPrice">If an order has been capped, this indicates the current capped price. Requires TWS 967+ and API v973.04+. Python API specifically requires API v973.06+.</param>
-        public override void orderStatus(int orderId, string status, double filled, double remaining, double avgFillPrice, int permId,
+        public override void orderStatus(int orderId, string status, decimal filled, decimal remaining, double avgFillPrice, int permId,
             int parentId, double lastFillPrice, int clientId, string whyHeld, double mktCapPrice)
         {
             var filledValue = Convert.ToInt32(filled);

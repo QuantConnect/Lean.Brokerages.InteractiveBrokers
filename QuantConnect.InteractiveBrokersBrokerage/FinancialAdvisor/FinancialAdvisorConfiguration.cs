@@ -33,7 +33,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.FinancialAdvisor
         // Financial Advisor configuration data
         private List<AccountAlias> _accountAliases = new List<AccountAlias>();
         private List<Group> _accountGroups = new List<Group>();
-        private List<AllocationProfile> _allocationProfiles = new List<AllocationProfile>();
 
         /// <summary>
         /// The financial advisor master account code
@@ -57,7 +56,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.FinancialAdvisor
 
             _accountAliases.Clear();
             _accountGroups.Clear();
-            _allocationProfiles.Clear();
         }
 
         /// <summary>
@@ -70,7 +68,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.FinancialAdvisor
             var faResetEvent = new AutoResetEvent(false);
 
             var xmlGroups = string.Empty;
-            var xmlProfiles = string.Empty;
             var xmlAliases = string.Empty;
 
             EventHandler<ReceiveFaEventArgs> handler = (sender, e) =>
@@ -83,10 +80,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.FinancialAdvisor
 
                     case Constants.FaGroups:
                         xmlGroups = e.FaXmlData;
-                        break;
-
-                    case Constants.FaProfiles:
-                        xmlProfiles = e.FaXmlData;
                         break;
                 }
 
@@ -113,15 +106,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.FinancialAdvisor
                 return false;
             }
 
-            // request FA Profiles
-            Log.Trace("InteractiveBrokersBrokerage.DownloadFinancialAdvisorConfiguration(): requesting FA Profiles");
-            client.ClientSocket.requestFA(Constants.FaProfiles);
-            if (!faResetEvent.WaitOne(2000))
-            {
-                Log.Trace("InteractiveBrokersBrokerage.DownloadFinancialAdvisorConfiguration(): Download FA Profiles failed. Operation took longer than 2 seconds.");
-                return false;
-            }
-
             client.ReceiveFa -= handler;
 
             // load FA configuration
@@ -137,13 +121,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.FinancialAdvisor
             {
                 _accountGroups = (List<Group>)serializer.Deserialize(stringReader);
                 Log.Trace("InteractiveBrokersBrokerage.DownloadFinancialAdvisorConfiguration(): FA Groups found: " + _accountGroups.Count);
-            }
-
-            serializer = new XmlSerializer(typeof(List<AllocationProfile>), new XmlRootAttribute("ListOfAllocationProfiles"));
-            using (var stringReader = new StringReader(xmlProfiles))
-            {
-                _allocationProfiles = (List<AllocationProfile>)serializer.Deserialize(stringReader);
-                Log.Trace("InteractiveBrokersBrokerage.DownloadFinancialAdvisorConfiguration(): FA Profiles found: " + _allocationProfiles.Count);
             }
 
             // save the master account code

@@ -23,12 +23,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <summary>
         /// The actual size.
         /// </summary>
-        public int Size { get; }
+        public decimal Size { get; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="TickSizeEventArgs"/> class
         /// </summary>
-        public TickSizeEventArgs(int tickerId, int field, int size)
+        public TickSizeEventArgs(int tickerId, int field, decimal size)
             : base(tickerId, field)
         {
             Size = size;
