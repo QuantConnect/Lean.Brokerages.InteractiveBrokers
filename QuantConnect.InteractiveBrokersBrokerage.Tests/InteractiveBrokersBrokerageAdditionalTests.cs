@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -33,6 +34,7 @@ using QuantConnect.Logging;
 using QuantConnect.Orders;
 using QuantConnect.Securities;
 using QuantConnect.Tests.Engine.DataFeeds;
+using QuantConnect.Util;
 using Order = QuantConnect.Orders.Order;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
@@ -274,8 +276,51 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
+        [TestCase("0.00:01:01.000", Resolution.Tick, "100 S")]
+        [TestCase("1.00:00:00.000", Resolution.Tick, "2000 S")]
+        [TestCase("1.00:01:00.000", Resolution.Tick, "2000 S")]
+        [TestCase("758.00:01:00.000", Resolution.Tick, "2000 S")]
+        [TestCase("0.00:01:01.000", Resolution.Second, "100 S")]
+        [TestCase("1.00:00:00.000", Resolution.Second, "2000 S")]
+        [TestCase("1.00:01:00.000", Resolution.Second, "2000 S")]
+        [TestCase("758.00:01:00.000", Resolution.Second, "2000 S")]
+        [TestCase("0.00:01:01.000", Resolution.Minute, "121 S")]
+        [TestCase("1.00:00:00.000", Resolution.Minute, "2 D")]
+        [TestCase("1.00:01:00.000", Resolution.Minute, "2 D")]
+        [TestCase("758.00:01:00.000", Resolution.Minute, "7 D")]
+        [TestCase("0.00:01:01.000", Resolution.Hour, "1 D")]
+        [TestCase("1.00:00:00.000", Resolution.Hour, "2 D")]
+        [TestCase("1.00:01:00.000", Resolution.Hour, "2 D")]
+        [TestCase("758.00:01:00.000", Resolution.Hour, "6 M")]
+        [TestCase("0.00:01:01.000", Resolution.Daily, "1 D")]
+        [TestCase("1.00:00:00.000", Resolution.Daily, "2 D")]
+        [TestCase("1.00:01:00.000", Resolution.Daily, "2 D")]
+        [TestCase("758.00:01:00.000", Resolution.Daily, "2 Y")]
+        public void Duration(string timeSpan, Resolution resolution, string expected)
+        {
+            var span = TimeSpan.ParseExact(timeSpan, "d\\.hh\\:mm\\:ss\\.fff", CultureInfo.InvariantCulture);
+            var result = InteractiveBrokersBrokerage.GetDuration(resolution, span);
+
+            Assert.AreEqual(expected, result);
+        }
+
+        [Test, TestCaseSource(nameof(HistoryDuration))]
+        public void HistoryDurationTest(
+            Symbol symbol,
+            Resolution resolution,
+            DateTimeZone exchangeTimeZone,
+            DateTimeZone dataTimeZone,
+            TimeSpan historyTimeSpan)
+        {
+            var endTimeInExchangeTimeZone = DateTime.UtcNow.Date.AddDays(-1).AddHours(13);
+
+            var result = GetHistory(symbol, resolution, exchangeTimeZone, dataTimeZone, endTimeInExchangeTimeZone, historyTimeSpan, false);
+
+            Assert.GreaterOrEqual(result.Count, 5);
+        }
+
         [Test, TestCaseSource(nameof(GetHistoryData))]
-        public void GetHistory(
+        public void GetHistoryData(
             Symbol symbol,
             Resolution resolution,
             DateTimeZone exchangeTimeZone,
@@ -284,6 +329,20 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             TimeSpan historyTimeSpan,
             bool includeExtendedMarketHours,
             int expectedCount)
+        {
+            var result = GetHistory(symbol, resolution, exchangeTimeZone, dataTimeZone, endTimeInExchangeTimeZone, historyTimeSpan, includeExtendedMarketHours);
+
+            Assert.AreEqual(expectedCount, result.Count);
+        }
+
+        private List<BaseData> GetHistory(
+            Symbol symbol,
+            Resolution resolution,
+            DateTimeZone exchangeTimeZone,
+            DateTimeZone dataTimeZone,
+            DateTime endTimeInExchangeTimeZone,
+            TimeSpan historyTimeSpan,
+            bool includeExtendedMarketHours)
         {
             using var brokerage = GetBrokerage();
             Assert.IsTrue(brokerage.IsConnected);
@@ -302,7 +361,14 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 DataNormalizationMode.Raw,
                 TickType.Trade);
 
+            var start = DateTime.UtcNow;
             var history = brokerage.GetHistory(request).ToList();
+
+            Log.Trace($"Resolution: {request.Resolution}. History count: {history.Count}. Took: {DateTime.UtcNow - start}");
+
+            // allow some time for the gateway to shutdown
+            brokerage.DisposeSafely();
+            Thread.Sleep(TimeSpan.FromSeconds(1));
 
             // check if data points are in chronological order
             var previousEndTime = DateTime.MinValue;
@@ -313,9 +379,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 previousEndTime = bar.EndTime;
             }
 
-            Log.Trace($"History count: {history.Count}");
-
-            Assert.AreEqual(expectedCount, history.Count);
+            return history;
         }
 
         private static TestCaseData[] GetHistoryData()
@@ -365,6 +429,27 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 new TestCaseData(delistedEquity, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
                     new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), false, 0),
             };
+        }
+
+        private static TestCaseData[] HistoryDuration()
+        {
+            TestGlobals.Initialize();
+
+            List<TestCaseData> result = new();
+            foreach (var resolution in Enum.GetValues(typeof(Resolution)).Cast<Resolution>())
+            {
+                var resSpan = resolution.ToTimeSpan();
+                if (resolution == Resolution.Tick)
+                {
+                    continue;
+                }
+                result.Add(new TestCaseData(Symbols.SPY, resolution, TimeZones.NewYork, TimeZones.NewYork, resSpan * 9));
+                result.Add(new TestCaseData(Symbols.SPY, resolution, TimeZones.NewYork, TimeZones.NewYork, resSpan * 99));
+                result.Add(new TestCaseData(Symbols.SPY, resolution, TimeZones.NewYork, TimeZones.NewYork, resSpan * 999));
+                result.Add(new TestCaseData(Symbols.SPY, resolution, TimeZones.NewYork, TimeZones.NewYork, resSpan * 10000));
+                result.Add(new TestCaseData(Symbols.SPY, resolution, TimeZones.NewYork, TimeZones.NewYork, resSpan * 100000));
+            }
+            return result.ToArray();
         }
 
         private InteractiveBrokersBrokerage GetBrokerage()
