@@ -810,7 +810,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         if (!DownloadAccount())
                         {
-                            Log.Trace("InteractiveBrokersBrokerage.Connect(): DownloadAccount failed. Operation took longer than 15 seconds.");
+                            Log.Trace($"InteractiveBrokersBrokerage.Connect(): DownloadAccount failed, attempt {attempt}");
 
                             Disconnect();
 
@@ -1024,7 +1024,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // linux there appears to be different behavior where the account download end fires immediately.
             Thread.Sleep(2500);
 
-            var result = _accountHoldingsResetEvent.WaitOne(15000);
+            var result = _accountHoldingsResetEvent.WaitOne(TimeSpan.FromSeconds(20));
 
             // remove our event handlers
             _client.AccountDownloadEnd -= clientOnAccountDownloadEnd;
@@ -1032,7 +1032,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             if (!result)
             {
-                Log.Trace("InteractiveBrokersBrokerage.DownloadAccount(): Operation took longer than 15 seconds.");
+                Log.Trace("InteractiveBrokersBrokerage.DownloadAccount(): Operation took longer than 20 seconds.");
             }
 
             if (accountIsNotReady.WaitOne(TimeSpan.Zero))
@@ -2947,28 +2947,47 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
-        /// Maps Resolution to IB span
+        /// Maps Resolution and history span to IB span
         /// </summary>
-        /// <param name="resolution"></param>
-        /// <returns></returns>
-        private string ConvertResolutionToDuration(Resolution resolution)
+        /// <param name="historyRequestSpan">The history requests time span</param>
+        /// <returns>The IB span</returns>
+        public static string GetDuration(Resolution resolution, TimeSpan historyRequestSpan)
         {
-            // TODO: we should take into account the actual requested time span to be more efficient
+            var days = (int)historyRequestSpan.TotalDays + 1;
             switch (resolution)
             {
                 case Resolution.Tick:
                 case Resolution.Second:
-                    return "1800 S";
+                    // seconds duration can't be smaller then 100
+                    var maximum = Math.Max((int)historyRequestSpan.TotalSeconds + 1, 100);
+                    // using second resolution doesn't accept higher duration
+                    return $"{Math.Min(maximum, 2000)} S";
 
                 case Resolution.Minute:
-                    return "1 D";
+                    if (historyRequestSpan.TotalMinutes <= 120)
+                    {
+                        // seconds duration can't be smaller then 100
+                        var seconds = Math.Max((int)historyRequestSpan.TotalSeconds + 60, 120);
+                        // 120min
+                        return $"{Math.Min(seconds, 7200)} S";
+                    }
+                    return $"{Math.Min(days, 7)} D";
 
                 case Resolution.Hour:
-                    return "1 M";
+                    if (days < 120)
+                    {
+                        return $"{days} D";
+                    }
+                    return "6 M";
 
                 case Resolution.Daily:
                 default:
-                    return "1 Y";
+                    // we can't send more than 365 days
+                    if (days < 365)
+                    {
+                        return $"{days} D";
+                    }
+                    return "2 Y";
             }
         }
 
@@ -3842,7 +3861,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // preparing the data for IB request
             var contract = CreateContract(request.Symbol, includeExpired: true);
             var resolution = ConvertResolution(request.Resolution);
-            var duration = ConvertResolutionToDuration(request.Resolution);
 
             var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
             var startTimeLocal = startTime.ConvertFromUtc(exchangeTimeZone);
@@ -3879,8 +3897,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 // Quotes need two separate IB requests for Bid and Ask,
                 // each pair of TradeBars will be joined into a single QuoteBar
-                var historyBid = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, duration, resolution, HistoricalDataType.Bid);
-                var historyAsk = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, duration, resolution, HistoricalDataType.Ask);
+                var historyBid = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, resolution, HistoricalDataType.Bid);
+                var historyAsk = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, resolution, HistoricalDataType.Ask);
 
                 history = historyBid.Join(historyAsk,
                     bid => bid.Time,
@@ -3897,7 +3915,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else
             {
                 // other assets will have TradeBars
-                history = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, duration, resolution, HistoricalDataType.Trades);
+                history = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, resolution, HistoricalDataType.Trades);
             }
 
             // cleaning the data before returning it back to user
@@ -3919,15 +3937,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             DateTime startTime,
             DateTime endTime,
             DateTimeZone exchangeTimeZone,
-            string duration,
             string resolution,
             string dataType)
         {
             const int timeOut = 60; // seconds timeout
 
             var history = new List<TradeBar>();
-            var dataDownloading = new AutoResetEvent(false);
-            var dataDownloaded = new AutoResetEvent(false);
+            using var dataDownloaded = new AutoResetEvent(false);
 
             // This is needed because when useRTH is set to 1, IB will return data only
             // during Equity regular trading hours (for any asset type, not only for equities)
@@ -3948,9 +3964,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 try
                 {
+                    // let's refetch the duration for each request, so for example we don't request 2 years for of data for 1 extra day
+                    var duration = GetDuration(request.Resolution, endTime - startTime);
 
                     var pacing = false;
-                    var historyPiece = new List<TradeBar>();
+                    var dataDownloadedCount = 0;
+                    TradeBar oldestDataPoint = null;
                     var historicalTicker = GetNextId();
 
                     _requestInformation[historicalTicker] = $"[Id={historicalTicker}] GetHistory: {request.Symbol.Value} ({GetContractDescription(contract)})";
@@ -3962,13 +3981,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             var bar = ConvertTradeBar(request.Symbol, request.Resolution, args, priceMagnifier);
                             if (request.Resolution != Resolution.Daily)
                             {
-                                bar.Time = bar.Time.ConvertFromUtc(exchangeTimeZone)
+                                bar.Time = bar.Time.ConvertFromUtc(exchangeTimeZone);
+
+                                if (request.Resolution == Resolution.Hour)
+                                {
                                     // let's make sure to round down to the requested resolution, if requesting hourly, non extended market hours, IB returns 9:30 for the first bar
-                                    .RoundDown(request.Resolution.ToTimeSpan());
+                                    bar.Time = bar.Time.RoundDown(request.Resolution.ToTimeSpan());
+                                }
                             }
 
-                            historyPiece.Add(bar);
-                            dataDownloading.Set();
+                            oldestDataPoint ??= bar;
+                            history.Add(bar);
+
+                            Interlocked.Increment(ref dataDownloadedCount);
                         }
                     };
 
@@ -3991,6 +4016,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             }
                             else
                             {
+                                if (args.Message.Contains("invalid step"))
+                                {
+                                    // this shouldn't happen if it does we want to know about it
+                                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "History", args.Message));
+                                }
                                 dataDownloaded.Set();
                             }
                         }
@@ -4006,7 +4036,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     var waitResult = 0;
                     while (waitResult == 0)
                     {
-                        waitResult = WaitHandle.WaitAny(new WaitHandle[] { dataDownloading, dataDownloaded }, timeOut * 1000);
+                        waitResult = WaitHandle.WaitAny(new WaitHandle[] { dataDownloaded }, timeOut * 1000);
+
+                        if(waitResult == WaitHandle.WaitTimeout)
+                        {
+                            if(Interlocked.Exchange(ref dataDownloadedCount, 0) != 0)
+                            {
+                                // timeout but data is being downloaded, so we are good, let's wait again but clear the data download count
+                                waitResult = 0;
+                            }
+                        }
+                        else
+                        {
+                            break;
+                        }
                     }
 
                     Client.Error -= clientOnError;
@@ -4027,17 +4070,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
 
                     // if no data has been received this time, we exit
-                    if (!historyPiece.Any())
+                    if (oldestDataPoint == null)
                     {
                         break;
                     }
 
-                    var filteredPiece = historyPiece.OrderBy(x => x.Time);
-
-                    history.InsertRange(0, filteredPiece);
-
                     // moving endTime to the new position to proceed with next request (if needed)
-                    endTime = filteredPiece.First().Time.ConvertToUtc(exchangeTimeZone);
+                    endTime = oldestDataPoint.Time.ConvertToUtc(exchangeTimeZone);
                 }
                 finally
                 {
@@ -4045,7 +4084,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            return history;
+            return history.OrderBy(x => x.Time);
         }
 
         /// <summary>
@@ -4662,6 +4701,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // these are warning messages not sent as brokerage message events
         private static readonly HashSet<int> FilteredCodes = new HashSet<int>
         {
+            // 'Request Account Data Sending Error' can happen while connecting sometimes let's ignore it else it bubbles up to the user even if we connected successfully later
+            542,
             1100, 1101, 1102, 2103, 2104, 2105, 2106, 2107, 2108, 2119, 2157, 2158, 10197
         };
 
