@@ -319,7 +319,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.GreaterOrEqual(result.Count, 5);
         }
 
-        [Test, TestCaseSource(nameof(GetHistoryData))]
+        [Test, TestCaseSource(nameof(HistoryData))]
         public void GetHistoryData(
             Symbol symbol,
             Resolution resolution,
@@ -382,7 +382,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             return history;
         }
 
-        private static TestCaseData[] GetHistoryData()
+        private static TestCaseData[] HistoryData()
         {
             TestGlobals.Initialize();
             var futureSymbolUsingCents = Symbols.CreateFutureSymbol("LE", new DateTime(2021, 12, 31));
