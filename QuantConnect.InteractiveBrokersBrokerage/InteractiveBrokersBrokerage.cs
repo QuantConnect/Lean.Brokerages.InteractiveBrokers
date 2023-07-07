@@ -88,6 +88,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // next valid order id (or request id, or ticker id) for this client
         private int _nextValidId;
 
+        private bool _sentTickSizeWarning;
+
         private readonly object _nextValidIdLocker = new object();
 
         private CancellationTokenSource _gatewayRestartTokenSource;
@@ -3473,22 +3475,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
         }
 
-        /// <summary>
-        /// Modifies the quantity received from IB based on the security type
-        /// </summary>
-        public decimal AdjustQuantity(SecurityType type, decimal size)
-        {
-            switch (type)
-            {
-                case SecurityType.Equity:
-                    // Effective in TWS version 985 and later, for US stocks the bid, ask, and last size quotes are shown in shares (not in lots).
-                    return _ibVersion < 985 ? size * 100 : size;
-
-                default:
-                    return size;
-            }
-        }
-
         private void HandleTickSize(object sender, IB.TickSizeEventArgs e)
         {
             SubscriptionEntry entry;
@@ -3499,10 +3485,23 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var symbol = entry.Symbol;
 
-            var securityType = symbol.ID.SecurityType;
-
             // negative size (-1) means no quantity available, normalize to zero
-            var quantity = e.Size < 0 ? 0 : AdjustQuantity(securityType, e.Size);
+            var quantity = e.Size < 0 ? 0 : e.Size;
+
+            if (quantity > 1000000000000)
+            {
+                // unexpected size
+                if(!_sentTickSizeWarning)
+                {
+                    _sentTickSizeWarning = true;
+                    Log.Error($"HandleTickSize(): Unexpected tick size symbol: {entry.Symbol}. Quantity: {quantity}. Field: {e.Field}");
+
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "TickSize", "Detected unexpected tick size ignoring"));
+                }
+
+                // push to zero
+                quantity = 0;
+            }
 
             Tick tick;
             switch (e.Field)
