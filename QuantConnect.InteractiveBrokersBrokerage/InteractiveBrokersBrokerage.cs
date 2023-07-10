@@ -3600,7 +3600,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     tick = entry.LastOpenInterestTick;
 
-                    tick.Value = e.Size;
+                    tick.Value = quantity;
                     break;
 
                 default:
