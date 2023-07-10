@@ -88,8 +88,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // next valid order id (or request id, or ticker id) for this client
         private int _nextValidId;
 
-        private bool _sentTickSizeWarning;
-
         private readonly object _nextValidIdLocker = new object();
 
         private CancellationTokenSource _gatewayRestartTokenSource;
@@ -3488,18 +3486,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // negative size (-1) means no quantity available, normalize to zero
             var quantity = e.Size < 0 ? 0 : e.Size;
 
-            if (quantity > 1000000000000)
+            if (quantity == decimal.MaxValue)
             {
-                // unexpected size
-                if(!_sentTickSizeWarning)
-                {
-                    _sentTickSizeWarning = true;
-                    Log.Error($"HandleTickSize(): Unexpected tick size symbol: {entry.Symbol}. Quantity: {quantity}. Field: {e.Field}");
-
-                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "TickSize", "Detected unexpected tick size ignoring"));
-                }
-
-                // push to zero
+                // we've seen this with SPX index bid size, not valid, expected for indexes
                 quantity = 0;
             }
 
@@ -3611,7 +3600,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     tick = entry.LastOpenInterestTick;
 
-                    tick.Value = e.Size;
+                    tick.Value = quantity;
                     break;
 
                 default:
