@@ -1336,13 +1336,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private string GetPrimaryExchange(Contract contract, Symbol symbol)
         {
-            ContractDetails details;
-            if (_contractDetails.TryGetValue(GetUniqueKey(contract), out details))
-            {
-                return details.Contract.PrimaryExch;
-            }
-
-            details = GetContractDetails(contract, symbol.Value);
+            var details = GetContractDetails(contract, symbol.Value);
             if (details == null)
             {
                 // we were unable to find the contract details
@@ -1369,7 +1363,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 contract.TradingClass = symbol.ID.Symbol;
             }
 
-            details = GetContractDetails(contract, symbol.Value);
+            details = GetContractDetailsImpl(contract, symbol.Value);
             if (details == null)
             {
                 // we were unable to find the contract details
@@ -1381,13 +1375,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private decimal GetMinTick(Contract contract, string ticker)
         {
-            ContractDetails details;
-            if (_contractDetails.TryGetValue(GetUniqueKey(contract), out details))
-            {
-                return (decimal)details.MinTick;
-            }
-
-            details = GetContractDetails(contract, ticker);
+            var details = GetContractDetails(contract, ticker);
             if (details == null)
             {
                 // we were unable to find the contract details
@@ -1403,6 +1391,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="contract">The target contract</param>
         /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
         private ContractDetails GetContractDetails(Contract contract, string ticker)
+        {
+            if (_contractDetails.TryGetValue(GetUniqueKey(contract), out var details))
+            {
+                return details;
+            }
+            return GetContractDetailsImpl(contract, ticker);
+        }
+
+        /// <summary>
+        /// Will return and cache the IB contract details for the requested contract
+        /// </summary>
+        /// <param name="contract">The target contract</param>
+        /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
+        private ContractDetails GetContractDetailsImpl(Contract contract, string ticker)
         {
             const int timeout = 60; // sec
 
