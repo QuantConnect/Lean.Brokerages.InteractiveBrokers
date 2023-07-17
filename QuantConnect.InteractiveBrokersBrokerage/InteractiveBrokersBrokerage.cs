@@ -68,6 +68,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 60 * 5));
 
         /// <summary>
+        /// Some orders might not send a submission event back to us, in which case we create a submission event ourselves
+        /// </summary>
+        /// <remarks>I've seen combo limit order take up to 5 seconds to be trigger a submission event</remarks>
+        private static readonly TimeSpan _noSubmissionOrdersResponseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-no-submission-orders-response-timeout", 10));
+        private static bool _submissionOrdersWarningSent;
+
+        private readonly HashSet<OrderType> _noSubmissionOrderTypes = new(new[] {
+            OrderType.MarketOnOpen
+            ,OrderType.ComboLegLimit,
+            // combo market & limit do not send submission event when trading only options
+            OrderType.ComboMarket,
+            OrderType.ComboLimit
+        });
+
+        /// <summary>
         /// The maximum time to wait for all fills in a combo order before we start emitting the fill events
         /// </summary>
         private static readonly TimeSpan _comboOrderFillTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-combo-order-fill-timeout", 30));
@@ -1295,25 +1310,44 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             else
             {
-                ManualResetEventSlim eventSlim = null;
-                if (order.Type != OrderType.MarketOnOpen && order.Type != OrderType.ComboLegLimit)
-                {
-                    _pendingOrderResponse[ibOrderId] = eventSlim = new ManualResetEventSlim(false);
-                }
+                ManualResetEventSlim eventSlim = _pendingOrderResponse[ibOrderId] = eventSlim = new ManualResetEventSlim(false);
 
                 var ibOrder = ConvertOrder(orders, contract, ibOrderId);
                 _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
 
-                if (order.Type != OrderType.MarketOnOpen && order.Type != OrderType.ComboLegLimit)
+                var noSubmissionOrderTypes = _noSubmissionOrderTypes.Contains(order.Type);
+                if (!eventSlim.Wait(noSubmissionOrderTypes ? _noSubmissionOrdersResponseTimeout : _responseTimeout))
                 {
-                    if (!eventSlim.Wait(_responseTimeout))
+                    if(noSubmissionOrderTypes)
                     {
-                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}"));
+                        if(!_submissionOrdersWarningSent)
+                        {
+                            _submissionOrdersWarningSent = true;
+                            OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning,
+                                "OrderSubmissionWarning",
+                                "Interactive Brokers does not send a submission event for some order types, in these cases if no error is detected Lean will generate the submission event."));
+                        }
+
+                        if (_pendingOrderResponse.TryRemove(ibOrderId, out var _))
+                        {
+                            eventSlim.DisposeSafely();
+
+                            var orderEvents = orders.Where(order => order != null).Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
+                            {
+                                Status = OrderStatus.Submitted,
+                                Message = "Lean Generated Interactive Brokers Order Event"
+                            }).ToList();
+                            OnOrderEvents(orderEvents);
+                        }
                     }
                     else
                     {
-                        eventSlim.DisposeSafely();
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}"));
                     }
+                }
+                else
+                {
+                    eventSlim.DisposeSafely();
                 }
             }
         }
@@ -4684,6 +4718,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static readonly HashSet<int> InvalidatingCodes = new HashSet<int>
         {
             104, // Can't modify a filled order
+            10148, // OrderId <OrderId> that needs to be cancelled can not be cancelled, state:
             105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 147, 148, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 163, 167, 168, 201,312,313,314,315,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,387,388,389,390,391,392,393,394,395,396,397,398,400,401,402,403,405,406,407,408,409,410,411,412,413,417,418,419,421,423,424,427,428,429,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,463,10002,10006,10007,10008,10009,10010,10011,10012,10014,10020,10058,2102
         };
 
@@ -4692,6 +4727,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             // 'Request Account Data Sending Error' can happen while connecting sometimes let's ignore it else it bubbles up to the user even if we connected successfully later
             542,
+            10148, // we are going to handle it as an order event
             1100, 1101, 1102, 2103, 2104, 2105, 2106, 2107, 2108, 2119, 2157, 2158, 10197
         };
 
