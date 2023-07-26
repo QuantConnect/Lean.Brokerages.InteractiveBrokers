@@ -30,10 +30,12 @@ using QuantConnect.Data;
 using QuantConnect.Data.Market;
 using QuantConnect.Interfaces;
 using QuantConnect.Lean.Engine.DataFeeds;
+using QuantConnect.Lean.Engine.TransactionHandlers;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
 using QuantConnect.Python;
 using QuantConnect.Securities;
+using QuantConnect.Tests.Engine;
 using QuantConnect.Tests.Engine.DataFeeds;
 using QuantConnect.Util;
 using Order = QuantConnect.Orders.Order;
@@ -249,11 +251,17 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [TestCase(100, 460, 0.0001, true)]
         public void SendTrailingStopOrder(decimal quantity, decimal stopPrice, decimal trailingAmount, bool trailingAsPercentage)
         {
-            var algo = new AlgorithmStub();
-            var orderProvider = new OrderProvider();
+            var algorithm = new AlgorithmStub();
             // wait for the previous run to finish, avoid any race condition
             Thread.Sleep(2000);
-            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio, new AggregationManager(), TestGlobals.MapFileProvider);
+
+            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio, new AggregationManager(),
+                TestGlobals.MapFileProvider);
+
+            var orderProcesor = new BrokerageTransactionHandler();
+            orderProcesor.Initialize(algorithm, brokerage, new TestResultHandler());
+            algorithm.Transactions.SetOrderProcessor(orderProcesor);
+
             brokerage.Connect();
 
             var openOrders = brokerage.GetOpenOrders();
@@ -266,11 +274,12 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var orderProperties = new InteractiveBrokersOrderProperties();
             var request = new SubmitOrderRequest(OrderType.TrailingStop, symbol.SecurityType, symbol, quantity, stopPrice, 0, 0,
                 trailingAmount, trailingAsPercentage, DateTime.UtcNow, string.Empty, orderProperties);
-            algo.Transactions.SetOrderId(request);
+            algorithm.Transactions.SetOrderId(request);
             var order = Order.CreateOrder(request);
             var trailingStopOrder = (TrailingStopOrder)order;
             var prevStopPrice = trailingStopOrder.StopPrice;
 
+            // Track fill events
             using var fillEvent = new ManualResetEvent(false);
             brokerage.OrdersStatusChanged += (_, orderEvents) =>
             {
@@ -280,6 +289,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 }
             };
 
+            // Track stop price updates
             using var stopPriceUpdateEvent = new AutoResetEvent(false);
             var updatedStopPrice = prevStopPrice;
             brokerage.OrderUpdated += (_, e) =>
@@ -288,22 +298,21 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 stopPriceUpdateEvent.Set();
             };
 
-            orderProvider.Add(order);
+            algorithm.AddEquity("SPY");
+            algorithm.SetFinishedWarmingUp();
+            orderProcesor.AddOrder(request);
+
             var response = brokerage.PlaceOrder(order);
 
             // Assert that we get stop price updates
             var triggeredEventIndex = 0;
             var stopPriceUpdated = false;
-            while (true)
+            while ((triggeredEventIndex = WaitHandle.WaitAny(new WaitHandle[] { stopPriceUpdateEvent, fillEvent }, TimeSpan.FromSeconds(60))) == 0)
             {
-                triggeredEventIndex = WaitHandle.WaitAny(new WaitHandle[] { stopPriceUpdateEvent, fillEvent }, TimeSpan.FromSeconds(60));
-                if (triggeredEventIndex != 0)
-                {
-                    break;
-                }
-
                 stopPriceUpdated = true;
                 Assert.AreNotEqual(prevStopPrice, updatedStopPrice);
+                var orderCurrentStopPrice = ((TrailingStopOrder)algorithm.Transactions.GetOpenOrders().Single()).StopPrice;
+                Assert.AreEqual(updatedStopPrice, orderCurrentStopPrice);
             };
 
             Assert.IsTrue(stopPriceUpdated);
