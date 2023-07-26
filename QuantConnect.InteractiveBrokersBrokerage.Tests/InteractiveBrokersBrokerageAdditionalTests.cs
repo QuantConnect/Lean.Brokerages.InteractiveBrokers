@@ -32,6 +32,7 @@ using QuantConnect.Interfaces;
 using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
+using QuantConnect.Python;
 using QuantConnect.Securities;
 using QuantConnect.Tests.Engine.DataFeeds;
 using QuantConnect.Util;
@@ -49,6 +50,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         public void Setup()
         {
             Log.LogHandler = new NUnitLogHandler();
+            PythonInitializer.Initialize();
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            PythonInitializer.Shutdown();
         }
 
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0, OrderDirection.Buy, OrderDirection.Sell)]
@@ -232,6 +240,83 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
+        // NOTEs:
+        // - The initial stop price should be far enough from current market price in order to trigger at least one stop price update
+        // - Stop price and trailing amount should be updated when the tests are run with real time data
+        [TestCase(-100, 450, 0.05, false)]
+        [TestCase(-100, 450, 0.0001, true)]
+        [TestCase(100, 460, 0.05, false)]
+        [TestCase(100, 460, 0.0001, true)]
+        public void SendTrailingStopOrder(decimal quantity, decimal stopPrice, decimal trailingAmount, bool trailingAsPercentage)
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            // wait for the previous run to finish, avoid any race condition
+            Thread.Sleep(2000);
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio, new AggregationManager(), TestGlobals.MapFileProvider);
+            brokerage.Connect();
+
+            var openOrders = brokerage.GetOpenOrders();
+            foreach (var o in openOrders)
+            {
+                brokerage.CancelOrder(o);
+            }
+
+            var symbol = Symbols.SPY;
+            var orderProperties = new InteractiveBrokersOrderProperties();
+            var request = new SubmitOrderRequest(OrderType.TrailingStop, symbol.SecurityType, symbol, quantity, stopPrice, 0, 0,
+                trailingAmount, trailingAsPercentage, DateTime.UtcNow, string.Empty, orderProperties);
+            algo.Transactions.SetOrderId(request);
+            var order = Order.CreateOrder(request);
+            var trailingStopOrder = (TrailingStopOrder)order;
+            var prevStopPrice = trailingStopOrder.StopPrice;
+
+            using var fillEvent = new ManualResetEvent(false);
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                if (orderEvents.Single().Status.IsClosed())
+                {
+                    fillEvent.Set();
+                }
+            };
+
+            using var stopPriceUpdateEvent = new AutoResetEvent(false);
+            var updatedStopPrice = prevStopPrice;
+            brokerage.OrderUpdated += (_, e) =>
+            {
+                updatedStopPrice = e.TrailingStopPrice;
+                stopPriceUpdateEvent.Set();
+            };
+
+            orderProvider.Add(order);
+            var response = brokerage.PlaceOrder(order);
+
+            // Assert that we get stop price updates
+            var triggeredEventIndex = 0;
+            var stopPriceUpdated = false;
+            while (true)
+            {
+                triggeredEventIndex = WaitHandle.WaitAny(new WaitHandle[] { stopPriceUpdateEvent, fillEvent }, TimeSpan.FromSeconds(60));
+                if (triggeredEventIndex != 0)
+                {
+                    break;
+                }
+
+                stopPriceUpdated = true;
+                Assert.AreNotEqual(prevStopPrice, updatedStopPrice);
+            };
+
+            Assert.IsTrue(stopPriceUpdated);
+
+            if (triggeredEventIndex == WaitHandle.WaitTimeout)
+            {
+                Log.Trace("Timeout waiting for order fill");
+            }
+            else
+            {
+                Log.Trace("The order was filled");
+            }
+        }
 
         [Test(Description = "Requires an existing IB connection with the same user credentials.")]
         public void ThrowsWhenExistingSessionDetected()
