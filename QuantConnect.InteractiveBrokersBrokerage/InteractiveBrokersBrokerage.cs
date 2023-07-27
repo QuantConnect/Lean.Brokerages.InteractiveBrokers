@@ -2411,7 +2411,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ibOrder.TrailStopPrice = NormalizePriceToBrokerage(trailingStopOrder.StopPrice, contract, order.Symbol);
                 if (trailingStopOrder.TrailingAsPercentage)
                 {
-                    ibOrder.TrailingPercent = (double)trailingStopOrder.TrailingAmount;
+                    ibOrder.TrailingPercent = (double)trailingStopOrder.TrailingAmount * 100;
                 }
                 else
                 {
@@ -2587,7 +2587,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     bool trailingAsPecentage;
                     if (trailingPercentage != double.MaxValue)
                     {
-                        trailingAmount = trailingPercentage.SafeDecimalCast();
+                        trailingAmount = trailingPercentage.SafeDecimalCast() / 100m;
                         trailingAsPecentage = true;
                     }
                     else
