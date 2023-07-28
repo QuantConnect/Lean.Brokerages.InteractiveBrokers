@@ -1840,13 +1840,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 Log.Trace($"InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): {update}");
 
-                if (!CheckIfConnected())
+                if (!IsConnected)
                 {
+                    if (_client != null)
+                    {
+                        Log.Error($"InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): Not connected; update dropped, _client.Connected: {_client.Connected}, _disconnected1100Fired: {_stateManager.Disconnected1100Fired}");
+                    }
+                    else
+                    {
+                        Log.Error("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): Not connected; _client is null");
+                    }
                     return;
                 }
 
                 var orders = _orderProvider.GetOrdersByBrokerageId(update.OrderId);
-                if (orders == null || orders.Count == 0)
+                if (orders == null)
                 {
                     Log.Error("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): Unable to locate order with BrokerageID " + update.OrderId);
                     return;
@@ -1905,63 +1913,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Handle OpenOrder event from IB
         /// </summary>
-        private void HandleOpenOrder(object sender, IB.OpenOrderEventArgs e)
+        private static void HandleOpenOrder(object sender, IB.OpenOrderEventArgs e)
         {
-            try
-            {
-                Log.Trace($"InteractiveBrokersBrokerage.HandleOpenOrder(): {e}");
-
-                var orders = _orderProvider.GetOrdersByBrokerageId(e.Order.OrderId);
-                if (orders == null || orders.Count == 0)
-                {
-                    Log.Error("InteractiveBrokersBrokerage.HandleOpenOrder(): Unable to locate order with BrokerageID " + e.Order.OrderId);
-                    return;
-                }
-
-                // the only changes we handle now are trail stop price updates
-                var order = orders[0];
-                if (order.Type != OrderType.TrailingStop)
-                {
-                    return;
-                }
-
-                if (!CheckIfConnected())
-                {
-                    return;
-                }
-
-                var updatedStopPrice = e.Order.TrailStopPrice;
-                var trailingStopOrder = (TrailingStopOrder)order;
-                if ((double)trailingStopOrder.StopPrice != updatedStopPrice)
-                {
-                    OnOrderUpdated(new OrderUpdateEvent { OrderId = trailingStopOrder.Id, TrailingStopPrice = updatedStopPrice.SafeDecimalCast() });
-                }
-            }
-            catch (Exception err)
-            {
-                Log.Error("InteractiveBrokersBrokerage.HandleOpenOrder(): " + err);
-            }
-        }
-
-        /// <summary>
-        /// Checks whether the client is connected and logs an error if not
-        /// </summary>
-        private bool CheckIfConnected()
-        {
-            if (!IsConnected)
-            {
-                if (_client != null)
-                {
-                    Log.Error($"InteractiveBrokersBrokerage.HandleOpenOrder(): Not connected; update dropped, _client.Connected: {_client.Connected}, _disconnected1100Fired: {_stateManager.Disconnected1100Fired}");
-                }
-                else
-                {
-                    Log.Error("InteractiveBrokersBrokerage.HandleOpenOrder(): Not connected; _client is null");
-                }
-                return false;
-            }
-
-            return true;
+            Log.Trace($"InteractiveBrokersBrokerage.HandleOpenOrder(): {e}");
         }
 
         /// <summary>
@@ -2328,8 +2282,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (order.Type == OrderType.Limit ||
                 order.Type == OrderType.LimitIfTouched ||
                 order.Type == OrderType.StopMarket ||
-                order.Type == OrderType.StopLimit ||
-                order.Type == OrderType.TrailingStop)
+                order.Type == OrderType.StopLimit)
             {
                 if (orderProperties != null)
                 {
@@ -2379,7 +2332,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var limitOrder = order as LimitOrder;
             var stopMarketOrder = order as StopMarketOrder;
             var stopLimitOrder = order as StopLimitOrder;
-            var trailingStopOrder = order as TrailingStopOrder;
             var limitIfTouchedOrder = order as LimitIfTouchedOrder;
             var comboLimitOrder = order as ComboLimitOrder;
             var comboLegLimitOrder = order as ComboLegLimitOrder;
@@ -2404,19 +2356,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if(limitOrder != null)
             {
                 ibOrder.LmtPrice = NormalizePriceToBrokerage(limitOrder.LimitPrice, contract, order.Symbol);
-            }
-            // check trailing stop before stop market because TrailingStopOrder inherits StopMarketOrder
-            else if (trailingStopOrder != null)
-            {
-                ibOrder.TrailStopPrice = NormalizePriceToBrokerage(trailingStopOrder.StopPrice, contract, order.Symbol);
-                if (trailingStopOrder.TrailingAsPercentage)
-                {
-                    ibOrder.TrailingPercent = (double)trailingStopOrder.TrailingAmount * 100;
-                }
-                else
-                {
-                    ibOrder.AuxPrice = NormalizePriceToBrokerage(trailingStopOrder.TrailingAmount, contract, order.Symbol);
-                }
             }
             else if (stopMarketOrder != null)
             {
@@ -2512,21 +2451,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         legLimitPrice = ibOrder.OrderComboLegs[i].Price;
                     }
-                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
-                        comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group));
+                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType, comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, contractDetails.Contract, group));
                 }
             }
             else
             {
-                result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                    ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null));
+                result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity, ibOrder.LmtPrice, contract, null));
             }
 
             return result;
         }
 
-        private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
-            double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager)
+        private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity, double limitPrice, Contract contract, GroupOrderManager groupOrderManager)
         {
             // this function is called by GetOpenOrders which is mainly used by the setup handler to
             // initialize algorithm state.  So the only time we'll be executing this code is when the account
@@ -2580,29 +2516,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         NormalizePriceToLean(limitPrice, mappedSymbol),
                         new DateTime()
                         );
-                    break;
-
-                case OrderType.TrailingStop:
-                    decimal trailingAmount;
-                    bool trailingAsPecentage;
-                    if (trailingPercentage != double.MaxValue)
-                    {
-                        trailingAmount = trailingPercentage.SafeDecimalCast() / 100m;
-                        trailingAsPecentage = true;
-                    }
-                    else
-                    {
-                        trailingAmount = NormalizePriceToLean(auxPrice, mappedSymbol);
-                        trailingAsPecentage = false;
-                    }
-
-                    order = new TrailingStopOrder(mappedSymbol,
-                        quantity,
-                        NormalizePriceToLean(trailingStopPrice, mappedSymbol),
-                        trailingAmount,
-                        trailingAsPecentage,
-                        new DateTime()
-                    );
                     break;
 
                 case OrderType.LimitIfTouched:
@@ -2812,7 +2725,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case OrderType.Limit: return IB.OrderType.Limit;
                 case OrderType.StopMarket: return IB.OrderType.Stop;
                 case OrderType.StopLimit: return IB.OrderType.StopLimit;
-                case OrderType.TrailingStop: return IB.OrderType.TrailingStop;
                 case OrderType.LimitIfTouched: return IB.OrderType.LimitIfTouched;
                 case OrderType.MarketOnOpen: return IB.OrderType.Market;
                 case OrderType.MarketOnClose: return IB.OrderType.MarketOnClose;
@@ -2834,7 +2746,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case IB.OrderType.Limit: return OrderType.Limit;
                 case IB.OrderType.Stop: return OrderType.StopMarket;
                 case IB.OrderType.StopLimit: return OrderType.StopLimit;
-                case IB.OrderType.TrailingStop: return OrderType.TrailingStop;
                 case IB.OrderType.LimitIfTouched: return OrderType.LimitIfTouched;
                 case IB.OrderType.MarketOnClose: return OrderType.MarketOnClose;
 

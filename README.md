@@ -140,7 +140,6 @@ The following table describes the order types that IB supports. For specific det
 | `LimitIfTouchedOrder` | [Limit if Touched Orders](https://www.interactivebrokers.com/en/index.php?f=592) |
 | `StopMarketOrder` | [Stop Orders](https://www.interactivebrokers.com/en/index.php?f=609) |
 | `StopLimitOrder` | [Stop-Limit Orders](https://www.interactivebrokers.com/en/index.php?f=608) |
-| `TrailingStopOrder` | [Trailing Stop Orders](https://www.interactivebrokers.com/en/trading/orders/trailing-stops.php) |
 | `MarketOnOpenOrder` | [Market-on-Open (MOO) Orders](https://www.interactivebrokers.com/en/index.php?f=598) |
 | `MarketOnCloseOrder` | [Market-on-Close (MOC) Orders](https://www.interactivebrokers.com/en/index.php?f=599) |
 | `ExerciseOption` | [Options Exercise](https://www.interactivebrokers.ca/en/trading/exerciseCloseout.php) |
