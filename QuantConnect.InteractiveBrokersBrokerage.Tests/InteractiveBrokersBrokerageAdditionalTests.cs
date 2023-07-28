@@ -30,9 +30,12 @@ using QuantConnect.Data;
 using QuantConnect.Data.Market;
 using QuantConnect.Interfaces;
 using QuantConnect.Lean.Engine.DataFeeds;
+using QuantConnect.Lean.Engine.TransactionHandlers;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
+using QuantConnect.Python;
 using QuantConnect.Securities;
+using QuantConnect.Tests.Engine;
 using QuantConnect.Tests.Engine.DataFeeds;
 using QuantConnect.Util;
 using Order = QuantConnect.Orders.Order;
@@ -49,6 +52,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         public void Setup()
         {
             Log.LogHandler = new NUnitLogHandler();
+            PythonInitializer.Initialize();
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            PythonInitializer.Shutdown();
         }
 
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0, OrderDirection.Buy, OrderDirection.Sell)]
@@ -232,6 +242,185 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
+        // NOTEs:
+        // - The initial stop price should be far enough from current market price in order to trigger at least one stop price update
+        // - Stop price and trailing amount should be updated when the tests are run with real time data
+        [TestCase(-100, 450, 0.05, false)]
+        [TestCase(-100, 450, 0.0001, true)]
+        [TestCase(100, 460, 0.05, false)]
+        [TestCase(100, 460, 0.0001, true)]
+        public void SendTrailingStopOrder(decimal quantity, decimal stopPrice, decimal trailingAmount, bool trailingAsPercentage)
+        {
+            // wait for the previous run to finish, avoid any race condition
+            Thread.Sleep(2000);
+
+            var algorithm = new AlgorithmStub();
+            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio, new AggregationManager(),
+                TestGlobals.MapFileProvider);
+
+            var orderProcesor = new BrokerageTransactionHandler();
+            orderProcesor.Initialize(algorithm, brokerage, new TestResultHandler());
+            algorithm.Transactions.SetOrderProcessor(orderProcesor);
+
+            brokerage.Connect();
+
+            var openOrders = brokerage.GetOpenOrders();
+            foreach (var o in openOrders)
+            {
+                brokerage.CancelOrder(o);
+            }
+
+            var symbol = Symbols.SPY;
+            var orderProperties = new InteractiveBrokersOrderProperties();
+            var request = new SubmitOrderRequest(OrderType.TrailingStop, symbol.SecurityType, symbol, quantity, stopPrice, 0, 0,
+                trailingAmount, trailingAsPercentage, DateTime.UtcNow, string.Empty, orderProperties);
+            algorithm.Transactions.SetOrderId(request);
+            var order = Order.CreateOrder(request);
+            var trailingStopOrder = (TrailingStopOrder)order;
+            var prevStopPrice = trailingStopOrder.StopPrice;
+
+            // Track fill events
+            using var fillEvent = new ManualResetEvent(false);
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                if (orderEvents.Single().Status.IsClosed())
+                {
+                    fillEvent.Set();
+                }
+            };
+
+            // Track stop price updates
+            using var stopPriceUpdateEvent = new AutoResetEvent(false);
+            var updatedStopPrice = prevStopPrice;
+            brokerage.OrderUpdated += (_, e) =>
+            {
+                updatedStopPrice = e.TrailingStopPrice;
+                stopPriceUpdateEvent.Set();
+            };
+
+            algorithm.AddEquity("SPY");
+            algorithm.SetFinishedWarmingUp();
+
+            // Place order
+            orderProcesor.AddOrder(request);
+            Thread.Sleep(1000);
+            order = orderProcesor.GetOpenOrders().Single();
+
+            // Assert that we get stop price updates
+            var triggeredEventIndex = 0;
+            var stopPriceUpdated = false;
+            while ((triggeredEventIndex = WaitHandle.WaitAny(new WaitHandle[] { stopPriceUpdateEvent, fillEvent }, TimeSpan.FromSeconds(60))) == 0)
+            {
+                stopPriceUpdated = true;
+                Assert.AreNotEqual(prevStopPrice, updatedStopPrice);
+                var orderCurrentStopPrice = ((TrailingStopOrder)algorithm.Transactions.GetOpenOrders().Single()).StopPrice;
+                Assert.AreEqual(updatedStopPrice, orderCurrentStopPrice);
+            };
+
+            Assert.IsTrue(stopPriceUpdated);
+
+            if (triggeredEventIndex == WaitHandle.WaitTimeout)
+            {
+                Log.Trace("Timeout waiting for order fill");
+            }
+            else
+            {
+                Log.Trace("The order was filled");
+            }
+        }
+
+        // NOTEs:
+        // - The initial stop price should be far enough from current market price in order to trigger at least one stop price update
+        // - Stop price and trailing amount should be updated when the tests are run with real time data
+        [Test]
+        public void SendUpdateAndCancelTrailingStopOrder()
+        {
+            // wait for the previous run to finish, avoid any race condition
+            Thread.Sleep(2000);
+
+            var algorithm = new AlgorithmStub();
+            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio, new AggregationManager(),
+                TestGlobals.MapFileProvider);
+
+            var orderProcesor = new BrokerageTransactionHandler();
+            orderProcesor.Initialize(algorithm, brokerage, new TestResultHandler());
+            algorithm.Transactions.SetOrderProcessor(orderProcesor);
+
+            brokerage.Connect();
+
+            var openOrders = brokerage.GetOpenOrders();
+            foreach (var o in openOrders)
+            {
+                brokerage.CancelOrder(o);
+            }
+
+            var symbol = Symbols.SPY;
+            var orderProperties = new InteractiveBrokersOrderProperties();
+            var request = new SubmitOrderRequest(OrderType.TrailingStop, symbol.SecurityType, symbol, -100, stopPrice: 400, 0, 0,
+                // Trailing amount is set to 0.15% of the current market price, for SPY now it ensures it won't be triggered
+                trailingAmount: 0.15m, trailingAsPercentage: true, DateTime.UtcNow, string.Empty, orderProperties);
+            algorithm.Transactions.SetOrderId(request);
+            var order = Order.CreateOrder(request);
+            var trailingStopOrder = (TrailingStopOrder)order;
+            var prevStopPrice = trailingStopOrder.StopPrice;
+
+            // Track fill events and other status updates
+            using var orderPlacedEvent = new ManualResetEvent(false);
+            using var fillEvent = new ManualResetEvent(false);
+            using var statusUpdateEvent = new ManualResetEvent(false);
+            using var cancelEvent = new ManualResetEvent(false);
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                var orderEvent = orderEvents[0];
+                Console.WriteLine($"ORDER EVENT: Status: {orderEvent.Status}");
+                switch (orderEvent.Status)
+                {
+                    case OrderStatus.Submitted:
+                        orderPlacedEvent.Set();
+                        break;
+                    case OrderStatus.UpdateSubmitted:
+                        statusUpdateEvent.Set();
+                        break;
+                    case OrderStatus.Filled:
+                        fillEvent.Set();
+                        break;
+                    case OrderStatus.Canceled:
+                        cancelEvent.Set();
+                        break;
+                }
+            };
+
+            algorithm.AddEquity("SPY");
+            algorithm.SetFinishedWarmingUp();
+
+            // Place order
+            orderProcesor.AddOrder(request);
+            Thread.Sleep(1000);
+            order = orderProcesor.GetOpenOrders().Single();
+
+            orderPlacedEvent.WaitOneAssertFail(5000, "Failed to submit trailing stop order");
+
+            // Update order
+            var updateRequest = new UpdateOrderRequest(DateTime.UtcNow, order.Id, new UpdateOrderFields { TrailingAmount = 0.1m });
+            order.ApplyUpdateOrderRequest(updateRequest);
+            brokerage.UpdateOrder(order);
+
+            // Wait for the update to be applied
+            statusUpdateEvent.WaitOneAssertFail(5000, "Failed to update trailing amount");
+
+            var brokerageOrders = brokerage.GetOpenOrders();
+            var brokerageOrder = brokerageOrders.Where(o => o.BrokerId.Contains(order.BrokerId[0])).Single();
+            Assert.AreEqual(0.1m, ((TrailingStopOrder)brokerageOrder).TrailingAmount);
+
+            // Cancel order
+            brokerage.CancelOrder(order);
+
+            cancelEvent.WaitOneAssertFail(5000, "Failed to cancel trailing stop order");
+
+            brokerageOrders = brokerage.GetOpenOrders();
+            var canceledBrokerageOrder = brokerageOrders.FirstOrDefault(o => o.BrokerId.Contains(order.BrokerId[0]));
+            Assert.IsNull(canceledBrokerageOrder);
+        }
 
         [Test(Description = "Requires an existing IB connection with the same user credentials.")]
         public void ThrowsWhenExistingSessionDetected()
