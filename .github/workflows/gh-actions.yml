@@ -19,10 +19,12 @@ jobs:
         QC_JOB_USER_ID: ${{ secrets.JOB_USER_ID }}
         QC_API_ACCESS_TOKEN: ${{ secrets.API_ACCESS_TOKEN }}
         QC_JOB_ORGANIZATION_ID: ${{ secrets.JOB_ORGANIZATION_ID }}
-    container:
-        image: quantconnect/lean:foundation
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Free space
+        run: df -h && rm -rf /opt/hostedtoolcache* && df -h
 
       - name: Checkout Lean Same Branch
         id: lean-same-branch
@@ -43,8 +45,14 @@ jobs:
       - name: Move Lean
         run: mv Lean ../Lean
 
-      - name: Build
-        run: dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.InteractiveBrokersBrokerage.sln
-
-      - name: Run Tests
-        run: dotnet test ./QuantConnect.InteractiveBrokersBrokerage.Tests/bin/Release/QuantConnect.InteractiveBrokersBrokerage.Tests.dll
+      - name: Run Image
+        uses: addnab/docker-run-action@v3
+        with:
+          image: quantconnect/lean:foundation
+          options: --workdir /__w/Lean.Brokerages.InteractiveBrokers/Lean.Brokerages.InteractiveBrokers -v /home/runner/work:/__w
+          shell: bash
+          run: |
+            # Build
+            dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.InteractiveBrokersBrokerage.sln
+            # Run Tests
+            dotnet test ./QuantConnect.InteractiveBrokersBrokerage.Tests/bin/Release/QuantConnect.InteractiveBrokersBrokerage.Tests.dll
