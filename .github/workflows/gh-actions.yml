@@ -26,12 +26,6 @@ jobs:
       - name: Free space
         run: df -h && rm -rf /opt/hostedtoolcache* && df -h
 
-      - name: Start Lean Image
-        uses: addnab/docker-run-action@v3
-        with:
-          image: quantconnect/lean:foundation
-          options: --workdir /__w/Lean/Lean -v /home/runner/work:/__w -e GITHUB_REF=${{ github.ref }} -e PYPI_API_TOKEN=${{ secrets.PYPI_API_TOKEN }} -e ADDITIONAL_STUBS_REPOS=${{ secrets.ADDITIONAL_STUBS_REPOS }} -e QC_GIT_TOKEN=${{ secrets.QC_GIT_TOKEN }}
-
       - name: Checkout Lean Same Branch
         id: lean-same-branch
         uses: actions/checkout@v2
@@ -51,8 +45,14 @@ jobs:
       - name: Move Lean
         run: mv Lean ../Lean
 
-      - name: Build
-        run: dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.InteractiveBrokersBrokerage.sln
-
-      - name: Run Tests
-        run: dotnet test ./QuantConnect.InteractiveBrokersBrokerage.Tests/bin/Release/QuantConnect.InteractiveBrokersBrokerage.Tests.dll
+      - name: Start Lean Image
+        uses: addnab/docker-run-action@v3
+        with:
+          image: quantconnect/lean:foundation
+          options: --workdir /__w/Lean/Lean.Brokerages.InteractiveBrokers -v /home/runner/work:/__w -e GITHUB_REF=${{ github.ref }} -e PYPI_API_TOKEN=${{ secrets.PYPI_API_TOKEN }} -e ADDITIONAL_STUBS_REPOS=${{ secrets.ADDITIONAL_STUBS_REPOS }} -e QC_GIT_TOKEN=${{ secrets.QC_GIT_TOKEN }}
+          shell: bash
+          run: |
+            # Build
+            dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.InteractiveBrokersBrokerage.sln
+            # Run Tests
+            dotnet test ./QuantConnect.InteractiveBrokersBrokerage.Tests/bin/Release/QuantConnect.InteractiveBrokersBrokerage.Tests.dll
