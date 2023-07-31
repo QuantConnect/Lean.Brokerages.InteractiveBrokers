@@ -143,6 +143,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private readonly ComboOrdersFillTimeoutMonitor _comboOrdersFillTimeoutMonitor = new(RealTimeProvider.Instance, _comboOrderFillTimeout);
 
+        private readonly ConcurrentDictionary<int, StopLimitOrder> _preSubmittedStopLimitOrders = new();
+
         // tracks requested order updates, so we can flag Submitted order events as updates
         private readonly ConcurrentDictionary<int, int> _orderUpdates = new ConcurrentDictionary<int, int>();
 
@@ -1852,20 +1854,28 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
+                var firstOrder = orders[0];
+                if (firstOrder.Type == OrderType.StopLimit && update.Status == IB.OrderStatus.PreSubmitted)
+                {
+                    _preSubmittedStopLimitOrders.TryAdd(firstOrder.Id, (StopLimitOrder)firstOrder);
+                }
+
                 var status = ConvertOrderStatus(update.Status);
 
                 if (status == OrderStatus.Filled || status == OrderStatus.PartiallyFilled)
                 {
-                    // fill events will be only processed in HandleExecutionDetails and HandleCommissionReports
+                    // fill events will be only processed in HandleExecutionDetails and HandleCommissionReports.
+                    // but first, we want to check whether stop limit orders were triggered.
+                    TryUpdateStopLimitTriggered(firstOrder);
+
                     return;
                 }
 
                 var orderEvents = new List<OrderEvent>(orders.Count);
                 foreach (var order in orders)
                 {
-                    int id;
                     // if we get a Submitted status and we had placed an order update, this new event is flagged as an update
-                    var isUpdate = status == OrderStatus.Submitted && _orderUpdates.TryRemove(order.Id, out id);
+                    var isUpdate = status == OrderStatus.Submitted && _orderUpdates.TryRemove(order.Id, out _);
 
                     // IB likes to duplicate/triplicate some events, so we fire non-fill events only if status changed
                     if (status != order.Status || isUpdate)
@@ -1880,7 +1890,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             // if we receive a New or Submitted event when already partially filled, we ignore it
                             Log.Trace("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): ignoring status " + status + " after partial fills");
                         }
-                        else
+                        else if (!TryUpdateStopLimitTriggered(order))
                         {
                             orderEvents.Add(new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero, "Interactive Brokers Order Event")
                             {
@@ -1900,6 +1910,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 Log.Error("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): " + err);
             }
+        }
+
+        /// <summary>
+        /// Checks whether a given order is a stop limit order that was triggered and updates the order accordingly
+        /// </summary>
+        private bool TryUpdateStopLimitTriggered(Order order)
+        {
+            if (order.Type == OrderType.StopLimit && _preSubmittedStopLimitOrders.TryRemove(order.Id, out _))
+            {
+                OnOrderUpdated(new OrderUpdateEvent { OrderId = order.Id, StopTriggered = true });
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>

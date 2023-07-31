@@ -422,6 +422,76 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsNull(canceledBrokerageOrder);
         }
 
+        [TestCase(-100, 450, 445)]
+        [TestCase(100, 450, 455)]
+        public void SendStopLimitOrder(decimal quantity, decimal stopPrice, decimal limitPrice)
+        {
+            // wait for the previous run to finish, avoid any race condition
+            Thread.Sleep(2000);
+
+            var algorithm = new AlgorithmStub();
+            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio, new AggregationManager(),
+                TestGlobals.MapFileProvider);
+
+            var orderProcesor = new BrokerageTransactionHandler();
+            orderProcesor.Initialize(algorithm, brokerage, new TestResultHandler());
+            algorithm.Transactions.SetOrderProcessor(orderProcesor);
+
+            brokerage.Connect();
+
+            var openOrders = brokerage.GetOpenOrders();
+            foreach (var o in openOrders)
+            {
+                brokerage.CancelOrder(o);
+            }
+
+            var symbol = Symbols.SPY;
+            var orderProperties = new InteractiveBrokersOrderProperties();
+            var request = new SubmitOrderRequest(OrderType.StopLimit, symbol.SecurityType, symbol, quantity, stopPrice, limitPrice, 0, 0, false,
+                DateTime.UtcNow, string.Empty, orderProperties);
+            algorithm.Transactions.SetOrderId(request);
+            var order = Order.CreateOrder(request);
+
+            // Track fill events
+            using var fillEvent = new ManualResetEvent(false);
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                if (orderEvents.Single().Status.IsClosed())
+                {
+                    fillEvent.Set();
+                }
+            };
+
+            // Track stop trigger
+            using var stopTriggeredEvent = new AutoResetEvent(false);
+            var stopTriggered = false;
+            brokerage.OrderUpdated += (_, e) =>
+            {
+                stopTriggered = e.StopTriggered;
+            };
+
+            algorithm.AddEquity("SPY");
+            algorithm.SetFinishedWarmingUp();
+
+            // Place order
+            orderProcesor.AddOrder(request);
+            Thread.Sleep(1000);
+            order = orderProcesor.GetOpenOrders().Single();
+
+            var filled = fillEvent.WaitOne(TimeSpan.FromSeconds(60));
+
+            if (filled)
+            {
+                Assert.IsTrue(stopTriggered);
+                var stopLimitOrder = (StopLimitOrder)algorithm.Transactions.GetOpenOrders().Single();
+                Assert.IsTrue(stopLimitOrder.StopTriggered);
+            }
+            else
+            {
+                Assert.Fail("Order did not fill within 60 seconds, try with different parameters");
+            }
+        }
+
         [Test(Description = "Requires an existing IB connection with the same user credentials.")]
         public void ThrowsWhenExistingSessionDetected()
         {
