@@ -45,9 +45,6 @@ jobs:
       - name: Move Lean
         run: mv Lean ../Lean
 
-      - name: PWD
-        run: pwd
-
       - name: Run Image
         uses: addnab/docker-run-action@v3
         with:
