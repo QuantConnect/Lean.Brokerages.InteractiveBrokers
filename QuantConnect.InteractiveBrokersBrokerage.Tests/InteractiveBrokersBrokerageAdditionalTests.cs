@@ -475,7 +475,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             // Place order
             orderProcesor.AddOrder(request);
-            Thread.Sleep(1000);
             order = orderProcesor.GetOpenOrders().Single();
 
             var filled = fillEvent.WaitOne(TimeSpan.FromSeconds(60));

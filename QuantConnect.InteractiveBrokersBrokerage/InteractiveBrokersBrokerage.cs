@@ -1855,9 +1855,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
 
                 var firstOrder = orders[0];
-                if (firstOrder.Type == OrderType.StopLimit && update.Status == IB.OrderStatus.PreSubmitted)
+                if (firstOrder is StopLimitOrder stopLimitOrder && update.Status == IB.OrderStatus.PreSubmitted && !stopLimitOrder.StopTriggered)
                 {
-                    _preSubmittedStopLimitOrders.TryAdd(firstOrder.Id, (StopLimitOrder)firstOrder);
+                    _preSubmittedStopLimitOrders.TryAdd(firstOrder.Id, stopLimitOrder);
                 }
 
                 var status = ConvertOrderStatus(update.Status);
