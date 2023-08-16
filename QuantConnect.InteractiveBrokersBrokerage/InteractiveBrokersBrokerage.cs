@@ -489,7 +489,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private List<Order> GetOpenOrdersInternal(bool all)
         {
-            var orders = new List<(IBApi.Order Order, Contract Contract)>();
+            var orders = new List<(IBApi.Order Order, Contract Contract, OrderState OrderState)>();
 
             var manualResetEvent = new ManualResetEvent(false);
 
@@ -506,8 +506,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         lastOrderId = args.OrderId;
                     }
 
-                    // keep the IB order and contract objects returned from RequestOpenOrders
-                    orders.Add((args.Order, args.Contract));
+                    // keep the IB order, contract objects and order state returned from RequestOpenOrders
+                    orders.Add((args.Order, args.Contract, args.OrderState));
                 }
                 catch (Exception e)
                 {
@@ -566,7 +566,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // convert results to Lean Orders outside the eventhandler to avoid nesting requests, as conversion may request
             // contract details
-            return orders.Select(orderContract => ConvertOrders(orderContract.Order, orderContract.Contract)).SelectMany(orders => orders).ToList();
+            return orders.Select(orderContract => ConvertOrders(orderContract.Order, orderContract.Contract, orderContract.OrderState)).SelectMany(orders => orders).ToList();
         }
 
         /// <summary>
@@ -2479,7 +2479,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return ibOrder;
         }
 
-        private List<Order> ConvertOrders(IBApi.Order ibOrder, Contract contract)
+        private List<Order> ConvertOrders(IBApi.Order ibOrder, Contract contract, OrderState orderState)
         {
             var result = new List<Order>();
             var quantitySign = ConvertOrderDirection(ibOrder.Action) == OrderDirection.Sell ? -1 : 1;
@@ -2513,20 +2513,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         legLimitPrice = ibOrder.OrderComboLegs[i].Price;
                     }
                     result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
-                        comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group));
+                        comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState));
                 }
             }
             else
             {
                 result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                    ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null));
+                    ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState));
             }
 
             return result;
         }
 
         private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
-            double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager)
+            double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager, OrderState orderState)
         {
             // this function is called by GetOpenOrders which is mainly used by the setup handler to
             // initialize algorithm state.  So the only time we'll be executing this code is when the account
@@ -2646,6 +2646,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             order.BrokerId.Add(ibOrderId.ToStringInvariant());
             order.Properties.TimeInForce = ConvertTimeInForce(timeInForce, goodTillDate);
+            order.Status = ConvertOrderStatus(orderState.Status);
 
             return order;
         }
