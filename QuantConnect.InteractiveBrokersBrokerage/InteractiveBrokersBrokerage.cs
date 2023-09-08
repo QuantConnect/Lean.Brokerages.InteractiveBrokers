@@ -1611,7 +1611,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // handles the 'connection refused' connect cases
             _connectEvent.Set();
 
-            // https://www.interactivebrokers.com/en/software/api/apiguide/tables/api_message_codes.htm
+            // https://interactivebrokers.github.io/tws-api/message_codes.html
 
             var requestId = e.Id;
             var errorCode = e.Code;
@@ -1705,6 +1705,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Log.Trace($"InteractiveBrokersBrokerage.HandleError(): Not connected, ignoring error, ErrorCode: {errorCode} - {errorMsg}");
                     return;
                 }
+            }
+            else if (errorCode == 101)
+            {
+                if (_maxSubscribedSymbolsReached) return;
+                // Improves error message with the additional notes IB provides on the the error messages page
+                errorMsg = $"{e.Message} - The current number of active market data subscriptions in TWS and the API altogether has been exceeded ({_subscribedSymbols.Count}). This number is calculated based on a formula which is based on the equity, commissions, and quote booster packs in an account.";
+                _maxSubscribedSymbolsReached = true;
             }
 
             if (InvalidatingCodes.Contains(errorCode))
@@ -4638,6 +4645,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             };
         }
 
+        private bool _maxSubscribedSymbolsReached = false;
         private readonly ConcurrentDictionary<Symbol, int> _subscribedSymbols = new ConcurrentDictionary<Symbol, int>();
         private readonly ConcurrentDictionary<int, SubscriptionEntry> _subscribedTickers = new ConcurrentDictionary<int, SubscriptionEntry>();
 
