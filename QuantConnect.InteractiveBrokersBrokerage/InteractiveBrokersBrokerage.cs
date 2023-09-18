@@ -1873,7 +1873,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     // fill events will be only processed in HandleExecutionDetails and HandleCommissionReports.
                     // but first, we want to check whether stop limit orders were triggered.
-                    TryUpdateStopLimitTriggered(firstOrder);
+                    TryUpdateStopLimitTriggered(firstOrder, update.Status);
 
                     return;
                 }
@@ -1897,7 +1897,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             // if we receive a New or Submitted event when already partially filled, we ignore it
                             Log.Trace("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): ignoring status " + status + " after partial fills");
                         }
-                        else if (!TryUpdateStopLimitTriggered(order))
+                        else if (!TryUpdateStopLimitTriggered(order, update.Status))
                         {
                             orderEvents.Add(new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero, "Interactive Brokers Order Event")
                             {
@@ -1922,9 +1922,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Checks whether a given order is a stop limit order that was triggered and updates the order accordingly
         /// </summary>
-        private bool TryUpdateStopLimitTriggered(Order order)
+        private bool TryUpdateStopLimitTriggered(Order order, string ibStatus)
         {
-            if (order.Type == OrderType.StopLimit && _preSubmittedStopLimitOrders.TryRemove(order.Id, out _))
+            if (order.Type == OrderType.StopLimit &&
+                // Make sure the IB status changed from PreSubmitted to Submitted, which indicates the stop was triggered
+                // and also allows to communicate Lean New -> Submitted status change back to the algorithm.
+                ibStatus == IB.OrderStatus.Submitted &&
+                _preSubmittedStopLimitOrders.TryRemove(order.Id, out _))
             {
                 OnOrderUpdated(new OrderUpdateEvent { OrderId = order.Id, StopTriggered = true });
                 return true;

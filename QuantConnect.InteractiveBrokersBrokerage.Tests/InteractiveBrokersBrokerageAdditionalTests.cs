@@ -452,11 +452,19 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             algorithm.Transactions.SetOrderId(request);
             var order = Order.CreateOrder(request);
 
+            var submittedStatusReceived = false;
+
             // Track fill events
             using var fillEvent = new ManualResetEvent(false);
             brokerage.OrdersStatusChanged += (_, orderEvents) =>
             {
-                if (orderEvents.Single().Status.IsClosed())
+                var orderEvent = orderEvents[0];
+
+                if (orderEvent.Status == OrderStatus.Submitted)
+                {
+                    submittedStatusReceived = true;
+                }
+                else if (orderEvent.Status.IsClosed())
                 {
                     fillEvent.Set();
                 }
@@ -478,6 +486,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             order = orderProcesor.GetOpenOrders().Single();
 
             var filled = fillEvent.WaitOne(TimeSpan.FromSeconds(60));
+
+            Assert.IsTrue(submittedStatusReceived);
 
             if (filled)
             {
