@@ -1942,6 +1942,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 Log.Trace($"InteractiveBrokersBrokerage.HandleOpenOrder(): {e}");
 
+                if (!CheckIfConnected())
+                {
+                    // before we call get open orders which might not be fully initialized/loaded
+                    return;
+                }
+
                 var orders = _orderProvider.GetOrdersByBrokerageId(e.Order.OrderId);
                 if (orders == null || orders.Count == 0)
                 {
@@ -1952,11 +1958,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // the only changes we handle now are trail stop price updates
                 var order = orders[0];
                 if (order.Type != OrderType.TrailingStop)
-                {
-                    return;
-                }
-
-                if (!CheckIfConnected())
                 {
                     return;
                 }
