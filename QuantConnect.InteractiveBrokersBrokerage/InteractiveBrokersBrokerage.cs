@@ -1883,9 +1883,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     // if we get a Submitted status and we had placed an order update, this new event is flagged as an update
                     var isUpdate = status == OrderStatus.Submitted && _orderUpdates.TryRemove(order.Id, out _);
+                    // since there is not Lean status change when limit stop is triggered, we need to check the IB status
+                    var limitStopTriggered = update.Status == IB.OrderStatus.Submitted && _preSubmittedStopLimitOrders.ContainsKey(order.Id);
 
                     // IB likes to duplicate/triplicate some events, so we fire non-fill events only if status changed
-                    if (status != order.Status || isUpdate)
+                    if (status != order.Status || isUpdate || limitStopTriggered)
                     {
                         if (order.Status.IsClosed())
                         {

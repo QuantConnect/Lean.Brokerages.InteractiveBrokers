@@ -492,7 +492,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             if (filled)
             {
                 Assert.IsTrue(stopTriggered);
-                var stopLimitOrder = (StopLimitOrder)algorithm.Transactions.GetOpenOrders().Single();
+                var stopLimitOrder = (StopLimitOrder)algorithm.Transactions.GetOrders().Single();
                 Assert.IsTrue(stopLimitOrder.StopTriggered);
             }
             else
