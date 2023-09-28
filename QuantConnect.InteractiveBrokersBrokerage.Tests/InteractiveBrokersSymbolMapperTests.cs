@@ -55,6 +55,15 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual("BRK.B", symbol.Value);
             Assert.AreEqual(SecurityType.Equity, symbol.ID.SecurityType);
             Assert.AreEqual(Market.USA, symbol.ID.Market);
+
+            var expiry = new DateTime(2023, 10, 20);
+            symbol = mapper.GetLeanSymbol("BRK B", SecurityType.Option, Market.USA, expiry, 362.5m, OptionRight.Put);
+            Assert.AreEqual("BRK.B 231020P00362500", symbol.Value);
+            Assert.AreEqual(SecurityType.Option, symbol.ID.SecurityType);
+            Assert.AreEqual(Market.USA, symbol.ID.Market);
+            Assert.AreEqual(362.5m, symbol.ID.StrikePrice);
+            Assert.AreEqual(expiry, symbol.ID.Date);
+            Assert.AreEqual(OptionRight.Put, symbol.ID.OptionRight);
         }
 
         [Test]
