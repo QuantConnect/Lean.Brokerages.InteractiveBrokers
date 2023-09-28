@@ -158,6 +158,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         return Symbol.CreateFuture(GetLeanRootSymbol(brokerageSymbol), market, expirationDate);
 
                     case SecurityType.Option:
+                        // See SecurityType.Equity case. The equity underlying may include a space, e.g. BRK B. 
+                        brokerageSymbol = brokerageSymbol.Replace(" ", ".");
                         return Symbol.CreateOption(brokerageSymbol, market, OptionStyle.American, optionRight, strike, expirationDate);
 
                     case SecurityType.IndexOption:
