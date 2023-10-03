@@ -4447,12 +4447,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
 
+                        if (_ibAutomater.IsRunning())
+                        {
                         // stopping the gateway will make the IBAutomater emit the exit event, which will trigger the restart
                         _ibAutomater?.Stop();
                     }
                     else
                     {
-                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: gateway already exited today and should have been automatically restarted.");
+                            // if the gateway is not running, we start it
+                            CheckIbAutomaterError(_ibAutomater.Start(false));
                     }
                 }
 
