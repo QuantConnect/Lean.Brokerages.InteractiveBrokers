@@ -4449,13 +4449,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                         if (_ibAutomater.IsRunning())
                         {
-                        // stopping the gateway will make the IBAutomater emit the exit event, which will trigger the restart
-                        _ibAutomater?.Stop();
+                            // stopping the gateway will make the IBAutomater emit the exit event, which will trigger the restart
+                            _ibAutomater?.Stop();
+                        }
+                        else
+                        {
+                            // if the gateway is not running, we start it
+                            CheckIbAutomaterError(_ibAutomater.Start(false));
+                        }
                     }
                     else
                     {
-                            // if the gateway is not running, we start it
-                            CheckIbAutomaterError(_ibAutomater.Start(false));
+                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: gateway already exited today and should have been automatically restarted.");
                     }
                 }
 
@@ -4483,11 +4488,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _stateManager.Reset();
             StopGatewayRestartTask();
 
-            // check if IBGateway was closed because of an IBAutomater error
+            if (_isDisposeCalled)
+            {
+                return;
+            }
+
+            // check if IBGateway was closed because of an IBAutomater error, die if so
             var result = _ibAutomater.GetLastStartResult();
             CheckIbAutomaterError(result, false);
 
-            if (!result.HasError && !_isDisposeCalled)
+            if (!result.HasError)
             {
                 // IBGateway was closed by IBAutomater because the auto-restart token expired or it was closed manually (less likely)
                 Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): IBGateway close detected, restarting IBAutomater...");
@@ -4521,6 +4531,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterRestartError", exception.ToString()));
                     }
                 }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+            }
+            else
+            {
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterError", result.ErrorMessage));
             }
         }
 
@@ -4614,7 +4628,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private DateTime GetNextWeeklyRestartTimeUtc(DateTime currentDate)
         {
-           return ComputeNextWeeklyRestartTimeUtc(_weeklyRestartUtcTime, currentDate);
+            return ComputeNextWeeklyRestartTimeUtc(_weeklyRestartUtcTime, currentDate);
         }
 
         private void CheckIbAutomaterError(StartResult result, bool throwException = true)
