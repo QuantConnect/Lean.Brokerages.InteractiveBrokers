@@ -25,6 +25,7 @@ using IBApi;
 using NodaTime;
 using NUnit.Framework;
 using QuantConnect.Algorithm;
+using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
@@ -674,6 +675,45 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var result = GetHistory(symbol, resolution, exchangeTimeZone, dataTimeZone, endTimeInExchangeTimeZone, historyTimeSpan, includeExtendedMarketHours);
 
             Assert.AreEqual(expectedCount, result.Count);
+        }
+
+        [Test]
+        public void IgnoresSecurityNotFoundErrorOnExpiredContractsHistoricalRequests()
+        {
+            using var brokerage = GetBrokerage();
+            Assert.IsTrue(brokerage.IsConnected);
+
+            var messages = new List<BrokerageMessageEvent>();
+            void onMessage(object sender, BrokerageMessageEvent e)
+            {
+                messages.Add(e);
+            }
+
+            brokerage.Message += onMessage;
+
+            var request = new HistoryRequest(
+                new DateTime(2023, 09, 04, 9, 30, 0).ConvertToUtc(TimeZones.NewYork),
+                new DateTime(2023, 09, 14, 16, 0, 0).ConvertToUtc(TimeZones.NewYork),
+                typeof(TradeBar),
+                Symbol.CreateFuture(Futures.Indices.SP500EMini, Market.CME, new DateTime(2023, 09, 15)),
+                Resolution.Minute,
+                SecurityExchangeHours.AlwaysOpen(TimeZones.NewYork),
+                TimeZones.NewYork,
+                null,
+                false,
+                false,
+                DataNormalizationMode.Raw,
+                TickType.Trade);
+
+            var history = brokerage.GetHistory(request).ToList();
+
+            Assert.AreEqual(0, history.Count);
+
+            Assert.IsFalse(messages.Any(x => x.Type == BrokerageMessageType.Error), string.Join("\n", messages.Select(x => x.Message)));
+
+            Console.WriteLine(string.Join("\n", messages.Select(x => x.Message)));
+
+            brokerage.Message -= onMessage;
         }
 
         private List<BaseData> GetHistory(
