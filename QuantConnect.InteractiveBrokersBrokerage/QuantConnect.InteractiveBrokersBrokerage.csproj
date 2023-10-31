@@ -41,9 +41,10 @@
   </ItemGroup>
 
   <ItemGroup>
-	<None Include="InteractiveBrokers\IB-symbol-map.json" Pack="True">
-	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	</None>
+    <None Update="InteractiveBrokers\IB-symbol-map.json" Pack="True">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <PackageCopyToOutput>true</PackageCopyToOutput>
+    </None>
 	<Reference Include="CSharpAPI">
 		<HintPath>CSharpAPI.dll</HintPath>
 	</Reference>

@@ -194,7 +194,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly SemaphoreSlim _concurrentHistoryRequests = new (20);
 
         // additional IB request information, will be matched with errors in the handler, for better error reporting
-        private readonly ConcurrentDictionary<int, string> _requestInformation = new ConcurrentDictionary<int, string>();
+        private readonly ConcurrentDictionary<int, RequestInformation> _requestInformation = new();
 
         // when unsubscribing symbols immediately after subscribing IB returns an error (Can't find EId with tickerId:nnn),
         // so we track subscription times to ensure symbols are not unsubscribed before a minimum time span has elapsed
@@ -443,7 +443,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     var orderId = Parse.Int(id);
 
-                    _requestInformation[orderId] = $"[Id={orderId}] CancelOrder: " + order;
+                    _requestInformation[orderId] = new RequestInformation
+                    {
+                        RequestId = orderId,
+                        RequestType = RequestType.CancelOrder,
+                        AssociatedSymbol = order.Symbol,
+                        Message = $"[Id={orderId}] CancelOrder: " + order
+                    };
 
                     CheckRateLimiting();
 
@@ -666,7 +672,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var requestId = GetNextId();
 
-            _requestInformation[requestId] = $"[Id={requestId}] GetExecutions: " + symbol;
+            _requestInformation[requestId] = new RequestInformation
+            {
+                RequestId = requestId,
+                RequestType = RequestType.Executions,
+                Message = $"[Id={requestId}] GetExecutions: " + symbol
+            };
 
             // define our event handlers
             EventHandler<IB.RequestEndEventArgs> clientOnExecutionDataEnd = (sender, args) =>
@@ -1301,7 +1312,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 throw new ArgumentException("Expected order with populated BrokerId for updating orders.");
             }
 
-            _requestInformation[ibOrderId] = $"[Id={ibOrderId}] IBPlaceOrder: {order.Symbol.Value} ({GetContractDescription(contract)} )";
+            _requestInformation[ibOrderId] = new RequestInformation
+            {
+                RequestId = ibOrderId,
+                RequestType = RequestType.PlaceOrder,
+                AssociatedSymbol = order.Symbol,
+                Message = $"[Id={ibOrderId}] IBPlaceOrder: {order.Symbol.Value} ({GetContractDescription(contract)} )"
+            };
 
             CheckRateLimiting();
 
@@ -1450,7 +1467,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             Log.Trace($"InteractiveBrokersBrokerage.GetContractDetails(): {ticker} ({contract})");
 
-            _requestInformation[requestId] = $"[Id={requestId}] GetContractDetails: {ticker} ({contract})";
+            _requestInformation[requestId] = new RequestInformation
+            {
+                RequestId = requestId,
+                RequestType = RequestType.ContractDetails,
+                Message = $"[Id={requestId}] GetContractDetails: {ticker} ({contract})"
+            };
 
             var manualResetEvent = new ManualResetEvent(false);
 
@@ -1553,7 +1575,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var requestId = GetNextId();
 
-            _requestInformation[requestId] = $"[Id={requestId}] FindContracts: {ticker} ({GetContractDescription(contract)})";
+            _requestInformation[requestId] = new RequestInformation
+            {
+                RequestId = requestId,
+                RequestType = RequestType.FindContracts,
+                Message = $"[Id={requestId}] FindContracts: {ticker} ({GetContractDescription(contract)})"
+            }; ;
 
             var manualResetEvent = new ManualResetEvent(false);
             var contractDetails = new List<ContractDetails>();
@@ -1623,10 +1650,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             errorMsg = errorMsg.Replace("\r\n", ". ").Replace("\r", ". ").Replace("\n", ". ");
 
             // if there is additional information for the originating request, append it to the error message
-            string requestMessage;
-            if (_requestInformation.TryGetValue(requestId, out requestMessage))
+            if (_requestInformation.TryGetValue(requestId, out var requestInfo))
             {
-                errorMsg += ". Origin: " + requestMessage;
+                errorMsg += ". Origin: " + requestInfo.Message;
             }
 
             // historical data request with no data returned
@@ -1714,6 +1740,28 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Improves error message with the additional notes IB provides on the the error messages page
                 errorMsg = $"{e.Message} - The current number of active market data subscriptions in TWS and the API altogether has been exceeded ({_subscribedSymbols.Count}). This number is calculated based on a formula which is based on the equity, commissions, and quote booster packs in an account.";
                 _maxSubscribedSymbolsReached = true;
+            }
+            else if (errorCode == 200)
+            {
+                // No security definition has been found for the request
+                // This is a common error when requesting historical data for expired contracts, in which case can ignore it
+                if (requestInfo is not null && requestInfo.RequestType == RequestType.History)
+                {
+                    MapFile mapFile = null;
+                    if (requestInfo.AssociatedSymbol.RequiresMapping())
+                    {
+                    var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(requestInfo.AssociatedSymbol));
+                        mapFile = resolver.ResolveMapFile(requestInfo.AssociatedSymbol);
+                    }
+                    var historicalLimitDate = requestInfo.AssociatedSymbol.GetDelistingDate(mapFile).AddDays(1)
+                        .ConvertToUtc(requestInfo.HistoryRequest.ExchangeHours.TimeZone);
+
+                    if (DateTime.UtcNow.Date > historicalLimitDate)
+                    {
+                        Log.Trace($"InteractiveBrokersBrokerage.HandleError(): Expired contract historical data request, ignoring error.  ErrorCode: {errorCode} - {errorMsg}");
+                        return;
+                    }
+                }
             }
 
             if (InvalidatingCodes.Contains(errorCode))
@@ -3228,7 +3276,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         market = defaultMarket;
                     }
 
-                    var contractExpiryDate = DateTime.ParseExact(contract.LastTradeDateOrContractMonth, DateFormat.EightCharacter, CultureInfo.InvariantCulture);
+                    var contractExpiryDate = !string.IsNullOrEmpty(contract.LastTradeDateOrContractMonth)
+                        ? DateTime.ParseExact(contract.LastTradeDateOrContractMonth, DateFormat.EightCharacter, CultureInfo.InvariantCulture)
+                        : SecurityIdentifier.DefaultDate;
 
                     if (!isFutureOption)
                     {
@@ -3401,7 +3451,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(subscribeSymbol.ID.Market, subscribeSymbol, subscribeSymbol.SecurityType, Currencies.USD);
                             var priceMagnifier = symbolProperties.PriceMagnifier;
 
-                            _requestInformation[id] = $"[Id={id}] Subscribe: {symbol.Value} ({GetContractDescription(contract)})";
+                            _requestInformation[id] = new RequestInformation
+                            {
+                                RequestId = id,
+                                RequestType = RequestType.Subscription,
+                                AssociatedSymbol = symbol,
+                                Message = $"[Id={id}] Subscribe: {symbol.Value} ({GetContractDescription(contract)})"
+                            };
 
                             CheckRateLimiting();
 
@@ -4124,7 +4180,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     TradeBar oldestDataPoint = null;
                     var historicalTicker = GetNextId();
 
-                    _requestInformation[historicalTicker] = $"[Id={historicalTicker}] GetHistory: {request.Symbol.Value} ({GetContractDescription(contract)})";
+                    _requestInformation[historicalTicker] = new RequestInformation
+                    {
+                        RequestId = historicalTicker,
+                        RequestType = RequestType.History,
+                        AssociatedSymbol = request.Symbol,
+                        Message = $"[Id={historicalTicker}] GetHistory: {request.Symbol.Value} ({GetContractDescription(contract)})",
+                        HistoryRequest = request
+                    };
 
                     EventHandler<IB.HistoricalDataEventArgs> clientOnHistoricalData = (sender, args) =>
                     {
@@ -4883,5 +4946,30 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static readonly TimeSpan _defaultRestartDelay = TimeSpan.FromMinutes(5);
 
         private static TimeSpan _defaultWeeklyRestartUtcTime = GetNextWeekendReconnectionTimeUtc().TimeOfDay;
+
+        private enum RequestType
+        {
+            PlaceOrder,
+            UpdateOrder,
+            CancelOrder,
+            Subscription,
+            FindContracts,
+            ContractDetails,
+            History,
+            Executions,
+        }
+
+        private class RequestInformation
+        {
+            public int RequestId { get; set; }
+
+            public RequestType RequestType { get; set; }
+
+            public Symbol? AssociatedSymbol { get; set; }
+
+            public string Message { get; set; }
+
+            public HistoryRequest? HistoryRequest { get; set; }
+        }
     }
 }
