@@ -1471,7 +1471,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 RequestId = requestId,
                 RequestType = RequestType.ContractDetails,
-                AssociatedSymbol = MapSymbol(contract),
                 Message = $"[Id={requestId}] GetContractDetails: {ticker} ({contract})"
             };
 
@@ -1580,7 +1579,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 RequestId = requestId,
                 RequestType = RequestType.FindContracts,
-                AssociatedSymbol = MapSymbol(contract),
                 Message = $"[Id={requestId}] FindContracts: {ticker} ({GetContractDescription(contract)})"
             }; ;
 
@@ -1749,9 +1747,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // This is a common error when requesting historical data for expired contracts, in which case can ignore it
                 if (requestInfo is not null && requestInfo.RequestType == RequestType.History)
                 {
+                    MapFile mapFile = null;
+                    if (requestInfo.AssociatedSymbol.RequiresMapping())
+                    {
                     var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(requestInfo.AssociatedSymbol));
-                    var mapfile = resolver.ResolveMapFile(requestInfo.AssociatedSymbol);
-                    var historicalLimitDate = requestInfo.AssociatedSymbol.GetDelistingDate(mapfile).AddDays(1)
+                        mapFile = resolver.ResolveMapFile(requestInfo.AssociatedSymbol);
+                    }
+                    var historicalLimitDate = requestInfo.AssociatedSymbol.GetDelistingDate(mapFile).AddDays(1)
                         .ConvertToUtc(requestInfo.HistoryRequest.ExchangeHours.TimeZone);
 
                     if (DateTime.UtcNow.Date > historicalLimitDate)
