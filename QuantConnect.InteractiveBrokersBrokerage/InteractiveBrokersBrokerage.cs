@@ -1983,7 +1983,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Let's remove the contract for combo orders when they are canceled or filled
                 if (firstOrder.GroupOrderManager != null && (status == OrderStatus.Filled || status == OrderStatus.Canceled))
                 {
-                    _comboOrdersContracts.Remove(firstOrder.GroupOrderManager.Id);
+                    _comboOrdersContracts.TryRemove(firstOrder.GroupOrderManager.Id, out _);
                 }
 
                 if (status == OrderStatus.Filled || status == OrderStatus.PartiallyFilled)
