@@ -170,7 +170,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // IB TWS may adjust the contract details to define the combo orders more accurately, so we keep track of them in order to be able
         // to update these orders without getting error 105 ("Order being modified does not match original order").
         // https://groups.io/g/twsapi/topic/5333246?p=%2C%2C%2C20%2C0%2C0%2C0%3A%3A%2C%2C%2C0%2C0%2C0%2C5333246
-        private Dictionary<long, Contract> _comboOrdersContracts = new();
+        private ConcurrentDictionary<long, Contract> _comboOrdersContracts = new();
 
         // Prioritized list of exchanges used to find right futures contract
         private readonly Dictionary<string, string> _futuresExchanges = new Dictionary<string, string>
@@ -582,7 +582,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return orders.Select(orderContract => ConvertOrders(orderContract.Order, orderContract.Contract, orderContract.OrderState)).SelectMany(orders => orders).ToList();
         }
 
-        private Contract GetOpenOrdersContract(int orderId)
+        private Contract GetOpenOrderContract(int orderId)
         {
             Contract contract = null;
             var manualResetEvent = new ManualResetEvent(false);
@@ -1340,9 +1340,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/66 and
             // https://groups.io/g/twsapi/topic/5333246?p=%2C%2C%2C20%2C0%2C0%2C0%3A%3A%2C%2C%2C0%2C0%2C0%2C5333246
             Contract contract;
-            if (needsNewId || order.GroupOrderManager == null || !_comboOrdersContracts.TryGetValue(order.GroupOrderManager.Id, out contract))
+            if (needsNewId || order.GroupOrderManager == null)
             {
                 contract = CreateContract(orders[0].Symbol, false, orders, exchange);
+            }
+            else
+            {
+                if (!_comboOrdersContracts.TryGetValue(order.GroupOrderManager.Id, out contract))
+                {
+                    // We need the contract created by IB in order to update combo orders, so lets fetch it
+                    contract = GetOpenOrderContract(int.Parse(order.BrokerId[0]));
+                    // No need to cache the contract here, it will be cached by our default OpenOrder handler
+                }
             }
 
             int ibOrderId;
@@ -1411,13 +1420,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 Message = "Lean Generated Interactive Brokers Order Event"
                             }).ToList();
                             OnOrderEvents(orderEvents);
-                        }
-
-                        // Let's trigger a fetch of the open orders to make sure the openOrder callback is called
-                        // and the right contracts are cached for combo order updates.
-                        if (order.GroupOrderManager != null)
-                        {
-                            GetOpenOrdersContract(int.Parse(order.BrokerId[0]));
                         }
                     }
                     else
