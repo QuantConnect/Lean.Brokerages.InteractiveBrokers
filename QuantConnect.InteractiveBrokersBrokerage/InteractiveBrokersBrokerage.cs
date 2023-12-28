@@ -167,6 +167,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private InteractiveBrokersSymbolMapper _symbolMapper;
         private readonly HashSet<string> _invalidContracts = new();
 
+        // IB TWS may adjust the contract details to define the combo orders more accurately, so we keep track of them in order to be able
+        // to update these orders without getting error 105 ("Order being modified does not match original order").
+        // https://groups.io/g/twsapi/topic/5333246?p=%2C%2C%2C20%2C0%2C0%2C0%3A%3A%2C%2C%2C0%2C0%2C0%2C5333246
+        private Dictionary<long, Contract> _comboOrdersContracts = new();
+
         // Prioritized list of exchanges used to find right futures contract
         private readonly Dictionary<string, string> _futuresExchanges = new Dictionary<string, string>
         {
@@ -575,6 +580,48 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // convert results to Lean Orders outside the eventhandler to avoid nesting requests, as conversion may request
             // contract details
             return orders.Select(orderContract => ConvertOrders(orderContract.Order, orderContract.Contract, orderContract.OrderState)).SelectMany(orders => orders).ToList();
+        }
+
+        private Contract GetOpenOrdersContract(int orderId)
+        {
+            Contract contract = null;
+            var manualResetEvent = new ManualResetEvent(false);
+
+            // define our handlers
+            EventHandler<IB.OpenOrderEventArgs> clientOnOpenOrder = (sender, args) =>
+            {
+                if (args.OrderId == orderId)
+                {
+                    contract = args.Contract;
+                    manualResetEvent.Set();
+                }
+            };
+            EventHandler clientOnOpenOrderEnd = (sender, args) =>
+            {
+                // this signals the end of our RequestOpenOrders call
+                manualResetEvent.Set();
+            };
+
+            _client.OpenOrder += clientOnOpenOrder;
+            _client.OpenOrderEnd += clientOnOpenOrderEnd;
+
+            CheckRateLimiting();
+
+            _client.ClientSocket.reqOpenOrders();
+
+            // wait for our end signal
+            var timedOut = !manualResetEvent.WaitOne(15000);
+
+            // remove our handlers
+            _client.OpenOrder -= clientOnOpenOrder;
+            _client.OpenOrderEnd -= clientOnOpenOrderEnd;
+
+            if (timedOut)
+            {
+                throw new TimeoutException("InteractiveBrokersBrokerage.GetOpenOrders(): Operation took longer than 15 seconds.");
+            }
+
+            return contract;
         }
 
         /// <summary>
@@ -1289,7 +1336,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 exchange = Market.CBOE.ToUpperInvariant();
             }
 
-            var contract = CreateContract(orders[0].Symbol, false, orders, exchange);
+            // If a combo order is being updated, let's use the existing contract to overcome IB's bug.
+            // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/66 and
+            // https://groups.io/g/twsapi/topic/5333246?p=%2C%2C%2C20%2C0%2C0%2C0%3A%3A%2C%2C%2C0%2C0%2C0%2C5333246
+            Contract contract;
+            if (needsNewId || order.GroupOrderManager == null || !_comboOrdersContracts.TryGetValue(order.GroupOrderManager.Id, out contract))
+            {
+                contract = CreateContract(orders[0].Symbol, false, orders, exchange);
+            }
 
             int ibOrderId;
             if (needsNewId)
@@ -1337,7 +1391,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var noSubmissionOrderTypes = _noSubmissionOrderTypes.Contains(order.Type);
                 if (!eventSlim.Wait(noSubmissionOrderTypes ? _noSubmissionOrdersResponseTimeout : _responseTimeout))
                 {
-                    if(noSubmissionOrderTypes)
+                    if (noSubmissionOrderTypes)
                     {
                         if(!_submissionOrdersWarningSent)
                         {
@@ -1357,6 +1411,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 Message = "Lean Generated Interactive Brokers Order Event"
                             }).ToList();
                             OnOrderEvents(orderEvents);
+                        }
+
+                        // Let's trigger a fetch of the open orders to make sure the openOrder callback is called
+                        // and the right contracts are cached for combo order updates.
+                        if (order.GroupOrderManager != null)
+                        {
+                            GetOpenOrdersContract(int.Parse(order.BrokerId[0]));
                         }
                     }
                     else
@@ -1917,6 +1978,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 var status = ConvertOrderStatus(update.Status);
 
+                // Let's remove the contract for combo orders when they are canceled or filled
+                if (firstOrder.GroupOrderManager != null && (status == OrderStatus.Filled || status == OrderStatus.Canceled))
+                {
+                    _comboOrdersContracts.Remove(firstOrder.GroupOrderManager.Id);
+                }
+
                 if (status == OrderStatus.Filled || status == OrderStatus.PartiallyFilled)
                 {
                     // fill events will be only processed in HandleExecutionDetails and HandleCommissionReports.
@@ -2006,6 +2073,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (orders == null || orders.Count == 0)
                 {
                     Log.Error("InteractiveBrokersBrokerage.HandleOpenOrder(): Unable to locate order with BrokerageID " + e.Order.OrderId);
+                    return;
+                }
+
+                if (orders[0].GroupOrderManager != null)
+                {
+                    _comboOrdersContracts[orders[0].GroupOrderManager.Id] = e.Contract;
                     return;
                 }
 
@@ -2839,6 +2912,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // this is a combo order!
                 contract.ComboLegs = new();
                 contract.SecType = IB.SecurityType.Bag;
+                contract.Exchange = "SMART";
                 foreach (var order in orders.OrderBy(o => o.Id))
                 {
                     var legContract = CreateContract(order.Symbol, includeExpired: false);
@@ -2850,7 +2924,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         Action = ConvertOrderDirection(ratio > 0 ? OrderDirection.Buy : OrderDirection.Sell),
                         // the ratio is absolute the action above specifies if we are selling or buying
                         Ratio = Math.Abs((int)ratio),
-                        Exchange = legContractDetails.Contract.Exchange
+                        Exchange = "SMART"
                     });
                 }
             }
