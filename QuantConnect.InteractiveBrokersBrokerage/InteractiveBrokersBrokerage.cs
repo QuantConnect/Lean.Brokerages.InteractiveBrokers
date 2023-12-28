@@ -2912,7 +2912,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // this is a combo order!
                 contract.ComboLegs = new();
                 contract.SecType = IB.SecurityType.Bag;
-                contract.Exchange = "SMART";
                 foreach (var order in orders.OrderBy(o => o.Id))
                 {
                     var legContract = CreateContract(order.Symbol, includeExpired: false);
@@ -2924,7 +2923,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         Action = ConvertOrderDirection(ratio > 0 ? OrderDirection.Buy : OrderDirection.Sell),
                         // the ratio is absolute the action above specifies if we are selling or buying
                         Ratio = Math.Abs((int)ratio),
-                        Exchange = "SMART"
+                        Exchange = legContractDetails.Contract.Exchange
                     });
                 }
             }
