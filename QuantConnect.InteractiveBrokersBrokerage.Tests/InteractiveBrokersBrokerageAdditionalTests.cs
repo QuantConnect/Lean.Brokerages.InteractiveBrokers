@@ -243,8 +243,9 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
-        [Test]
-        public void UpdateComboOrder()
+        [TestCase(OrderType.ComboLimit)]
+        [TestCase(OrderType.ComboLegLimit)]
+        public void UpdateComboLimitOrder(OrderType orderType)
         {
             var algo = new AlgorithmStub();
             var orderProvider = new OrderProvider();
@@ -261,15 +262,15 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var optionsExpiration = new DateTime(2023, 12, 28);
             var orderProperties = new InteractiveBrokersOrderProperties();
-            var group = new GroupOrderManager(1, legCount: 2, quantity: 2, limitPrice: 400m);
+            var group = new GroupOrderManager(1, legCount: 2, quantity: 2, limitPrice: orderType == OrderType.ComboLimit ? 400m : 0m);
 
             var underlying = Symbols.SPY;
 
             var symbol1 = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call, 475m, optionsExpiration);
-            var leg1 = BuildOrder(OrderType.ComboLimit, symbol1, -1, 400m, group, 0m, orderProperties, algo.Transactions);
+            var leg1 = BuildOrder(orderType, symbol1, -1, 400m, group, 490m, orderProperties, algo.Transactions);
 
             var symbol2 = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call, 480m, optionsExpiration);
-            var leg2 = BuildOrder(OrderType.ComboLimit, symbol2, +1, 400m, group, 0m, orderProperties, algo.Transactions);
+            var leg2 = BuildOrder(orderType, symbol2, +1, 400m, group, 460m, orderProperties, algo.Transactions);
 
             var orders = new List<Order> { leg1, leg2 };
 
@@ -328,10 +329,25 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             };
             brokerage.OrdersStatusChanged += handleUpdate;
 
-            // update the combo order limit price
+            if (orderType == OrderType.ComboLimit)
+            {
             group.LimitPrice = 450m;
+            }
+
             foreach (var order in orders)
             {
+                if (orderType == OrderType.ComboLegLimit)
+                {
+                    var legLimitOrder = (LimitOrder)order;
+                    legLimitOrder.ApplyUpdateOrderRequest(new UpdateOrderRequest(
+                        DateTime.UtcNow,
+                        order.Id,
+                        new UpdateOrderFields
+                        {
+                            LimitPrice = legLimitOrder.LimitPrice + Math.Sign(order.Quantity) * 5m
+                        }));
+                }
+
                 brokerage.UpdateOrder(order);
             }
 
