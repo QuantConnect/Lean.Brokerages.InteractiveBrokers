@@ -243,9 +243,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
+        [TestCase(OrderType.ComboMarket)]
         [TestCase(OrderType.ComboLimit)]
         [TestCase(OrderType.ComboLegLimit)]
-        public void UpdateComboLimitOrder(OrderType orderType)
+        public void UpdateComboOrder(OrderType orderType)
         {
             var algo = new AlgorithmStub();
             var orderProvider = new OrderProvider();
@@ -260,17 +261,20 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 brokerage.CancelOrder(order);
             }
 
-            var optionsExpiration = new DateTime(2023, 12, 28);
+            var optionsExpiration = new DateTime(2023, 12, 29);
             var orderProperties = new InteractiveBrokersOrderProperties();
-            var group = new GroupOrderManager(1, legCount: 2, quantity: 2, limitPrice: orderType == OrderType.ComboLimit ? 400m : 0m);
+            var comboLimitPrice = orderType == OrderType.ComboLimit ? 400m : 0m;
+            var group = new GroupOrderManager(1, legCount: 2, quantity: 2, limitPrice: comboLimitPrice);
 
             var underlying = Symbols.SPY;
 
             var symbol1 = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call, 475m, optionsExpiration);
-            var leg1 = BuildOrder(orderType, symbol1, -1, 400m, group, 490m, orderProperties, algo.Transactions);
+            var leg1 = BuildOrder(orderType, symbol1, -1, comboLimitPrice, group, orderType == OrderType.ComboLegLimit ? 490m : 0m,
+                orderProperties, algo.Transactions);
 
             var symbol2 = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call, 480m, optionsExpiration);
-            var leg2 = BuildOrder(orderType, symbol2, +1, 400m, group, 460m, orderProperties, algo.Transactions);
+            var leg2 = BuildOrder(orderType, symbol2, +1, comboLimitPrice, group, orderType == OrderType.ComboLegLimit ? 460m : 0m,
+                orderProperties, algo.Transactions);
 
             var orders = new List<Order> { leg1, leg2 };
 
@@ -329,16 +333,27 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             };
             brokerage.OrdersStatusChanged += handleUpdate;
 
+            // Update order quantity
+            orders[0].ApplyUpdateOrderRequest(new UpdateOrderRequest(
+                DateTime.UtcNow,
+                orders[0].Id,
+                new UpdateOrderFields { Quantity = group.Quantity * 2 }));
+
+            // Update global limit price
             if (orderType == OrderType.ComboLimit)
             {
-            group.LimitPrice = 450m;
+                orders[0].ApplyUpdateOrderRequest(new UpdateOrderRequest(
+                    DateTime.UtcNow,
+                    orders[0].Id,
+                    new UpdateOrderFields { LimitPrice = 450m }));
             }
 
             foreach (var order in orders)
             {
+                // Update leg limit price
                 if (orderType == OrderType.ComboLegLimit)
                 {
-                    var legLimitOrder = (LimitOrder)order;
+                    var legLimitOrder = (ComboLegLimitOrder)order;
                     legLimitOrder.ApplyUpdateOrderRequest(new UpdateOrderRequest(
                         DateTime.UtcNow,
                         order.Id,

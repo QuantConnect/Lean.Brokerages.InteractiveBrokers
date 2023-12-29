@@ -2550,7 +2550,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Combo per-leg prices are only supported for non-guaranteed smart combos with two legs
                 AddGuaranteedTag(ibOrder, true);
 
-                // comboLegLimitOrder inherits from LimitOrder so we process it's 'if' first
                 ibOrder.OrderComboLegs = new();
                 foreach (var comboLegLimit in orders.OfType<ComboLegLimitOrder>().OrderBy(o => o.Id))
                 {
