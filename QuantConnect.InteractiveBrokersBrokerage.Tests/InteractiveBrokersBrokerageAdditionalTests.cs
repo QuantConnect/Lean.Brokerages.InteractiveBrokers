@@ -243,6 +243,134 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
+        [TestCase(OrderType.ComboMarket)]
+        [TestCase(OrderType.ComboLimit)]
+        [TestCase(OrderType.ComboLegLimit)]
+        public void UpdateComboOrder(OrderType orderType)
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            // wait for the previous run to finish, avoid any race condition
+            Thread.Sleep(2000);
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio, new AggregationManager(), TestGlobals.MapFileProvider);
+            brokerage.Connect();
+
+            var openOrders = brokerage.GetOpenOrders();
+            foreach (var order in openOrders)
+            {
+                brokerage.CancelOrder(order);
+            }
+
+            var optionsExpiration = new DateTime(2023, 12, 29);
+            var orderProperties = new InteractiveBrokersOrderProperties();
+            var comboLimitPrice = orderType == OrderType.ComboLimit ? 400m : 0m;
+            var group = new GroupOrderManager(1, legCount: 2, quantity: 2, limitPrice: comboLimitPrice);
+
+            var underlying = Symbols.SPY;
+
+            var symbol1 = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call, 475m, optionsExpiration);
+            var leg1 = BuildOrder(orderType, symbol1, -1, comboLimitPrice, group, orderType == OrderType.ComboLegLimit ? 490m : 0m,
+                orderProperties, algo.Transactions);
+
+            var symbol2 = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call, 480m, optionsExpiration);
+            var leg2 = BuildOrder(orderType, symbol2, +1, comboLimitPrice, group, orderType == OrderType.ComboLegLimit ? 460m : 0m,
+                orderProperties, algo.Transactions);
+
+            var orders = new List<Order> { leg1, leg2 };
+
+            using var submittedEvent = new ManualResetEvent(false);
+            EventHandler<List<OrderEvent>> handleSubmission = (_, orderEvents) =>
+            {
+                foreach (var order in orders)
+                {
+                    foreach (var orderEvent in orderEvents)
+                    {
+                        if (orderEvent.OrderId == order.Id)
+                        {
+                            // update the order like the BTH would do
+                            order.Status = orderEvent.Status;
+                        }
+                    }
+
+                    if (orders.All(o => o.Status == OrderStatus.Submitted))
+                    {
+                        submittedEvent.Set();
+                    }
+                }
+            };
+            brokerage.OrdersStatusChanged += handleSubmission;
+
+            foreach (var order in orders)
+            {
+                group.OrderIds.Add(order.Id);
+                orderProvider.Add(order);
+                brokerage.PlaceOrder(order);
+            }
+
+            Assert.IsTrue(submittedEvent.WaitOne(TimeSpan.FromSeconds(20)));
+
+            brokerage.OrdersStatusChanged -= handleSubmission;
+
+            using var updatedEvent = new ManualResetEvent(false);
+            EventHandler<List<OrderEvent>> handleUpdate = (_, orderEvents) =>
+            {
+                foreach (var order in orders)
+                {
+                    foreach (var orderEvent in orderEvents)
+                    {
+                        if (orderEvent.OrderId == order.Id)
+                        {
+                            // update the order like the BTH would do
+                            order.Status = orderEvent.Status;
+                        }
+                    }
+
+                    if (orders.All(o => o.Status == OrderStatus.UpdateSubmitted))
+                    {
+                        updatedEvent.Set();
+                    }
+                }
+            };
+            brokerage.OrdersStatusChanged += handleUpdate;
+
+            // Update order quantity
+            orders[0].ApplyUpdateOrderRequest(new UpdateOrderRequest(
+                DateTime.UtcNow,
+                orders[0].Id,
+                new UpdateOrderFields { Quantity = group.Quantity * 2 }));
+
+            // Update global limit price
+            if (orderType == OrderType.ComboLimit)
+            {
+                orders[0].ApplyUpdateOrderRequest(new UpdateOrderRequest(
+                    DateTime.UtcNow,
+                    orders[0].Id,
+                    new UpdateOrderFields { LimitPrice = 450m }));
+            }
+
+            foreach (var order in orders)
+            {
+                // Update leg limit price
+                if (orderType == OrderType.ComboLegLimit)
+                {
+                    var legLimitOrder = (ComboLegLimitOrder)order;
+                    legLimitOrder.ApplyUpdateOrderRequest(new UpdateOrderRequest(
+                        DateTime.UtcNow,
+                        order.Id,
+                        new UpdateOrderFields
+                        {
+                            LimitPrice = legLimitOrder.LimitPrice + Math.Sign(order.Quantity) * 5m
+                        }));
+                }
+
+                brokerage.UpdateOrder(order);
+            }
+
+            Assert.IsTrue(updatedEvent.WaitOne(TimeSpan.FromSeconds(20)));
+
+            brokerage.OrdersStatusChanged -= handleUpdate;
+        }
+
         // NOTEs:
         // - The initial stop price should be far enough from current market price in order to trigger at least one stop price update
         // - Stop price and trailing amount should be updated when the tests are run with real time data
