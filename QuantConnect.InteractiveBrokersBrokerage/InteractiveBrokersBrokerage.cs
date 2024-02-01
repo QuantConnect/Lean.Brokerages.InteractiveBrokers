@@ -761,7 +761,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         public override void Connect()
         {
-            if (IsConnected) return;
+            if (IsConnected || _isDisposeCalled)
+            {
+                return;
+            }
 
             _stateManager.IsConnecting = true;
 
@@ -777,7 +780,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Log.Trace($"InteractiveBrokersBrokerage.Connect(): Data subscription count {subscribedSymbolsCount}, restoring data subscriptions is required");
             }
 
-            while (true)
+            // While not disposed instead of while(true). This could be happening in a different thread than the dispose call, so let's be safe.
+            while (!_isDisposeCalled)
             {
                 try
                 {
@@ -952,11 +956,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return true;
             }
 
-            if (!_ibAutomater.IsWithinScheduledServerResetTimes() && IsConnected
+            if (!_isDisposeCalled &&
+                !_ibAutomater.IsWithinScheduledServerResetTimes() &&
+                IsConnected &&
                 // do not run heart beat if we are close to daily restarts
-                && DateTime.Now.TimeOfDay < _heartBeatTimeLimit
+                DateTime.Now.TimeOfDay < _heartBeatTimeLimit &&
                 // do not run heart beat if we are restarting
-                && !IsRestartInProgress())
+                !IsRestartInProgress())
             {
                 _currentTimeEvent.Reset();
                 // request current time to the server
@@ -4577,13 +4583,27 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
+                var restart = false;
+
                 lock (_lastIBAutomaterExitTimeLock)
                 {
                     // if the gateway hasn't yet exited today, we restart manually
                     if (_lastIBAutomaterExitTime.Date < DateTime.UtcNow.Date)
                     {
+                        restart = true;
+                    }
+                    else
+                    {
+                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: gateway already exited today and should have been automatically restarted.");
+                    }
+                }
+
+                if (restart)
+                {
                         Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
 
+                    try
+                    {
                         if (_ibAutomater.IsRunning())
                         {
                             // stopping the gateway will make the IBAutomater emit the exit event, which will trigger the restart
@@ -4595,9 +4615,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             CheckIbAutomaterError(_ibAutomater.Start(false));
                         }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: gateway already exited today and should have been automatically restarted.");
+                        Log.Error(ex);
                     }
                 }
 
