@@ -1,0 +1,17 @@
+{
+	"description": "Interactive Brokers is a fully featured, multi-asset, and low-cost brokerage fully supported on the QuantConnect platform. Interactive supports users in most countries and can open accounts as little as $100.",
+	
+	"platforms-features":[
+		{
+			"Platforms": ["Cloud Platform", "Local Platform", "LEAN CLI"],
+			"Download Data": [1,1,1],
+			"Backtesting": [1,1,1],
+			"Optimization": [1,1,1],
+			"Live Trading":	[1,1,1]
+		}
+	],
+  "order-types": ["Market", "Limit", "Limit-If-Touched", "Stop Market",  "Stop Limit", "Trailing", "Market On Open", "Market On Close", "Combo Market", "Combo Limit", "Combo Leg Limit", "Exercise"],
+	"data-supported": ["Equity", "Equity Options", "Futures", "Future Options", "Index Options", "Forex"], 
+	"brokerage-url": "https://www.interactivebrokers.com/",
+  "documentation": "/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers"
+}
