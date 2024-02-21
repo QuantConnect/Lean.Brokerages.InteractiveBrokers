@@ -738,11 +738,63 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                     DataNormalizationMode.Raw,
                     TickType.Trade);
 
-                var history = brokerage.GetHistory(request).ToList();
+                var history = brokerage.GetHistory(request);
 
-                Assert.AreEqual(0, history.Count);
+                Assert.IsNull(history);
 
                 Assert.IsFalse(hasError);
+            }
+        }
+
+        private static TestCaseData[] UnsupportedHistoryTestCases => new[]
+        {
+            // Canonicals are not supported
+            new TestCaseData(Symbol.CreateCanonicalOption(Symbols.AAPL), Resolution.Daily, TickType.Trade),
+            new TestCaseData(Symbols.CreateFuturesCanonicalSymbol("ES"), Resolution.Daily, TickType.Trade),
+            // Unsupported markets
+            new TestCaseData(Symbol.Create("SPY", SecurityType.Equity, Market.India), Resolution.Daily, TickType.Trade),
+            new TestCaseData(Symbol.Create("EURUSD", SecurityType.Forex, Market.Binance), Resolution.Daily, TickType.Trade),
+            new TestCaseData(Symbol.CreateOption(Symbols.SPY, Market.India, OptionStyle.American, OptionRight.Call, 100m, new DateTime(2024, 12, 12)), Resolution.Daily, TickType.Trade),
+            new TestCaseData(Symbol.CreateOption(Symbols.SPX, Market.India, OptionStyle.American, OptionRight.Call, 100m, new DateTime(2024, 12, 12)), Resolution.Daily, TickType.Trade),
+            new TestCaseData(Symbol.Create("SPX", SecurityType.Index, Market.India), Resolution.Daily, TickType.Trade),
+            // Unsupported resolution
+            new TestCaseData(Symbols.SPY, Resolution.Tick, TickType.Trade),
+            new TestCaseData(Symbols.SPY_C_192_Feb19_2016, Resolution.Tick, TickType.Trade),
+            new TestCaseData(Symbols.USDJPY, Resolution.Tick, TickType.Trade),
+            new TestCaseData(Symbols.SPX, Resolution.Tick, TickType.Trade),
+            new TestCaseData(Symbols.Future_ESZ18_Dec2018, Resolution.Tick, TickType.Trade),
+            // Unsupported tick type
+            new TestCaseData(Symbols.SPY, Resolution.Tick, TickType.OpenInterest),
+            new TestCaseData(Symbols.SPY_C_192_Feb19_2016, Resolution.Tick, TickType.OpenInterest),
+            new TestCaseData(Symbols.USDJPY, Resolution.Tick, TickType.OpenInterest),
+            new TestCaseData(Symbols.SPX, Resolution.Tick, TickType.OpenInterest),
+            new TestCaseData(Symbols.Future_ESZ18_Dec2018, Resolution.Tick, TickType.OpenInterest),
+        };
+
+        [TestCaseSource(nameof(UnsupportedHistoryTestCases))]
+        public void GetHistoryReturnsNullForUnsupportedCases(Symbol symbol, Resolution resolution, TickType tickType)
+        {
+            using (var brokerage = GetBrokerage())
+            {
+                Assert.IsTrue(brokerage.IsConnected);
+
+                var request = new HistoryRequest(
+                    new DateTime(2021, 1, 1).ConvertToUtc(TimeZones.NewYork),
+                    new DateTime(2021, 1, 27).ConvertToUtc(TimeZones.NewYork),
+                    typeof(TradeBar),
+                    symbol,
+                    resolution,
+                    SecurityExchangeHours.AlwaysOpen(TimeZones.NewYork),
+                    TimeZones.NewYork,
+                    null,
+                    false,
+                    false,
+                    DataNormalizationMode.Raw,
+                    tickType);
+
+                var history = brokerage.GetHistory(request);
+
+                Assert.IsNull(history);
             }
         }
 

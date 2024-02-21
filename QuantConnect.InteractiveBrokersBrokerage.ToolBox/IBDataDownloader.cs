@@ -99,7 +99,15 @@ namespace QuantConnect.ToolBox.IBDownloader
                     DataNormalizationMode.Adjusted,
                     TickType.Quote);
 
-                foreach (var baseData in _brokerage.GetHistory(historyRequest))
+                var history = _brokerage.GetHistory(historyRequest);
+
+                if (history == null)
+                {
+                    Logging.Log.Trace($"IBDataDownloader.Get(): Ignoring history request for unsupported symbol {targetSymbol}");
+                    continue;
+                }
+
+                foreach (var baseData in history)
                 {
                     yield return baseData;
                 }

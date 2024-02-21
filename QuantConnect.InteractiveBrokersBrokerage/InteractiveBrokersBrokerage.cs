@@ -4050,27 +4050,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         BrokerageMessageType.Warning,
                         "GetHistoryWhenDisconnected",
                         "History requests cannot be submitted when disconnected."));
-                yield break;
+                return null;
             }
 
             // skipping universe and canonical symbols
-            if (!CanSubscribe(request.Symbol) ||
-                (request.Symbol.ID.SecurityType.IsOption() && request.Symbol.IsCanonical()))
+            if (!CanSubscribe(request.Symbol))
             {
-                yield break;
-            }
-
-            // skip invalid security types
-            if (request.Symbol.SecurityType != SecurityType.Equity &&
-                request.Symbol.SecurityType != SecurityType.Index &&
-                request.Symbol.SecurityType != SecurityType.Forex &&
-                request.Symbol.SecurityType != SecurityType.Cfd &&
-                request.Symbol.SecurityType != SecurityType.Future &&
-                request.Symbol.SecurityType != SecurityType.FutureOption &&
-                request.Symbol.SecurityType != SecurityType.Option &&
-                request.Symbol.SecurityType != SecurityType.IndexOption)
-            {
-                yield break;
+                return null;
             }
 
             // tick resolution not supported for now
@@ -4079,9 +4065,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // TODO: upgrade IB C# API DLL
                 // In IB API version 973.04, the reqHistoricalTicks function has been added,
                 // which would now enable us to support history requests at Tick resolution.
-                yield break;
+                return null;
             }
-
 
             if (request.TickType == TickType.OpenInterest)
             {
@@ -4090,7 +4075,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     _historyOpenInterestWarning = true;
                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryOpenInterest", "IB does not provide open interest historical data"));
                 }
-                yield break;
+                return null;
             }
 
             // See https://interactivebrokers.github.io/tws-api/historical_limitations.html
@@ -4118,7 +4103,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         _historyExpiredAssetWarning = true;
                     }
                     Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip request of expired asset: {request.Symbol.Value}. {localNow} > {historicalLimitDate}");
-                    yield break;
+                    return Enumerable.Empty<BaseData>();
                 }
             }
             else if(request.Symbol.ID.SecurityType == SecurityType.Equity)
@@ -4135,7 +4120,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
 
                     Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip request of delisted asset: {request.Symbol.Value}. DelistingDate: {mapfile.DelistingDate}");
-                    yield break;
+                    return Enumerable.Empty<BaseData>();
                 }
             }
 
@@ -4174,7 +4159,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     if (startTime > endTime)
                     {
                         Log.Trace($"InteractiveBrokersBrokerage::GetHistory(): Skip too old 'Resolution.Second' request {startTimeLocal} < {minimumLocalStartTime}");
-                        yield break;
+                        return Enumerable.Empty<BaseData>();
                     }
                 }
             }
@@ -4207,6 +4192,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 history = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, resolution, HistoricalDataType.Trades);
             }
 
+            return FilterHistory(history, request, startTimeLocal, endTimeLocal, contract);
+        }
+
+        private IEnumerable<BaseData> FilterHistory(
+            IEnumerable<BaseData> history,
+            HistoryRequest request,
+            DateTime startTimeLocal,
+            DateTime endTimeLocal,
+            Contract contract)
+        {
             // cleaning the data before returning it back to user
             foreach (var bar in history.Where(bar => bar.Time >= startTimeLocal && bar.EndTime <= endTimeLocal))
             {
