@@ -1225,6 +1225,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 return;
             }
+
+            ValidateSubscription();
+
             _isInitialized = true;
             _loadExistingHoldings = loadExistingHoldings;
             _algorithm = algorithm;
@@ -1303,8 +1306,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Log.Trace($"InteractiveBrokersBrokerage.HandleConnectionClosed(): API client disconnected [Server Version: {_client.ClientSocket.ServerVersion}].");
                 _connectEvent.Set();
             };
-
-            ValidateSubscription();
 
             // initialize our heart beat thread
             RunHeartBeatThread();
@@ -4879,9 +4880,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             try
             {
                 var productId = 181;
-                var userId = Config.GetInt("job-user-id");
-                var token = Config.Get("api-access-token");
-                var organizationId = Config.Get("job-organization-id", null);
+                var userId = Globals.UserId;
+                var token = Globals.UserToken;
+                var organizationId = Globals.OrganizationID;
                 // Verify we can authenticate with this user and token
                 var api = new ApiConnection(userId, token);
                 if (!api.Connected)
