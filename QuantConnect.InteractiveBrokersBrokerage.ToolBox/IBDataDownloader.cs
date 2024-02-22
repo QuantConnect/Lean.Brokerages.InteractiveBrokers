@@ -60,19 +60,14 @@ namespace QuantConnect.ToolBox.IBDownloader
             var endUtc = dataDownloaderGetParameters.EndUtc;
             var tickType = dataDownloaderGetParameters.TickType;
 
-            if (tickType != TickType.Quote)
+            if (tickType != TickType.Quote || resolution == Resolution.Tick)
             {
-                yield break;
-            }
-
-            if (resolution == Resolution.Tick)
-            {
-                throw new NotSupportedException("Resolution not available: " + resolution);
+                return null;
             }
 
             if (endUtc < startUtc)
             {
-                throw new ArgumentException("The end date must be greater or equal than the start date.");
+                return Enumerable.Empty<BaseData>();
             }
 
             var symbols = new List<Symbol>{ symbol };
@@ -84,34 +79,33 @@ namespace QuantConnect.ToolBox.IBDownloader
             var exchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
             var dataTimeZone = MarketHoursDatabase.FromDataFolder().GetDataTimeZone(symbol.ID.Market, symbol, symbol.SecurityType);
 
-            foreach (var targetSymbol in symbols)
-            {
-                var historyRequest = new HistoryRequest(startUtc,
-                    endUtc,
-                    typeof(QuoteBar),
-                    targetSymbol,
-                    resolution,
-                    exchangeHours: exchangeHours,
-                    dataTimeZone: dataTimeZone,
-                    resolution,
-                    includeExtendedMarketHours: true,
-                    false,
-                    DataNormalizationMode.Adjusted,
-                    TickType.Quote);
-
-                var history = _brokerage.GetHistory(historyRequest);
-
-                if (history == null)
+            return symbols
+                .Select(symbol =>
                 {
-                    Logging.Log.Trace($"IBDataDownloader.Get(): Ignoring history request for unsupported symbol {targetSymbol}");
-                    continue;
-                }
+                    var request = new HistoryRequest(startUtc,
+                        endUtc,
+                        typeof(QuoteBar),
+                        symbol,
+                        resolution,
+                        exchangeHours: exchangeHours,
+                        dataTimeZone: dataTimeZone,
+                        resolution,
+                        includeExtendedMarketHours: true,
+                        false,
+                        DataNormalizationMode.Adjusted,
+                        TickType.Quote);
 
-                foreach (var baseData in history)
-                {
-                    yield return baseData;
-                }
-            }
+                    var history = _brokerage.GetHistory(request);
+
+                    if (history == null)
+                    {
+                        Logging.Log.Trace($"IBDataDownloader.Get(): Ignoring history request for unsupported symbol {symbol}");
+                    }
+
+                    return history;
+                })
+                .Where(history => history != null)
+                .SelectMany(history => history);
         }
 
         /// <summary>
