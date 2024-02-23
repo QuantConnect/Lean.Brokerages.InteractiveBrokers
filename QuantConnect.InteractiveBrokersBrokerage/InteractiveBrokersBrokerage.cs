@@ -222,6 +222,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyDelistedAssetWarning;
         private bool _historyExpiredAssetWarning;
         private bool _historyOpenInterestWarning;
+        private bool _historyInvalidPeriodWarning;
 
         /// <summary>
         /// Returns true if we're currently connected to the broker
@@ -4074,6 +4075,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     _historyOpenInterestWarning = true;
                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryOpenInterest", "IB does not provide open interest historical data"));
+                }
+                return null;
+            }
+
+            if (request.EndTimeUtc < request.StartTimeUtc)
+            {
+                if (!_historyInvalidPeriodWarning)
+                {
+                    _historyInvalidPeriodWarning = true;
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning,
+                        "GetHistoryEndTimeBeforeStartTime", "The history request end time is before the start time. No history will be returned."));
                 }
                 return null;
             }
