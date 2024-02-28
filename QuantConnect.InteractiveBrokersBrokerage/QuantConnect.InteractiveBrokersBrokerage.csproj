@@ -3,10 +3,10 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <TargetFramework>net6.0</TargetFramework>
-    <Product>QuantConnect.InteractiveBrokersBrokerage</Product>
-    <AssemblyName>QuantConnect.InteractiveBrokersBrokerage</AssemblyName>
-    <RootNamespace>QuantConnect.InteractiveBrokersBrokerage</RootNamespace>
-    <AssemblyTitle>QuantConnect.InteractiveBrokersBrokerage</AssemblyTitle>
+    <Product>QuantConnect.Brokerages.InteractiveBrokers</Product>
+    <AssemblyName>QuantConnect.Brokerages.InteractiveBrokers</AssemblyName>
+    <RootNamespace>QuantConnect.Brokerages.InteractiveBrokers</RootNamespace>
+    <AssemblyTitle>QuantConnect.Brokerages.InteractiveBrokers</AssemblyTitle>
     <OutputType>Library</OutputType>
     <OutputPath>bin\$(Configuration)\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>

@@ -9,10 +9,10 @@
         <Copyright>Copyright ©  2021</Copyright>
         <TestProjectType>UnitTest</TestProjectType>
         <OutputPath>bin\$(Configuration)\</OutputPath>
-        <Product>QuantConnect.InteractiveBrokersBrokerage.Tests</Product>
-        <AssemblyName>QuantConnect.InteractiveBrokersBrokerage.Tests</AssemblyName>
-        <RootNamespace>QuantConnect.InteractiveBrokersBrokerage.Tests</RootNamespace>
-        <AssemblyTitle>QuantConnect.InteractiveBrokersBrokerage.Tests</AssemblyTitle>
+        <Product>QuantConnect.Brokerages.InteractiveBrokers.Tests</Product>
+        <AssemblyName>QuantConnect.Brokerages.InteractiveBrokers.Tests</AssemblyName>
+        <RootNamespace>QuantConnect.Brokerages.InteractiveBrokers.Tests</RootNamespace>
+        <AssemblyTitle>QuantConnect.Brokerages.InteractiveBrokers.Tests</AssemblyTitle>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     </PropertyGroup>
 
@@ -38,7 +38,7 @@
 			<SpecificVersion>False</SpecificVersion>
 		</Reference>
 	</ItemGroup>
-	
+
     <ItemGroup>
         <None Remove="config.json" />
         <Content Include="config.json">
