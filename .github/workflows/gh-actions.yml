@@ -41,6 +41,6 @@ jobs:
           shell: bash
           run: |
             # Build
-            dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.Brokerages.InteractiveBrokers.sln
+            dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.InteractiveBrokersBrokerage.sln
             # Run Tests
             dotnet test ./QuantConnect.InteractiveBrokersBrokerage.Tests/bin/Release/QuantConnect.Brokerages.InteractiveBrokers.Tests.dll
