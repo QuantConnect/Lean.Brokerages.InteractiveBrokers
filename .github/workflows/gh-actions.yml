@@ -43,4 +43,4 @@ jobs:
             # Build
             dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.InteractiveBrokersBrokerage.sln
             # Run Tests
-            dotnet test ./QuantConnect.InteractiveBrokersBrokerage.Tests/bin/Release/QuantConnect.InteractiveBrokersBrokerage.Tests.dll
+            dotnet test ./QuantConnect.InteractiveBrokersBrokerage.Tests/bin/Release/QuantConnect.Brokerages.InteractiveBrokers.Tests.dll
