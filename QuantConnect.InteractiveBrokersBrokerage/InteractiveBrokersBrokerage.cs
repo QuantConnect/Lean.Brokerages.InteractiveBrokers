@@ -261,10 +261,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="algorithm">The algorithm instance</param>
         /// <param name="orderProvider">An instance of IOrderProvider used to fetch Order objects by brokerage ID</param>
         /// <param name="securityProvider">The security provider used to give access to algorithm securities</param>
-        /// <param name="aggregator">consolidate ticks</param>
-        /// <param name="mapFileProvider">representing all the map files</param>
-        public InteractiveBrokersBrokerage(IAlgorithm algorithm, IOrderProvider orderProvider, ISecurityProvider securityProvider, IDataAggregator aggregator, IMapFileProvider mapFileProvider)
-            : this(algorithm, orderProvider, securityProvider, aggregator, mapFileProvider, Config.Get("ib-account"))
+        public InteractiveBrokersBrokerage(IAlgorithm algorithm, IOrderProvider orderProvider, ISecurityProvider securityProvider)
+            : this(algorithm, orderProvider, securityProvider, Config.Get("ib-account"))
         {
         }
 
@@ -274,16 +272,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="algorithm">The algorithm instance</param>
         /// <param name="orderProvider">An instance of IOrderProvider used to fetch Order objects by brokerage ID</param>
         /// <param name="securityProvider">The security provider used to give access to algorithm securities</param>
-        /// <param name="aggregator">consolidate ticks</param>
-        /// <param name="mapFileProvider">representing all the map files</param>
         /// <param name="account">The account used to connect to IB</param>
-        public InteractiveBrokersBrokerage(IAlgorithm algorithm, IOrderProvider orderProvider, ISecurityProvider securityProvider, IDataAggregator aggregator, IMapFileProvider mapFileProvider, string account)
+        public InteractiveBrokersBrokerage(IAlgorithm algorithm, IOrderProvider orderProvider, ISecurityProvider securityProvider, string account)
             : this(
                 algorithm,
                 orderProvider,
                 securityProvider,
-                aggregator,
-                mapFileProvider,
                 account,
                 Config.Get("ib-host", "LOCALHOST"),
                 Config.GetInt("ib-port", 4001),
@@ -319,8 +313,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             IAlgorithm algorithm,
             IOrderProvider orderProvider,
             ISecurityProvider securityProvider,
-            IDataAggregator aggregator,
-            IMapFileProvider mapFileProvider,
             string account,
             string host,
             int port,
@@ -338,8 +330,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 algorithm,
                 orderProvider,
                 securityProvider,
-                aggregator,
-                mapFileProvider,
                 account,
                 host,
                 port,
@@ -1192,8 +1182,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="algorithm">The algorithm instance</param>
         /// <param name="orderProvider">An instance of IOrderProvider used to fetch Order objects by brokerage ID</param>
         /// <param name="securityProvider">The security provider used to give access to algorithm securities</param>
-        /// <param name="aggregator">consolidate ticks</param>
-        /// <param name="mapFileProvider">representing all the map files</param>
         /// <param name="account">The Interactive Brokers account name</param>
         /// <param name="host">host name or IP address of the machine where TWS is running. Leave blank to connect to the local host.</param>
         /// <param name="port">must match the port specified in TWS on the Configure&gt;API&gt;Socket Port field.</param>
@@ -1208,8 +1196,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             IAlgorithm algorithm,
             IOrderProvider orderProvider,
             ISecurityProvider securityProvider,
-            IDataAggregator aggregator,
-            IMapFileProvider mapFileProvider,
             string account,
             string host,
             int port,
@@ -1233,15 +1219,31 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _loadExistingHoldings = loadExistingHoldings;
             _algorithm = algorithm;
             _orderProvider = orderProvider;
-            _mapFileProvider = mapFileProvider;
-            _aggregator = aggregator;
+
+            _mapFileProvider = Composer.Instance.GetPart<IMapFileProvider>();
+            if (_mapFileProvider == null)
+            {
+                // toolbox downloader case
+                var mapFileProviderName = Config.Get("map-file-provider", "QuantConnect.Data.Auxiliary.LocalDiskMapFileProvider");
+                Log.Trace($"InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): found no map file provider instance, creating {mapFileProviderName}");
+                _mapFileProvider = Composer.Instance.GetExportedValueByTypeName<IMapFileProvider>(mapFileProviderName);
+                _mapFileProvider.Initialize(Composer.Instance.GetExportedValueByTypeName<IDataProvider>(Config.Get("data-provider", "DefaultDataProvider")));
+            }
+            _aggregator = Composer.Instance.GetPart<IDataAggregator>();
+            if (_aggregator == null)
+            {
+                // toolbox downloader case
+                var aggregatorName = Config.Get("data-aggregator", "QuantConnect.Lean.Engine.DataFeeds.AggregationManager");
+                Log.Trace($"InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): found no data aggregator instance, creating {aggregatorName}");
+                _aggregator = Composer.Instance.GetExportedValueByTypeName<IDataAggregator>(aggregatorName);
+            }
             _account = account;
             _host = host;
             _port = port;
             _ibVersion = Convert.ToInt32(ibVersion, CultureInfo.InvariantCulture);
             _agentDescription = agentDescription;
 
-            _symbolMapper = new InteractiveBrokersSymbolMapper(mapFileProvider);
+            _symbolMapper = new InteractiveBrokersSymbolMapper(_mapFileProvider);
 
             _subscriptionManager = new EventBasedDataQueueHandlerSubscriptionManager();
             _subscriptionManager.SubscribeImpl += (s, t) => Subscribe(s);
@@ -3460,8 +3462,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             Initialize(null,
                 null,
                 null,
-                Composer.Instance.GetExportedValueByTypeName<IDataAggregator>(Config.Get("data-aggregator", "QuantConnect.Lean.Engine.DataFeeds.AggregationManager"), forceTypeNameOnExisting: false),
-                Composer.Instance.GetExportedValueByTypeName<IMapFileProvider>(Config.Get("map-file-provider", "QuantConnect.Data.Auxiliary.LocalDiskMapFileProvider")),
                 account,
                 host,
                 port,

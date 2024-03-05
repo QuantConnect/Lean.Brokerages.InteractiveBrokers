@@ -20,7 +20,6 @@ using QuantConnect.Util;
 using QuantConnect.Logging;
 using QuantConnect.Data.Market;
 using System.Collections.Generic;
-using QuantConnect.Configuration;
 
 namespace QuantConnect.ToolBox.IBDownloader
 {
@@ -67,7 +66,7 @@ namespace QuantConnect.ToolBox.IBDownloader
                 }
 
                 // Load settings from config.json
-                var dataDirectory = Config.Get("data-folder", "../../../Data");
+                var dataDirectory = Globals.DataFolder;
 
                 // Only FOREX for now
                 SecurityType securityType = SecurityType.Forex;

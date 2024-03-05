@@ -23,6 +23,7 @@ using QuantConnect.Interfaces;
 using QuantConnect.Data.Market;
 using System.Collections.Generic;
 using QuantConnect.Configuration;
+using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Brokerages.InteractiveBrokers;
 
 namespace QuantConnect.ToolBox.IBDownloader
@@ -39,10 +40,7 @@ namespace QuantConnect.ToolBox.IBDownloader
         /// </summary>
         public IBDataDownloader()
         {
-            var mapFileProvider = Composer.Instance.GetExportedValueByTypeName<IMapFileProvider>(
-                Config.Get("map-file-provider", "LocalDiskMapFileProvider"));
-
-            _brokerage = new InteractiveBrokersBrokerage(null, null, null, null, mapFileProvider);
+            _brokerage = new InteractiveBrokersBrokerage(null, null, null);
             _brokerage.Connect();
         }
 

@@ -34,7 +34,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         {
             var symbolMapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
 
-            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider(), new AggregationManager(), TestGlobals.MapFileProvider))
+            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider()))
             {
                 ib.Connect();
                 Assert.IsTrue(ib.IsConnected);
@@ -310,7 +310,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [Test]
         public void CreateExpectedFutureContractsWithDifferentCurrencies()
         {
-            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider(), new AggregationManager(), TestGlobals.MapFileProvider))
+            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider()))
             {
                 ib.Connect();
                 Assert.IsTrue(ib.IsConnected);

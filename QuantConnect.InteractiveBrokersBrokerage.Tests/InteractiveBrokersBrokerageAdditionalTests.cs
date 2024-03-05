@@ -74,7 +74,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var orderProvider = new OrderProvider();
             // wait for the previous run to finish, avoid any race condition
             Thread.Sleep(2000);
-            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio, new AggregationManager(), TestGlobals.MapFileProvider);
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
             brokerage.Connect();
 
             var openOrders = brokerage.GetOpenOrders();
@@ -147,7 +147,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var orderProvider = new OrderProvider();
             // wait for the previous run to finish, avoid any race condition
             Thread.Sleep(2000);
-            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio, new AggregationManager(), TestGlobals.MapFileProvider);
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
             brokerage.Connect();
 
             var openOrders = brokerage.GetOpenOrders();
@@ -252,7 +252,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var orderProvider = new OrderProvider();
             // wait for the previous run to finish, avoid any race condition
             Thread.Sleep(2000);
-            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio, new AggregationManager(), TestGlobals.MapFileProvider);
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
             brokerage.Connect();
 
             var openOrders = brokerage.GetOpenOrders();
@@ -384,8 +384,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Thread.Sleep(2000);
 
             var algorithm = new AlgorithmStub();
-            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio, new AggregationManager(),
-                TestGlobals.MapFileProvider);
+            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio);
 
             var orderProcesor = new BrokerageTransactionHandler();
             orderProcesor.Initialize(algorithm, brokerage, new TestResultHandler());
@@ -468,8 +467,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Thread.Sleep(2000);
 
             var algorithm = new AlgorithmStub();
-            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio, new AggregationManager(),
-                TestGlobals.MapFileProvider);
+            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio);
 
             var orderProcesor = new BrokerageTransactionHandler();
             orderProcesor.Initialize(algorithm, brokerage, new TestResultHandler());
@@ -559,8 +557,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Thread.Sleep(2000);
 
             var algorithm = new AlgorithmStub();
-            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio, new AggregationManager(),
-                TestGlobals.MapFileProvider);
+            using var brokerage = new InteractiveBrokersBrokerage(algorithm, algorithm.Transactions, algorithm.Portfolio);
 
             var orderProcesor = new BrokerageTransactionHandler();
             orderProcesor.Initialize(algorithm, brokerage, new TestResultHandler());
@@ -1039,9 +1036,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var brokerage = new InteractiveBrokersBrokerage(
                 new QCAlgorithm(),
                 new OrderProvider(_orders),
-                securityProvider,
-                new AggregationManager(),
-                TestGlobals.MapFileProvider);
+                securityProvider);
             brokerage.Connect();
 
             return brokerage;
