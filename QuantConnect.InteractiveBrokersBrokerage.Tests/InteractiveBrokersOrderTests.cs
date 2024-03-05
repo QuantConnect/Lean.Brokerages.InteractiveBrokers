@@ -101,7 +101,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
         protected override IBrokerage CreateBrokerage(IOrderProvider orderProvider, ISecurityProvider securityProvider)
         {
-            return new InteractiveBrokersBrokerage(new QCAlgorithm(), orderProvider, securityProvider, new AggregationManager(), TestGlobals.MapFileProvider);
+            return new InteractiveBrokersBrokerage(new QCAlgorithm(), orderProvider, securityProvider);
         }
 
         protected override void DisposeBrokerage(IBrokerage brokerage)

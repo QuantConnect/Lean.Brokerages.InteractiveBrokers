@@ -36,7 +36,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [Test]
         public void FutureSubscriptions()
         {
-            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider(), new AggregationManager(), TestGlobals.MapFileProvider))
+            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider()))
             {
                 ib.Connect();
                 var gotEsData = false;
@@ -71,7 +71,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [Test]
         public void GetsTickData()
         {
-            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider(), new AggregationManager(), TestGlobals.MapFileProvider))
+            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider()))
             {
                 ib.Connect();
                 var gotUsdData = false;
@@ -101,7 +101,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [Test]
         public void GetsTickDataAfterDisconnectionConnectionCycle()
         {
-            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider(), new AggregationManager(), TestGlobals.MapFileProvider))
+            using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider()))
             {
                 ib.Connect();
                 var cancelationToken = new CancellationTokenSource();

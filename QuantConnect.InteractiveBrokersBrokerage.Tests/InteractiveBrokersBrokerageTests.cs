@@ -69,9 +69,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             _interactiveBrokersBrokerage = new InteractiveBrokersBrokerage(
                 new QCAlgorithm(),
                 new OrderProvider(_orders),
-                securityProvider,
-                new AggregationManager(),
-                TestGlobals.MapFileProvider);
+                securityProvider);
             _interactiveBrokersBrokerage.Connect();
         }
 
