@@ -80,12 +80,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public string GetBrokerageSymbol(Symbol symbol)
         {
             if (string.IsNullOrWhiteSpace(symbol?.Value))
+            {
                 throw new ArgumentException("Invalid symbol: " + (symbol == null ? "null" : symbol.ToString()));
+            }
 
             var ticker = GetMappedTicker(symbol);
 
             if (string.IsNullOrWhiteSpace(ticker))
+            {
                 throw new ArgumentException("Invalid symbol: " + symbol.ToString());
+            }
 
             if (symbol.ID.SecurityType != SecurityType.Forex &&
                 symbol.ID.SecurityType != SecurityType.Equity &&
@@ -93,11 +97,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 symbol.ID.SecurityType != SecurityType.Option &&
                 symbol.ID.SecurityType != SecurityType.IndexOption &&
                 symbol.ID.SecurityType != SecurityType.FutureOption &&
-                symbol.ID.SecurityType != SecurityType.Future)
+                symbol.ID.SecurityType != SecurityType.Future &&
+                symbol.ID.SecurityType != SecurityType.Cfd)
+            {
                 throw new ArgumentException("Invalid security type: " + symbol.ID.SecurityType);
+            }
 
             if (symbol.ID.SecurityType == SecurityType.Forex && ticker.Length != 6)
+            {
                 throw new ArgumentException("Forex symbol length must be equal to 6: " + symbol.Value);
+            }
 
             switch (symbol.ID.SecurityType)
             {
@@ -114,6 +123,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return GetBrokerageSymbol(symbol.Underlying);
 
                 case SecurityType.Future:
+                case SecurityType.Cfd:
                     return GetBrokerageRootSymbol(symbol.ID.Symbol);
 
                 case SecurityType.Equity:
@@ -158,7 +168,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         return Symbol.CreateFuture(GetLeanRootSymbol(brokerageSymbol), market, expirationDate);
 
                     case SecurityType.Option:
-                        // See SecurityType.Equity case. The equity underlying may include a space, e.g. BRK B. 
+                        // See SecurityType.Equity case. The equity underlying may include a space, e.g. BRK B.
                         brokerageSymbol = brokerageSymbol.Replace(" ", ".");
                         return Symbol.CreateOption(brokerageSymbol, market, OptionStyle.American, optionRight, strike, expirationDate);
 
@@ -198,6 +208,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     case SecurityType.Equity:
                         brokerageSymbol = brokerageSymbol.Replace(" ", ".");
+                        break;
+
+                    case SecurityType.Cfd:
+                        brokerageSymbol = GetLeanRootSymbol(brokerageSymbol);
                         break;
                 }
 

@@ -22,11 +22,9 @@ using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.Data;
-using QuantConnect.Data.Auxiliary;
 using QuantConnect.Data.Market;
-using QuantConnect.Lean.Engine.DataFeeds;
+using QuantConnect.Lean.Engine.DataFeeds.Enumerators;
 using QuantConnect.Securities;
-using QuantConnect.Tests.Engine.DataFeeds;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
@@ -138,6 +136,71 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 Assert.IsTrue(gotUsdData);
                 Assert.IsTrue(gotEurData);
             }
+        }
+
+        [Test]
+        public void CanSubscribeToCFD()
+        {
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+            ib.Connect();
+
+            var cancelationToken = new CancellationTokenSource();
+
+            var symbolsWithData = new HashSet<Symbol>();
+
+            var equityCfds = new[] { "AAPL", "SPY", "GOOG" };
+            var forexCfds = new[] { "AUDUSD", "NZDUSD", "USDCAD", "USDCHF" };
+            var indexCfds = new[] { "SPX500USD", "AU200AUD", "US30USD", "NAS100USD", "UK100GBP", "EU50EUR", "DE40EUR", "FR40EUR", "ES35EUR",
+                "NL25EUR", "CH20CHF", "JP225USD", "HK50HKD" };
+
+            var tickers = equityCfds.Concat(forexCfds).Concat(indexCfds);
+
+            foreach (var ticker in tickers)
+            {
+                var symbol = Symbol.Create(ticker, SecurityType.Cfd, Market.Oanda);
+                var configs = new[]
+                {
+                    GetSubscriptionDataConfig<QuoteBar>(symbol, Resolution.Second),
+                    GetSubscriptionDataConfig<TradeBar>(symbol, Resolution.Second),
+                };
+
+                foreach (var config in configs)
+                {
+                    ProcessFeed(
+                        ib.Subscribe(config, (s, e) =>
+                        {
+                            symbolsWithData.Add(((NewDataAvailableEventArgs)e).DataPoint.Symbol);
+                        }),
+                        cancelationToken,
+                        (tick) => Log(tick));
+                }
+            }
+
+            Thread.Sleep(10 * 1000);
+            cancelationToken.Cancel();
+            cancelationToken.Dispose();
+
+            Assert.IsNotEmpty(symbolsWithData);
+
+            // IB does not stream data for equities and Forex CFDs: https://ibkrcampus.com/ibkr-api-page/trader-workstation-api/#re-route-cfds
+            Assert.IsFalse(equityCfds.Any(x => symbolsWithData.Any(symbol => symbol.Value == x)));
+            Assert.IsFalse(forexCfds.Any(x => symbolsWithData.Any(symbol => symbol.Value == x)));
+
+            Console.WriteLine(string.Join(", ", symbolsWithData.Select(s => s.Value)));
+        }
+
+        [Test]
+        public void CannotSubscribeToCFDWithUnsupportedMarket()
+        {
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+            ib.Connect();
+
+            var usSpx500Cfd = Symbol.Create("SPX500USD", SecurityType.Cfd, Market.FXCM);
+            var config = GetSubscriptionDataConfig<QuoteBar>(usSpx500Cfd, Resolution.Second);
+
+            var enumerator = ib.Subscribe(config, (s, e) => { });
+
+            Assert.IsNull(enumerator);
         }
 
         protected SubscriptionDataConfig GetSubscriptionDataConfig<T>(Symbol symbol, Resolution resolution)

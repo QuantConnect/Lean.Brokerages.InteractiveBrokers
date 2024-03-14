@@ -3178,6 +3178,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case SecurityType.Future:
                     return IB.SecurityType.Future;
 
+                case SecurityType.Cfd:
+                    return IB.SecurityType.ContractForDifference;
+
                 default:
                     throw new ArgumentException($"The {type} security type is not currently supported.");
             }
@@ -3209,6 +3212,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 case IB.SecurityType.Future:
                     return SecurityType.Future;
+
+                case IB.SecurityType.ContractForDifference:
+                    return SecurityType.Cfd;
 
                 default:
                     throw new NotSupportedException(
@@ -3677,7 +3683,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 (securityType == SecurityType.IndexOption && market == Market.USA) ||
                 (securityType == SecurityType.Index && market == Market.USA) ||
                 (securityType == SecurityType.FutureOption) ||
-                (securityType == SecurityType.Future);
+                (securityType == SecurityType.Future) ||
+                (securityType == SecurityType.Cfd && market == Market.Oanda);
         }
 
         /// <summary>
