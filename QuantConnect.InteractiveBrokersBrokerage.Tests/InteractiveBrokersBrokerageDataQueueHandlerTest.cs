@@ -138,15 +138,21 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
-        [Test]
-        public void CanSubscribeToCFD()
+        [TestCase(TickType.Trade, Resolution.Tick)]
+        [TestCase(TickType.Quote, Resolution.Tick)]
+        [TestCase(TickType.Quote, Resolution.Second)]
+        public void CanSubscribeToCFD(TickType tickType, Resolution resolution)
         {
+            // Wait a bit to make sure previous tests already disconnected from IB
+            Thread.Sleep(2000);
+
             using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
             ib.Connect();
 
             var cancelationToken = new CancellationTokenSource();
 
             var symbolsWithData = new HashSet<Symbol>();
+            var locker = new object();
 
             var equityCfds = new[] { "AAPL", "SPY", "GOOG" };
             var forexCfds = new[] { "AUDUSD", "NZDUSD", "USDCAD", "USDCHF" };
@@ -158,22 +164,24 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             foreach (var ticker in tickers)
             {
                 var symbol = Symbol.Create(ticker, SecurityType.Cfd, Market.Oanda);
-                var configs = new[]
+                var config = resolution switch
                 {
-                    GetSubscriptionDataConfig<QuoteBar>(symbol, Resolution.Second),
-                    GetSubscriptionDataConfig<TradeBar>(symbol, Resolution.Second),
+                    Resolution.Tick => GetSubscriptionDataConfig<Tick>(symbol, resolution),
+                    _ => tickType == TickType.Trade
+                        ? GetSubscriptionDataConfig<TradeBar>(symbol, resolution)
+                        : GetSubscriptionDataConfig<QuoteBar>(symbol, resolution)
                 };
 
-                foreach (var config in configs)
-                {
-                    ProcessFeed(
-                        ib.Subscribe(config, (s, e) =>
+                ProcessFeed(
+                    ib.Subscribe(config, (s, e) =>
+                    {
+                        lock (locker)
                         {
                             symbolsWithData.Add(((NewDataAvailableEventArgs)e).DataPoint.Symbol);
-                        }),
-                        cancelationToken,
-                        (tick) => Log(tick));
-                }
+                        }
+                    }),
+                    cancelationToken,
+                    (tick) => Log(tick));
             }
 
             Thread.Sleep(10 * 1000);
