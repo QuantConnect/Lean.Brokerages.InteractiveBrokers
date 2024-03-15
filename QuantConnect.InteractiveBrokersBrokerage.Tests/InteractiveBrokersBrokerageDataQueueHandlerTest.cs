@@ -138,10 +138,29 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
         }
 
-        [TestCase(TickType.Trade, Resolution.Tick)]
-        [TestCase(TickType.Quote, Resolution.Tick)]
-        [TestCase(TickType.Quote, Resolution.Second)]
-        public void CanSubscribeToCFD(TickType tickType, Resolution resolution)
+        private static TestCaseData[] GetCFDSubscriptionTestCases()
+        {
+            var baseTestCases = new[]
+            {
+                new { TickType = TickType.Trade, Resolution = Resolution.Tick },
+                new { TickType = TickType.Quote, Resolution = Resolution.Tick },
+                new { TickType = TickType.Quote, Resolution = Resolution.Second }
+            };
+
+            var equityCfds = new[] { "AAPL", "SPY", "GOOG" };
+            var indexCfds = new[] { "SPX500USD", "AU200AUD", "US30USD", "NAS100USD", "UK100GBP", "DE30EUR", "FR40EUR", "HK50HKD", "JP225" };
+            var forexCfds = new[] { "AUDUSD", "NZDUSD", "USDCAD", "USDCHF" };
+
+            return baseTestCases.SelectMany(testCase => new[]
+            {
+                new TestCaseData(equityCfds, testCase.TickType, testCase.Resolution),
+                new TestCaseData(indexCfds, testCase.TickType, testCase.Resolution),
+                new TestCaseData(forexCfds, testCase.TickType, testCase.Resolution),
+            }).ToArray();
+        }
+
+        [TestCaseSource(nameof(GetCFDSubscriptionTestCases))]
+        public void CanSubscribeToCFD(IEnumerable<string> tickers, TickType tickType, Resolution resolution)
         {
             // Wait a bit to make sure previous tests already disconnected from IB
             Thread.Sleep(2000);
@@ -153,13 +172,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var symbolsWithData = new HashSet<Symbol>();
             var locker = new object();
-
-            var equityCfds = new[] { "AAPL", "SPY", "GOOG" };
-            var forexCfds = new[] { "AUDUSD", "NZDUSD", "USDCAD", "USDCHF" };
-            var indexCfds = new[] { "SPX500USD", "AU200AUD", "US30USD", "NAS100USD", "UK100GBP", "EU50EUR", "DE40EUR", "FR40EUR", "ES35EUR",
-                "NL25EUR", "CH20CHF", "JP225USD", "HK50HKD" };
-
-            var tickers = equityCfds.Concat(forexCfds).Concat(indexCfds);
 
             foreach (var ticker in tickers)
             {
@@ -188,13 +200,9 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             cancelationToken.Cancel();
             cancelationToken.Dispose();
 
-            Assert.IsNotEmpty(symbolsWithData);
-
-            // IB does not stream data for equities and Forex CFDs: https://ibkrcampus.com/ibkr-api-page/trader-workstation-api/#re-route-cfds
-            Assert.IsFalse(equityCfds.Any(x => symbolsWithData.Any(symbol => symbol.Value == x)));
-            Assert.IsFalse(forexCfds.Any(x => symbolsWithData.Any(symbol => symbol.Value == x)));
-
             Console.WriteLine(string.Join(", ", symbolsWithData.Select(s => s.Value)));
+
+            Assert.IsTrue(tickers.Any(x => symbolsWithData.Any(symbol => symbol.Value == x)));
         }
 
         [Test]

@@ -160,6 +160,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// </summary>
         public event EventHandler<FamilyCodesEventArgs> FamilyCodes;
 
+        /// <summary>
+        /// ReRouteMarketDataRequest event handler
+        /// </summary>
+        public event EventHandler<RerouteMarketDataRequestEventArgs> ReRouteMarketDataRequest;
+
+        /// <summary>
+        /// ReRouteMarketDataDepthRequest event handler
+        /// </summary>
+        public event EventHandler<RerouteMarketDataRequestEventArgs> ReRouteMarketDataDepthRequest;
+
         #endregion
 
         /// <summary>
@@ -503,6 +513,30 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
             OnFamilyCodes(new FamilyCodesEventArgs(familyCodes));
         }
 
+        /// <summary>
+        /// Callback that gets the parameters to re-route a Level 1 market data request.
+        /// Stock and Forex CFDs requests are re-routed to their underlyings.
+        /// </summary>
+        /// <param name="reqId">The request ID</param>
+        /// <param name="conId">The contract ID of the underlying</param>
+        /// <param name="exchange">The underlying primary exchange</param>
+        public override void rerouteMktDataReq(int reqId, int conId, string exchange)
+        {
+            OnReRouteMarketDataRequest(new RerouteMarketDataRequestEventArgs(reqId, conId, exchange));
+        }
+
+        /// <summary>
+        /// Callback that gets the parameters to re-route a Level 2market data request.
+        /// Stock and Forex CFDs requests are re-routed to their underlyings.
+        /// </summary>
+        /// <param name="reqId">The request ID</param>
+        /// <param name="conId">The contract ID of the underlying</param>
+        /// <param name="exchange">The underlying primary exchange</param>
+        public override void rerouteMktDepthReq(int reqId, int conId, string exchange)
+        {
+            OnReRouteMarketDepthRequest(new RerouteMarketDataRequestEventArgs(reqId, conId, exchange));
+        }
+
         #endregion
 
         #region Event Invocators
@@ -721,6 +755,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         protected virtual void OnFamilyCodes(FamilyCodesEventArgs e)
         {
             FamilyCodes?.Invoke(this, e);
+        }
+
+        /// <summary>
+        /// ReRouteMarketDataRequest event invocator
+        /// </summary>
+        private void OnReRouteMarketDataRequest(RerouteMarketDataRequestEventArgs args)
+        {
+            ReRouteMarketDataRequest?.Invoke(this, args);
+        }
+
+        /// <summary>
+        /// ReRouteMarketDepthRequest event invocator
+        /// </summary>
+        private void OnReRouteMarketDepthRequest(RerouteMarketDataRequestEventArgs args)
+        {
+            ReRouteMarketDataDepthRequest?.Invoke(this, args);
         }
 
         #endregion
