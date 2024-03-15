@@ -3354,7 +3354,25 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             try
             {
                 var securityType = ConvertSecurityType(contract);
-                var ibSymbol = securityType == SecurityType.Forex ? contract.Symbol + contract.Currency : contract.Symbol;
+
+                var ibSymbol = contract.Symbol;
+                if (securityType == SecurityType.Forex)
+                {
+                    ibSymbol += contract.Currency;
+                }
+                else if (securityType == SecurityType.Cfd)
+                {
+                    var potentialCurrencyPair = contract.TradingClass.Replace(".", "");
+                    var potentialForexSymbol = Symbol.Create(potentialCurrencyPair, SecurityType.Forex, Market.Oanda);
+                    if (CurrencyPairUtil.IsDecomposable(potentialForexSymbol))
+                    {
+                        CurrencyPairUtil.DecomposeCurrencyPair(potentialForexSymbol, out var baseCurrency, out var quoteCurrency);
+                        if (baseCurrency == contract.Symbol && quoteCurrency == contract.Currency)
+                        {
+                            ibSymbol += contract.Currency;
+                        }
+                    }
+                }
 
                 var market = InteractiveBrokersBrokerageModel.DefaultMarketMap[securityType];
                 var isFutureOption = contract.SecType == IB.SecurityType.FutureOption;

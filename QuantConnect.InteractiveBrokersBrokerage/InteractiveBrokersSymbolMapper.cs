@@ -157,7 +157,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 securityType != SecurityType.Option &&
                 securityType != SecurityType.IndexOption &&
                 securityType != SecurityType.Future &&
-                securityType != SecurityType.FutureOption)
+                securityType != SecurityType.FutureOption &&
+                securityType != SecurityType.Cfd)
                 throw new ArgumentException("Invalid security type: " + securityType);
 
             try
