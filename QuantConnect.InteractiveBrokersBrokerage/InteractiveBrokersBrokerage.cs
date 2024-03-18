@@ -53,6 +53,7 @@ using Order = QuantConnect.Orders.Order;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using QuantConnect.Data.Auxiliary;
+using QuantConnect.Securities.Forex;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -3362,11 +3363,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
                 else if (securityType == SecurityType.Cfd)
                 {
+                    // If this is a forex CFD, we need to compose the symbol like we do for forex
                     var potentialCurrencyPair = contract.TradingClass.Replace(".", "");
-                    var potentialForexSymbol = Symbol.Create(potentialCurrencyPair, SecurityType.Forex, Market.Oanda);
-                    if (CurrencyPairUtil.IsDecomposable(potentialForexSymbol))
+                    if (CurrencyPairUtil.IsForexDecomposable(potentialCurrencyPair))
                     {
-                        CurrencyPairUtil.DecomposeCurrencyPair(potentialForexSymbol, out var baseCurrency, out var quoteCurrency);
+                        Forex.DecomposeCurrencyPair(potentialCurrencyPair, out var baseCurrency, out var quoteCurrency);
                         if (baseCurrency == contract.Symbol && quoteCurrency == contract.Currency)
                         {
                             ibSymbol += contract.Currency;

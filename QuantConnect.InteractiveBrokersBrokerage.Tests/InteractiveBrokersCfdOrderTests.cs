@@ -69,43 +69,43 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         }
 
         [Test, TestCaseSource(nameof(IndexCfdOrderTest))]
-        public override void CancelOrders(OrderTestParameters parameters)
+        public void CancelOrdersIndexCfd(OrderTestParameters parameters)
         {
             base.CancelOrders(parameters);
         }
 
         [Test, TestCaseSource(nameof(IndexCfdOrderTest))]
-        public override void LongFromZero(OrderTestParameters parameters)
+        public void LongFromZeroIndexCfd(OrderTestParameters parameters)
         {
             base.LongFromZero(parameters);
         }
 
         [Test, TestCaseSource(nameof(IndexCfdOrderTest))]
-        public override void CloseFromLong(OrderTestParameters parameters)
+        public void CloseFromLongIndexCfd(OrderTestParameters parameters)
         {
             base.CloseFromLong(parameters);
         }
 
         [Test, TestCaseSource(nameof(IndexCfdOrderTest))]
-        public override void ShortFromZero(OrderTestParameters parameters)
+        public void ShortFromZeroIndexCfd(OrderTestParameters parameters)
         {
             base.ShortFromZero(parameters);
         }
 
         [Test, TestCaseSource(nameof(IndexCfdOrderTest))]
-        public override void CloseFromShort(OrderTestParameters parameters)
+        public void CloseFromShortIndexCfd(OrderTestParameters parameters)
         {
             base.CloseFromShort(parameters);
         }
 
         [Test, TestCaseSource(nameof(IndexCfdOrderTest))]
-        public override void ShortFromLong(OrderTestParameters parameters)
+        public void ShortFromLongIndexCfd(OrderTestParameters parameters)
         {
             base.ShortFromLong(parameters);
         }
 
         [Test, TestCaseSource(nameof(IndexCfdOrderTest))]
-        public override void LongFromShort(OrderTestParameters parameters)
+        public void LongFromShortIndexCfd(OrderTestParameters parameters)
         {
             base.LongFromShort(parameters);
         }
