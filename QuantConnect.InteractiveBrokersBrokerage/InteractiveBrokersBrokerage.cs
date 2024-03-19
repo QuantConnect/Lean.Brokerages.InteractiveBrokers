@@ -1447,8 +1447,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static string GetUniqueKey(Contract contract)
         {
+            var leanSecurityType = ConvertSecurityType(contract);
+            if (leanSecurityType.IsOption())
+            {
             // for IB trading class can be different depending on the contract flavor, e.g. index options SPX & SPXW
             return $"{contract.ToString().ToUpperInvariant()} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right} {contract.TradingClass}";
+        }
+
+            return contract.ToString().ToUpperInvariant();
         }
 
         /// <summary>
@@ -3209,7 +3215,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Maps SecurityType enum
         /// </summary>
-        private SecurityType ConvertSecurityType(Contract contract)
+        private static SecurityType ConvertSecurityType(Contract contract)
         {
             switch (contract.SecType)
             {
@@ -4271,6 +4277,24 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // preparing the data for IB request
             var contract = CreateContract(request.Symbol, includeExpired: true);
+            var contractDetails = GetContractDetails(contract, request.Symbol.Value);
+            if (contract.SecType == IB.SecurityType.ContractForDifference)
+            {
+                // IB does not have data for equity and forex CFDs, we need to use the underlying security
+                var underlyingSecurityType = contractDetails.UnderSecType switch
+                {
+                    IB.SecurityType.Stock => SecurityType.Equity,
+                    IB.SecurityType.Cash => SecurityType.Forex,
+                    _ => (SecurityType?)null
+                };
+
+                if (underlyingSecurityType.HasValue)
+                {
+                    var underlyingSymbol = Symbol.Create(request.Symbol.Value, underlyingSecurityType.Value, request.Symbol.ID.Market);
+                    contract = CreateContract(underlyingSymbol, includeExpired: true);
+                }
+            }
+
             var resolution = ConvertResolution(request.Resolution);
 
             var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
