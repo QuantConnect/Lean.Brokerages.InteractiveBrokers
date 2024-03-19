@@ -1523,13 +1523,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="contract">The target contract</param>
         /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
-        private ContractDetails GetContractDetails(Contract contract, string ticker)
+        private ContractDetails GetContractDetails(Contract contract, string ticker, bool failIfNotFound = true)
         {
             if (_contractDetails.TryGetValue(GetUniqueKey(contract), out var details))
             {
                 return details;
             }
-            return GetContractDetailsImpl(contract, ticker);
+            return GetContractDetailsImpl(contract, ticker, failIfNotFound);
         }
 
         /// <summary>
@@ -1537,7 +1537,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="contract">The target contract</param>
         /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
-        private ContractDetails GetContractDetailsImpl(Contract contract, string ticker)
+        private ContractDetails GetContractDetailsImpl(Contract contract, string ticker, bool failIfNotFound = true)
         {
             const int timeout = 60; // sec
 
@@ -1550,7 +1550,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _requestInformation[requestId] = new RequestInformation
             {
                 RequestId = requestId,
-                RequestType = RequestType.ContractDetails,
+                RequestType = failIfNotFound ? RequestType.ContractDetails : RequestType.SoftContractDetails,
                 Message = $"[Id={requestId}] GetContractDetails: {ticker} ({contract})"
             };
 
@@ -1824,21 +1824,32 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (errorCode == 200)
             {
                 // No security definition has been found for the request
-                // This is a common error when requesting historical data for expired contracts, in which case can ignore it
-                if (requestInfo is not null && requestInfo.RequestType == RequestType.History)
+                if (requestInfo is not null)
                 {
-                    MapFile mapFile = null;
-                    if (requestInfo.AssociatedSymbol.RequiresMapping())
+                    // This is a common error when requesting historical data for expired contracts, in which case can ignore it
+                    if (requestInfo.RequestType == RequestType.History)
                     {
-                        var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(requestInfo.AssociatedSymbol));
-                        mapFile = resolver.ResolveMapFile(requestInfo.AssociatedSymbol);
-                    }
-                    var historicalLimitDate = requestInfo.AssociatedSymbol.GetDelistingDate(mapFile).AddDays(1)
-                        .ConvertToUtc(requestInfo.HistoryRequest.ExchangeHours.TimeZone);
+                        MapFile mapFile = null;
+                        if (requestInfo.AssociatedSymbol.RequiresMapping())
+                        {
+                            var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(requestInfo.AssociatedSymbol));
+                            mapFile = resolver.ResolveMapFile(requestInfo.AssociatedSymbol);
+                        }
+                        var historicalLimitDate = requestInfo.AssociatedSymbol.GetDelistingDate(mapFile).AddDays(1)
+                            .ConvertToUtc(requestInfo.HistoryRequest.ExchangeHours.TimeZone);
 
-                    if (DateTime.UtcNow.Date > historicalLimitDate)
+                        if (DateTime.UtcNow.Date > historicalLimitDate)
+                        {
+                            Log.Trace($"InteractiveBrokersBrokerage.HandleError(): Expired contract historical data request, ignoring error.  ErrorCode: {errorCode} - {errorMsg}");
+                            return;
+                        }
+                    }
+                    // If the request is marked as a soft contract details reques, we won't exit if not found.
+                    // This can happen when checking whether a cfd if a forex cfd to create a contract,
+                    // the first contract details request might return this error if it's in fact a forex CFD
+                    // since the whole symbol (e.g. EURUSD) will be used first. We can ignore it
+                    else if (requestInfo.RequestType == RequestType.SoftContractDetails)
                     {
-                        Log.Trace($"InteractiveBrokersBrokerage.HandleError(): Expired contract historical data request, ignoring error.  ErrorCode: {errorCode} - {errorMsg}");
                         return;
                     }
                 }
@@ -2864,7 +2875,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (symbol.ID.SecurityType == SecurityType.Cfd)
             {
                 // Let's try getting the contract details in order to get the type of CFD (stock, index or forex)
-                var details = GetContractDetails(contract, symbol.Value);
+                var details = GetContractDetails(contract, symbol.Value, failIfNotFound: false);
 
                 // if null, it might be a forex CFD, we need to split the symbol just like we do for forex
                 if (details == null)
@@ -5210,6 +5221,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             ContractDetails,
             History,
             Executions,
+            SoftContractDetails,    // Don't fail if we can't find the contract
         }
 
         private class RequestInformation
