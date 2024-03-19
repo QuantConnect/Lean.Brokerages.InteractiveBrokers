@@ -28,6 +28,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         private static Symbol IndexCfdSymbol = Symbol.Create("SPX500USD", SecurityType.Cfd, Market.Oanda);
         private static Symbol EquityCfdSymbol = Symbol.Create("AAPL", SecurityType.Cfd, Market.Oanda);
         private static Symbol ForexCfdSymbol = Symbol.Create("AUDUSD", SecurityType.Cfd, Market.Oanda);
+        private static Symbol MetalCfdSymbol = Symbol.Create("XAUUSD", SecurityType.Cfd, Market.Oanda);
 
         protected override Symbol Symbol => IndexCfdSymbol;
         protected override SecurityType SecurityType => SecurityType.Cfd;
@@ -67,6 +68,20 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 new TestCaseData(new LimitIfTouchedOrderTestParameters(ForexCfdSymbol, 10000m, 0.01m)),
             };
         }
+
+        private static TestCaseData[] MetalCfdOrderTest()
+        {
+            return new[]
+            {
+                new TestCaseData(new MarketOrderTestParameters(MetalCfdSymbol)),
+                new TestCaseData(new LimitOrderTestParameters(MetalCfdSymbol, 10000m, 0.01m)),
+                new TestCaseData(new StopMarketOrderTestParameters(MetalCfdSymbol, 10000m, 0.01m)),
+                new TestCaseData(new StopLimitOrderTestParameters(MetalCfdSymbol, 10000m, 0.01m)),
+                new TestCaseData(new LimitIfTouchedOrderTestParameters(MetalCfdSymbol, 10000m, 0.01m)),
+            };
+        }
+
+        #region Index CFDs
 
         [Test, TestCaseSource(nameof(IndexCfdOrderTest))]
         public void CancelOrdersIndexCfd(OrderTestParameters parameters)
@@ -110,6 +125,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             base.LongFromShort(parameters);
         }
 
+        #endregion
+
+        #region Equity CFDs
+
         [Test, TestCaseSource(nameof(EquityCfdOrderTest))]
         public void CancelOrdersEquityCfd(OrderTestParameters parameters)
         {
@@ -152,6 +171,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             base.LongFromShort(parameters);
         }
 
+        #endregion
+
+        #region Forex CFDs
+
         [Test, TestCaseSource(nameof(ForexCfdOrderTest))]
         public void CancelOrdersForexCfd(OrderTestParameters parameters)
         {
@@ -193,6 +216,54 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         {
             base.LongFromShort(parameters);
         }
+
+        #endregion
+
+        #region Metal CFDs
+
+        [Test, TestCaseSource(nameof(MetalCfdOrderTest))]
+        public void CancelOrdersMetalCfd(OrderTestParameters parameters)
+        {
+            base.CancelOrders(parameters);
+        }
+
+        [Test, TestCaseSource(nameof(MetalCfdOrderTest))]
+        public void LongFromZeroMetalCfd(OrderTestParameters parameters)
+        {
+            base.LongFromZero(parameters);
+        }
+
+        [Test, TestCaseSource(nameof(MetalCfdOrderTest))]
+        public void CloseFromLongMetalCfd(OrderTestParameters parameters)
+        {
+            base.CloseFromLong(parameters);
+        }
+
+        [Test, TestCaseSource(nameof(MetalCfdOrderTest))]
+        public void ShortFromZeroMetalCfd(OrderTestParameters parameters)
+        {
+            base.ShortFromZero(parameters);
+        }
+
+        [Test, TestCaseSource(nameof(MetalCfdOrderTest))]
+        public void CloseFromShortMetalCfd(OrderTestParameters parameters)
+        {
+            base.CloseFromShort(parameters);
+        }
+
+        [Test, TestCaseSource(nameof(MetalCfdOrderTest))]
+        public void ShortFromLongMetalCfd(OrderTestParameters parameters)
+        {
+            base.ShortFromLong(parameters);
+        }
+
+        [Test, TestCaseSource(nameof(MetalCfdOrderTest))]
+        public void LongFromShortMetalCfd(OrderTestParameters parameters)
+        {
+            base.LongFromShort(parameters);
+        }
+
+        #endregion
 
         // TODO: Add tests to get holdings after placing orders
 

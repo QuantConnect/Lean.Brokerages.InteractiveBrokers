@@ -150,12 +150,14 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var equityCfds = new[] { "AAPL", "SPY", "GOOG" };
             var indexCfds = new[] { "SPX500USD", "AU200AUD", "US30USD", "NAS100USD", "UK100GBP", "DE30EUR", "FR40EUR", "HK50HKD", "JP225" };
             var forexCfds = new[] { "AUDUSD", "NZDUSD", "USDCAD", "USDCHF" };
+            var metalCfds = new[] { "XAUUSD", "XAGUSD" };
 
             return baseTestCases.SelectMany(testCase => new[]
             {
                 new TestCaseData(equityCfds, testCase.TickType, testCase.Resolution),
                 new TestCaseData(indexCfds, testCase.TickType, testCase.Resolution),
                 new TestCaseData(forexCfds, testCase.TickType, testCase.Resolution),
+                new TestCaseData(metalCfds, testCase.TickType, testCase.Resolution),
             }).ToArray();
         }
 
