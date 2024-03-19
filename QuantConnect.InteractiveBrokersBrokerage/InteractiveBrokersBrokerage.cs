@@ -3644,9 +3644,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                         };
 
                                         requestData(underlyingContract);
-
-                                        // TODO: What happens if the underlying is already subscribed?
-                                        // TODO: What happens if the underlying is subscribed after the CFD?
                                     }
                                 };
 
@@ -3663,8 +3660,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 Client.ReRouteMarketDataDepthRequest += handleRerouteEvent;
                                 Client.TickSize += handleData;
 
-                                // TODO: What to do if timeout?
-                                rerouted.Wait(TimeSpan.FromSeconds(5));
+                                rerouted.Wait(TimeSpan.FromSeconds(10));
 
                                 Client.ReRouteMarketDataRequest -= handleRerouteEvent;
                                 Client.ReRouteMarketDataDepthRequest -= handleRerouteEvent;
