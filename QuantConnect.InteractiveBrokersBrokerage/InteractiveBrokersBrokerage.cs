@@ -195,9 +195,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         // See https://interactivebrokers.github.io/tws-api/historical_limitations.html
         // Making more than 60 requests within any ten minute period will cause a pacing violation for Small Bars (30 secs or less)
-        private readonly RateGate _historyHighResolutionRateLimiter = new (58, TimeSpan.FromMinutes(10));
+        private readonly RateGate _historyHighResolutionRateLimiter = new(58, TimeSpan.FromMinutes(10));
         // The maximum number of simultaneous open historical data requests from the API is 50, we limit the count further so we can server them as best as possible
-        private readonly SemaphoreSlim _concurrentHistoryRequests = new (20);
+        private readonly SemaphoreSlim _concurrentHistoryRequests = new(20);
 
         // additional IB request information, will be matched with errors in the handler, for better error reporting
         private readonly ConcurrentDictionary<int, RequestInformation> _requestInformation = new();
@@ -1413,7 +1413,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     if (noSubmissionOrderTypes)
                     {
-                        if(!_submissionOrdersWarningSent)
+                        if (!_submissionOrdersWarningSent)
                         {
                             _submissionOrdersWarningSent = true;
                             OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning,
@@ -1450,9 +1450,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var leanSecurityType = ConvertSecurityType(contract);
             if (leanSecurityType.IsOption())
             {
-            // for IB trading class can be different depending on the contract flavor, e.g. index options SPX & SPXW
-            return $"{contract.ToString().ToUpperInvariant()} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right} {contract.TradingClass}";
-        }
+                // for IB trading class can be different depending on the contract flavor, e.g. index options SPX & SPXW
+                return $"{contract.ToString().ToUpperInvariant()} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right} {contract.TradingClass}";
+            }
 
             return contract.ToString().ToUpperInvariant();
         }
@@ -1830,7 +1830,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     MapFile mapFile = null;
                     if (requestInfo.AssociatedSymbol.RequiresMapping())
                     {
-                    var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(requestInfo.AssociatedSymbol));
+                        var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(requestInfo.AssociatedSymbol));
                         mapFile = resolver.ResolveMapFile(requestInfo.AssociatedSymbol);
                     }
                     var historicalLimitDate = requestInfo.AssociatedSymbol.GetDelistingDate(mapFile).AddDays(1)
@@ -2185,7 +2185,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                if(executionDetails.Contract.SecType == IB.SecurityType.Bag)
+                if (executionDetails.Contract.SecType == IB.SecurityType.Bag)
                 {
                     // for combo order we get an initial event but later we get a global event for each leg in the combo
                     return;
@@ -2326,7 +2326,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private Order TryGetOrderForFilling(int orderId)
         {
-            if(_pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters))
+            if (_pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters))
             {
                 return fillingParameters.First().Order;
             }
@@ -2335,7 +2335,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private List<PendingFillEvent> RemoveCachedOrdersForFilling(Order order)
         {
-            if(order.GroupOrderManager == null)
+            if (order.GroupOrderManager == null)
             {
                 // not a combo order
                 _pendingGroupOrdersForFilling.TryGetValue(order.Id, out var details);
@@ -2578,7 +2578,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     });
                 }
             }
-            else if(limitOrder != null)
+            else if (limitOrder != null)
             {
                 ibOrder.LmtPrice = NormalizePriceToBrokerage(limitOrder.LimitPrice, contract, order.Symbol);
             }
@@ -2611,7 +2611,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ibOrder.LmtPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.LimitPrice, contract, order.Symbol, minTick);
                 ibOrder.AuxPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.TriggerPrice, contract, order.Symbol, minTick);
             }
-            else if(comboLimitOrder != null)
+            else if (comboLimitOrder != null)
             {
                 AddGuaranteedTag(ibOrder, false);
                 var baseContract = CreateContract(order.Symbol, includeExpired: false);
@@ -4149,7 +4149,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static string GetContractMultiplier(decimal contractMultiplier)
         {
-            if(contractMultiplier >= 1)
+            if (contractMultiplier >= 1)
             {
                 // IB doesn't like 5000.0
                 return Convert.ToInt32(contractMultiplier).ToStringInvariant();
@@ -4249,7 +4249,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return Enumerable.Empty<BaseData>();
                 }
             }
-            else if(request.Symbol.ID.SecurityType == SecurityType.Equity)
+            else if (request.Symbol.ID.SecurityType == SecurityType.Equity)
             {
                 var localNow = DateTime.UtcNow.ConvertFromUtc(request.ExchangeHours.TimeZone);
                 var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(request.Symbol));
@@ -4461,6 +4461,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         if (args.Id == historicalTicker)
                         {
+                            Console.WriteLine($"History request error: {args.Code} {args.Message}...");
+
                             if (args.Code == 162 && args.Message.Contains("pacing violation"))
                             {
                                 // pacing violation happened
@@ -4490,9 +4492,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         waitResult = WaitHandle.WaitAny(new WaitHandle[] { dataDownloaded }, timeOut * 1000);
 
-                        if(waitResult == WaitHandle.WaitTimeout)
+                        if (waitResult == WaitHandle.WaitTimeout)
                         {
-                            if(Interlocked.Exchange(ref dataDownloadedCount, 0) != 0)
+                            if (Interlocked.Exchange(ref dataDownloadedCount, 0) != 0)
                             {
                                 // timeout but data is being downloaded, so we are good, let's wait again but clear the data download count
                                 waitResult = 0;
@@ -4557,7 +4559,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Futures options share the same market as the underlying Symbol
                 case SecurityType.FutureOption:
                 case SecurityType.Future:
-                    if(_futuresExchanges.TryGetValue(market, out var result))
+                    if (_futuresExchanges.TryGetValue(market, out var result))
                     {
                         return result;
                     }
@@ -4601,7 +4603,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void CheckHighResolutionHistoryRateLimiting(Resolution resolution)
         {
-            if(resolution != Resolution.Tick && resolution != Resolution.Second)
+            if (resolution != Resolution.Tick && resolution != Resolution.Second)
             {
                 return;
             }
@@ -4757,7 +4759,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if (restart)
                 {
-                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
+                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
 
                     try
                     {
@@ -4855,9 +4857,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private TimeSpan GetRestartDelay()
         {
             // during weekends wait until one hour before FX market open before restarting IBAutomater
-             return _ibAutomater.IsWithinWeekendServerResetTimes()
-                ? GetNextWeekendReconnectionTimeUtc() - DateTime.UtcNow
-                : _defaultRestartDelay;
+            return _ibAutomater.IsWithinWeekendServerResetTimes()
+               ? GetNextWeekendReconnectionTimeUtc() - DateTime.UtcNow
+               : _defaultRestartDelay;
         }
 
         private TimeSpan GetWeeklyRestartDelay()
