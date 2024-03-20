@@ -1450,13 +1450,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static string GetUniqueKey(Contract contract)
         {
             var leanSecurityType = ConvertSecurityType(contract);
-            if (leanSecurityType.IsOption())
+            if (leanSecurityType == SecurityType.Equity ||
+                leanSecurityType == SecurityType.Forex ||
+                leanSecurityType == SecurityType.Cfd ||
+                leanSecurityType == SecurityType.Index)
             {
-                // for IB trading class can be different depending on the contract flavor, e.g. index options SPX & SPXW
-                return $"{contract.ToString().ToUpperInvariant()} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right} {contract.TradingClass}";
+                return contract.ToString().ToUpperInvariant();
             }
 
-            return contract.ToString().ToUpperInvariant();
+            // for IB trading class can be different depending on the contract flavor, e.g. index options SPX & SPXW
+            return $"{contract.ToString().ToUpperInvariant()} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right} {contract.TradingClass}";
         }
 
         /// <summary>
@@ -3789,7 +3792,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 (securityType == SecurityType.Index && market == Market.USA) ||
                 (securityType == SecurityType.FutureOption) ||
                 (securityType == SecurityType.Future) ||
-                (securityType == SecurityType.Cfd && market == Market.Oanda);
+                (securityType == SecurityType.Cfd && market == Market.USA);
         }
 
         /// <summary>
@@ -4446,8 +4449,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         if (args.Id == historicalTicker)
                         {
-                            Console.WriteLine($"History request error: {args.Code} {args.Message}...");
-
                             if (args.Code == 162 && args.Message.Contains("pacing violation"))
                             {
                                 // pacing violation happened

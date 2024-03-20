@@ -25,10 +25,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
     [Explicit("These tests require the IBGateway to be installed.")]
     public class InteractiveBrokersCfdOrderTests : BrokerageTests
     {
-        private static Symbol IndexCfdSymbol = Symbol.Create("SPX500USD", SecurityType.Cfd, Market.Oanda);
-        private static Symbol EquityCfdSymbol = Symbol.Create("AAPL", SecurityType.Cfd, Market.Oanda);
-        private static Symbol ForexCfdSymbol = Symbol.Create("AUDUSD", SecurityType.Cfd, Market.Oanda);
-        private static Symbol MetalCfdSymbol = Symbol.Create("XAUUSD", SecurityType.Cfd, Market.Oanda);
+        private static Symbol IndexCfdSymbol = Symbol.Create("SPX500USD", SecurityType.Cfd, Market.USA);
+        private static Symbol EquityCfdSymbol = Symbol.Create("AAPL", SecurityType.Cfd, Market.USA);
+        private static Symbol ForexCfdSymbol = Symbol.Create("AUDUSD", SecurityType.Cfd, Market.USA);
+        private static Symbol MetalCfdSymbol = Symbol.Create("XAUUSD", SecurityType.Cfd, Market.USA);
 
         protected override Symbol Symbol => IndexCfdSymbol;
         protected override SecurityType SecurityType => SecurityType.Cfd;

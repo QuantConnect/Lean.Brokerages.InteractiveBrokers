@@ -177,7 +177,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             foreach (var ticker in tickers)
             {
-                var symbol = Symbol.Create(ticker, SecurityType.Cfd, Market.Oanda);
+                var symbol = Symbol.Create(ticker, SecurityType.Cfd, Market.USA);
                 var config = resolution switch
                 {
                     Resolution.Tick => GetSubscriptionDataConfig<Tick>(symbol, resolution),
