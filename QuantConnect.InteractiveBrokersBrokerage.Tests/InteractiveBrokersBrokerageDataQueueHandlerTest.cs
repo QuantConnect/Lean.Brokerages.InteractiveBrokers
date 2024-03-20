@@ -202,9 +202,86 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             cancelationToken.Cancel();
             cancelationToken.Dispose();
 
-            Console.WriteLine(string.Join(", ", symbolsWithData.Select(s => s.Value)));
-
             Assert.IsTrue(tickers.Any(x => symbolsWithData.Any(symbol => symbol.Value == x)));
+        }
+
+        private static TestCaseData[] GetCFDAndUnderlyingSubscriptionTestCases()
+        {
+            var baseTestCases = new[]
+            {
+                new { TickType = TickType.Trade, Resolution = Resolution.Tick },
+                new { TickType = TickType.Quote, Resolution = Resolution.Tick },
+                new { TickType = TickType.Quote, Resolution = Resolution.Second }
+            };
+
+            var equityCfd = "AAPL";
+            var forexCfd = "AUDUSD";
+
+            return baseTestCases.SelectMany(testCase => new[]
+            {
+                new TestCaseData(equityCfd, SecurityType.Equity, Market.USA, testCase.TickType, testCase.Resolution, true),
+                new TestCaseData(equityCfd, SecurityType.Equity, Market.USA, testCase.TickType, testCase.Resolution, false),
+                new TestCaseData(forexCfd, SecurityType.Forex, Market.Oanda, testCase.TickType, testCase.Resolution, true),
+                new TestCaseData(forexCfd, SecurityType.Forex, Market.Oanda, testCase.TickType, testCase.Resolution, false),
+            }).ToArray();
+        }
+
+        [TestCaseSource(nameof(GetCFDAndUnderlyingSubscriptionTestCases))]
+        public void CanSubscribeToCFDAndUnderlying(string ticker, SecurityType underlyingSecurityType, string underlyingMarket,
+            TickType tickType, Resolution resolution, bool underlyingFirst)
+        {
+            // Wait a bit to make sure previous tests already disconnected from IB
+            Thread.Sleep(2000);
+
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+            ib.Connect();
+
+            var cancelationToken = new CancellationTokenSource();
+
+            var symbolsWithData = new HashSet<Symbol>();
+            var locker = new object();
+
+            var underlyingSymbol = Symbol.Create(ticker, underlyingSecurityType, underlyingMarket);
+            var cfdSymbol = Symbol.Create(ticker, SecurityType.Cfd, Market.USA);
+
+            var underlyingConfig = resolution switch
+            {
+                Resolution.Tick => GetSubscriptionDataConfig<Tick>(underlyingSymbol, resolution),
+                _ => tickType == TickType.Trade
+                    ? GetSubscriptionDataConfig<TradeBar>(underlyingSymbol, resolution)
+                    : GetSubscriptionDataConfig<QuoteBar>(underlyingSymbol, resolution)
+            };
+            var cfdConfig = resolution switch
+            {
+                Resolution.Tick => GetSubscriptionDataConfig<Tick>(cfdSymbol, resolution),
+                _ => tickType == TickType.Trade
+                    ? GetSubscriptionDataConfig<TradeBar>(cfdSymbol, resolution)
+                    : GetSubscriptionDataConfig<QuoteBar>(cfdSymbol, resolution)
+            };
+            var configs = underlyingFirst
+                ? new[] { underlyingConfig, cfdConfig }
+                : new[] { cfdConfig, underlyingConfig };
+
+            foreach (var config in configs)
+            {
+                ProcessFeed(
+                ib.Subscribe(config, (s, e) =>
+                {
+                    lock (locker)
+                    {
+                        symbolsWithData.Add(((NewDataAvailableEventArgs)e).DataPoint.Symbol);
+                    }
+                }),
+                cancelationToken,
+                (tick) => Log(tick));
+            }
+
+            Thread.Sleep(10 * 1000);
+            cancelationToken.Cancel();
+            cancelationToken.Dispose();
+
+            Assert.IsTrue(symbolsWithData.Contains(cfdSymbol));
+            Assert.IsTrue(symbolsWithData.Contains(underlyingSymbol));
         }
 
         [Test]
