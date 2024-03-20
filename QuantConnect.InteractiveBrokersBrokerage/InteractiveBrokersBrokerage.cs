@@ -1286,6 +1286,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _client.TickPrice += HandleTickPrice;
             _client.TickSize += HandleTickSize;
             _client.CurrentTimeUtc += HandleBrokerTime;
+            _client.ReRouteMarketDataRequest += HandleMarketDataReRoute;
+            _client.ReRouteMarketDataDepthRequest += HandleMarketDataReRoute;
 
             // we need to wait until we receive the next valid id from the server
             _client.NextValidId += (sender, e) =>
@@ -3560,6 +3562,40 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
+        /// Submits a market data request (a subscription) for a given contract to IB.
+        /// </summary>
+        private void RequestMarketData(Contract contract, int requestId)
+        {
+            if (_enableDelayedStreamingData)
+            {
+                // Switch to delayed market data if the user does not have the necessary real time data subscription.
+                // If live data is available, it will always be returned instead of delayed data.
+                Client.ClientSocket.reqMarketDataType(3);
+            }
+
+            // we would like to receive OI (101)
+            Client.ClientSocket.reqMktData(requestId, contract, "101", false, false, new List<TagValue>());
+        }
+
+        /// <summary>
+        /// Handles the re-rout market data request event issued by the IB server
+        /// </summary>
+        private void HandleMarketDataReRoute(object sender, IB.RerouteMarketDataRequestEventArgs e)
+        {
+            var requestInformation = _requestInformation.GetValueOrDefault(e.RequestId);
+            Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Re-routing {requestInformation?.AssociatedSymbol} CFD data request to underlying");
+
+            // re-route the request to the underlying
+            var underlyingContract = new Contract
+            {
+                ConId = e.ContractId,
+                Exchange = e.UnderlyingPrimaryExchange,
+            };
+
+            RequestMarketData(underlyingContract, e.RequestId);
+        }
+
+        /// <summary>
         /// Adds the specified symbols to the subscription
         /// </summary>
         /// <param name="symbols">The symbols to be added keyed by SecurityType</param>
@@ -3607,65 +3643,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             // track subscription time for minimum delay in unsubscribe
                             _subscriptionTimes[id] = DateTime.UtcNow;
 
-                            var requestData = (Contract contract) =>
-                            {
-                                if (_enableDelayedStreamingData)
-                                {
-                                    // Switch to delayed market data if the user does not have the necessary real time data subscription.
-                                    // If live data is available, it will always be returned instead of delayed data.
-                                    Client.ClientSocket.reqMarketDataType(3);
-                                }
-
-                                // we would like to receive OI (101)
-                                Client.ClientSocket.reqMktData(id, contract, "101", false, false, new List<TagValue>());
-                            };
-
-                            requestData(contract);
-
-                            if (symbol.ID.SecurityType == SecurityType.Cfd)
-                            {
-                                // we need to listen for market data request re-routings since IB does not have data for Equity and Forex CFDs
-                                // Reference: https://ibkrcampus.com/ibkr-api-page/trader-workstation-api/#re-route-cfds
-
-                                var rerouted = new ManualResetEventSlim(false);
-
-                                EventHandler<IB.RerouteMarketDataRequestEventArgs> handleRerouteEvent = (_, e) =>
-                                {
-                                    if (e.RequestId == id)
-                                    {
-                                        Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Re-routing {symbol} CFD data request to underlying");
-                                        rerouted.Set();
-
-                                        // re-route the request to the underlying
-                                        var underlyingContract = new Contract
-                                        {
-                                            ConId = e.ContractId,
-                                            Exchange = e.UnderlyingPrimaryExchange,
-                                        };
-
-                                        requestData(underlyingContract);
-                                    }
-                                };
-
-                                EventHandler<IB.TickSizeEventArgs> handleData = (_, e) =>
-                                {
-                                    if (e.TickerId == id)
-                                    {
-                                        // received data, no need for re-routing
-                                        rerouted.Set();
-                                    }
-                                };
-
-                                Client.ReRouteMarketDataRequest += handleRerouteEvent;
-                                Client.ReRouteMarketDataDepthRequest += handleRerouteEvent;
-                                Client.TickSize += handleData;
-
-                                rerouted.Wait(TimeSpan.FromSeconds(10));
-
-                                Client.ReRouteMarketDataRequest -= handleRerouteEvent;
-                                Client.ReRouteMarketDataDepthRequest -= handleRerouteEvent;
-                                Client.TickSize -= handleData;
-                            }
+                            RequestMarketData(contract, id);
 
                             _subscribedSymbols[symbol] = id;
                             var subscriptionEntry = new SubscriptionEntry { Symbol = subscribeSymbol, PriceMagnifier = priceMagnifier };

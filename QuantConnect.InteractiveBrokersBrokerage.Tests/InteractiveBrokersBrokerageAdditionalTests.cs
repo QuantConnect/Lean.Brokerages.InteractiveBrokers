@@ -909,7 +909,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var request = new HistoryRequest(
                 endTimeInExchangeTimeZone.ConvertToUtc(exchangeTimeZone).Subtract(historyTimeSpan),
                 endTimeInExchangeTimeZone.ConvertToUtc(exchangeTimeZone),
-                symbol.SecurityType != SecurityType.Cfd && symbol.SecurityType != SecurityType.Forex ? typeof(QuoteBar) : typeof(QuoteBar),
+                symbol.SecurityType != SecurityType.Cfd && symbol.SecurityType != SecurityType.Forex ? typeof(TradeBar) : typeof(QuoteBar),
                 symbol,
                 resolution,
                 SecurityExchangeHours.AlwaysOpen(exchangeTimeZone),
@@ -918,7 +918,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 includeExtendedMarketHours,
                 false,
                 DataNormalizationMode.Raw,
-                symbol.SecurityType != SecurityType.Cfd && symbol.SecurityType != SecurityType.Forex ? TickType.Quote : TickType.Quote);
+                symbol.SecurityType != SecurityType.Cfd && symbol.SecurityType != SecurityType.Forex ? TickType.Trade : TickType.Quote);
 
             var start = DateTime.UtcNow;
             var history = brokerage.GetHistory(request).ToList();
