@@ -754,7 +754,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             new TestCaseData(Symbol.CreateOption(Symbols.SPY, Market.India, OptionStyle.American, OptionRight.Call, 100m, new DateTime(2024, 12, 12)), Resolution.Daily, TickType.Trade),
             new TestCaseData(Symbol.CreateOption(Symbols.SPX, Market.India, OptionStyle.American, OptionRight.Call, 100m, new DateTime(2024, 12, 12)), Resolution.Daily, TickType.Trade),
             new TestCaseData(Symbol.Create("SPX", SecurityType.Index, Market.India), Resolution.Daily, TickType.Trade),
-            new TestCaseData(Symbol.Create("SPX500USD", SecurityType.Cfd, Market.FXCM), Resolution.Daily, TickType.Trade),
+            new TestCaseData(Symbol.Create("IBUS500", SecurityType.Cfd, Market.FXCM), Resolution.Daily, TickType.Trade),
             // Unsupported resolution
             new TestCaseData(Symbols.SPY, Resolution.Tick, TickType.Trade),
             new TestCaseData(Symbols.SPY_C_192_Feb19_2016, Resolution.Tick, TickType.Trade),
@@ -767,6 +767,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             new TestCaseData(Symbols.USDJPY, Resolution.Tick, TickType.OpenInterest),
             new TestCaseData(Symbols.SPX, Resolution.Tick, TickType.OpenInterest),
             new TestCaseData(Symbols.Future_ESZ18_Dec2018, Resolution.Tick, TickType.OpenInterest),
+            new TestCaseData(Symbol.Create("IBUS500", SecurityType.Cfd, Market.InteractiveBrokers), Resolution.Daily, TickType.Trade),
         };
 
         [TestCaseSource(nameof(UnsupportedHistoryTestCases))]
@@ -954,7 +955,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var forexSymbol = Symbol.Create("EURUSD", SecurityType.Forex, Market.Oanda);
 
-            var indexCfdSymbol = Symbol.Create("SPX500USD", SecurityType.Cfd, Market.InteractiveBrokers);
+            var indexCfdSymbol = Symbol.Create("IBUS500", SecurityType.Cfd, Market.InteractiveBrokers);
             var equityCfdSymbol = Symbol.Create("SPY", SecurityType.Cfd, Market.InteractiveBrokers);
             var forexCfdSymbol = Symbol.Create("EURUSD", SecurityType.Cfd, Market.InteractiveBrokers);
             // Londong Gold

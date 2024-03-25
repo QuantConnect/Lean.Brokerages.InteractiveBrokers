@@ -148,7 +148,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             };
 
             var equityCfds = new[] { "AAPL", "SPY", "GOOG" };
-            var indexCfds = new[] { "SPX500USD", "AU200AUD", "US30USD", "NAS100USD", "UK100GBP", "DE30EUR", "FR40EUR", "HK50HKD", "JP225" };
+            var indexCfds = new[] { "IBUS500", "IBAU200", "IBUS30", "IBUST100", "IBGB100", "IBEU50", "IBFR40", "IBHK50", "IBJP225" };
             var forexCfds = new[] { "AUDUSD", "NZDUSD", "USDCAD", "USDCHF" };
             var metalCfds = new[] { "XAUUSD", "XAGUSD" };
 
@@ -290,7 +290,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
             ib.Connect();
 
-            var usSpx500Cfd = Symbol.Create("SPX500USD", SecurityType.Cfd, Market.FXCM);
+            var usSpx500Cfd = Symbol.Create("IBUS500", SecurityType.Cfd, Market.FXCM);
             var config = GetSubscriptionDataConfig<QuoteBar>(usSpx500Cfd, Resolution.Second);
 
             var enumerator = ib.Subscribe(config, (s, e) => { });

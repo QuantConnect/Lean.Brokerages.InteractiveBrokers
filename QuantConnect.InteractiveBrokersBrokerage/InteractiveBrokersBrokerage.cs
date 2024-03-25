@@ -223,6 +223,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyDelistedAssetWarning;
         private bool _historyExpiredAssetWarning;
         private bool _historyOpenInterestWarning;
+        private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
 
         /// <summary>
@@ -4167,6 +4168,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     _historyOpenInterestWarning = true;
                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryOpenInterest", "IB does not provide open interest historical data"));
+                }
+                return null;
+            }
+
+            if (request.Symbol.SecurityType == SecurityType.Cfd && request.TickType == TickType.Trade)
+            {
+                if (!_historyCfdTradeWarning)
+                {
+                    _historyCfdTradeWarning = true;
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryCfdTrade", "IB does not provide CFD trade historical data"));
                 }
                 return null;
             }

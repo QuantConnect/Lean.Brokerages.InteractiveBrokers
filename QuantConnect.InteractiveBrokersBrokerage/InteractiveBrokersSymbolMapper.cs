@@ -210,10 +210,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     case SecurityType.Equity:
                         brokerageSymbol = brokerageSymbol.Replace(" ", ".");
                         break;
-
-                    case SecurityType.Cfd:
-                        brokerageSymbol = GetLeanRootSymbol(brokerageSymbol);
-                        break;
                 }
 
                 return Symbol.Create(brokerageSymbol, securityType, market);

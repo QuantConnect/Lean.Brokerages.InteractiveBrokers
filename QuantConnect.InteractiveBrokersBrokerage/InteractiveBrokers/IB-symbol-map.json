@@ -17,20 +17,5 @@
   "ZAR": "6Z",
   "BRR": "BTC",
   "DA": "DC",
-  "BQX": "BIO",
-
-  // CFDs
-  "IBUS500": "SPX500USD",
-  "IBUS30": "US30USD",
-  "IBUST100": "NAS100USD",
-  "IBGB100": "UK100GBP",
-  "IBEU50": "EU50EUR",
-  "IBDE40": "DE40EUR",
-  "IBFR40": "FR40EUR",
-  "IBES35": "ES35EUR",
-  "IBNL25": "NL25EUR",
-  "IBCH20": "CH20CHF",
-  "IBJP225": "JP225USD",
-  "IBHK50": "HK50HKD",
-  "IBAU200": "AU200AUD"
+  "BQX": "BIO"
 }
