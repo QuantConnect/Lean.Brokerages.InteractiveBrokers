@@ -954,13 +954,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var forexSymbol = Symbol.Create("EURUSD", SecurityType.Forex, Market.Oanda);
 
-            var indexCfdSymbol = Symbol.Create("SPX500USD", SecurityType.Cfd, Market.USA);
-            var equityCfdSymbol = Symbol.Create("SPY", SecurityType.Cfd, Market.USA);
-            var forexCfdSymbol = Symbol.Create("EURUSD", SecurityType.Cfd, Market.USA);
+            var indexCfdSymbol = Symbol.Create("SPX500USD", SecurityType.Cfd, Market.InteractiveBrokers);
+            var equityCfdSymbol = Symbol.Create("SPY", SecurityType.Cfd, Market.InteractiveBrokers);
+            var forexCfdSymbol = Symbol.Create("EURUSD", SecurityType.Cfd, Market.InteractiveBrokers);
             // Londong Gold
-            var metalCfdSymbol1 = Symbol.Create("XAUUSD", SecurityType.Cfd, Market.USA);
+            var metalCfdSymbol1 = Symbol.Create("XAUUSD", SecurityType.Cfd, Market.InteractiveBrokers);
             // Londong Silver
-            var metalCfdSymbol2 = Symbol.Create("XAGUSD", SecurityType.Cfd, Market.USA);
+            var metalCfdSymbol2 = Symbol.Create("XAGUSD", SecurityType.Cfd, Market.InteractiveBrokers);
 
             return new[]
             {

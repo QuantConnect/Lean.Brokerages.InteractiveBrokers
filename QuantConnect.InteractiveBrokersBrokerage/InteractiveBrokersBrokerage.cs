@@ -1287,7 +1287,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _client.TickSize += HandleTickSize;
             _client.CurrentTimeUtc += HandleBrokerTime;
             _client.ReRouteMarketDataRequest += HandleMarketDataReRoute;
-            _client.ReRouteMarketDataDepthRequest += HandleMarketDataReRoute;
 
             // we need to wait until we receive the next valid id from the server
             _client.NextValidId += (sender, e) =>
@@ -3770,7 +3769,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 (securityType == SecurityType.Index && market == Market.USA) ||
                 (securityType == SecurityType.FutureOption) ||
                 (securityType == SecurityType.Future) ||
-                (securityType == SecurityType.Cfd && market == Market.USA);
+                (securityType == SecurityType.Cfd && market == Market.InteractiveBrokers);
         }
 
         /// <summary>

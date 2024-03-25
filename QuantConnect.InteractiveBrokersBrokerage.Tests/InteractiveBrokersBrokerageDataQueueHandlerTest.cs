@@ -177,7 +177,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             foreach (var ticker in tickers)
             {
-                var symbol = Symbol.Create(ticker, SecurityType.Cfd, Market.USA);
+                var symbol = Symbol.Create(ticker, SecurityType.Cfd, Market.InteractiveBrokers);
                 var config = resolution switch
                 {
                     Resolution.Tick => GetSubscriptionDataConfig<Tick>(symbol, resolution),
@@ -242,7 +242,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var locker = new object();
 
             var underlyingSymbol = Symbol.Create(ticker, underlyingSecurityType, underlyingMarket);
-            var cfdSymbol = Symbol.Create(ticker, SecurityType.Cfd, Market.USA);
+            var cfdSymbol = Symbol.Create(ticker, SecurityType.Cfd, Market.InteractiveBrokers);
 
             var underlyingConfig = resolution switch
             {
