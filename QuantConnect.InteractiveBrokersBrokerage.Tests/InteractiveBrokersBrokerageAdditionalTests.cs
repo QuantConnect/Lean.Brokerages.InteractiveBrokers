@@ -754,6 +754,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             new TestCaseData(Symbol.CreateOption(Symbols.SPY, Market.India, OptionStyle.American, OptionRight.Call, 100m, new DateTime(2024, 12, 12)), Resolution.Daily, TickType.Trade),
             new TestCaseData(Symbol.CreateOption(Symbols.SPX, Market.India, OptionStyle.American, OptionRight.Call, 100m, new DateTime(2024, 12, 12)), Resolution.Daily, TickType.Trade),
             new TestCaseData(Symbol.Create("SPX", SecurityType.Index, Market.India), Resolution.Daily, TickType.Trade),
+            new TestCaseData(Symbol.Create("IBUS500", SecurityType.Cfd, Market.FXCM), Resolution.Daily, TickType.Trade),
             // Unsupported resolution
             new TestCaseData(Symbols.SPY, Resolution.Tick, TickType.Trade),
             new TestCaseData(Symbols.SPY_C_192_Feb19_2016, Resolution.Tick, TickType.Trade),
@@ -766,6 +767,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             new TestCaseData(Symbols.USDJPY, Resolution.Tick, TickType.OpenInterest),
             new TestCaseData(Symbols.SPX, Resolution.Tick, TickType.OpenInterest),
             new TestCaseData(Symbols.Future_ESZ18_Dec2018, Resolution.Tick, TickType.OpenInterest),
+            new TestCaseData(Symbol.Create("IBUS500", SecurityType.Cfd, Market.InteractiveBrokers), Resolution.Daily, TickType.Trade),
         };
 
         [TestCaseSource(nameof(UnsupportedHistoryTestCases))]
@@ -908,7 +910,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var request = new HistoryRequest(
                 endTimeInExchangeTimeZone.ConvertToUtc(exchangeTimeZone).Subtract(historyTimeSpan),
                 endTimeInExchangeTimeZone.ConvertToUtc(exchangeTimeZone),
-                typeof(TradeBar),
+                symbol.SecurityType != SecurityType.Cfd && symbol.SecurityType != SecurityType.Forex ? typeof(TradeBar) : typeof(QuoteBar),
                 symbol,
                 resolution,
                 SecurityExchangeHours.AlwaysOpen(exchangeTimeZone),
@@ -917,7 +919,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 includeExtendedMarketHours,
                 false,
                 DataNormalizationMode.Raw,
-                TickType.Trade);
+                symbol.SecurityType != SecurityType.Cfd && symbol.SecurityType != SecurityType.Forex ? TickType.Trade : TickType.Quote);
 
             var start = DateTime.UtcNow;
             var history = brokerage.GetHistory(request).ToList();
@@ -950,6 +952,17 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var optionSymbol = Symbol.CreateOption("AAPL", Market.USA, OptionStyle.American, OptionRight.Call, 145, new DateTime(2021, 8, 20));
 
             var delistedEquity = Symbol.Create("AAA.1", SecurityType.Equity, Market.USA);
+
+            var forexSymbol = Symbol.Create("EURUSD", SecurityType.Forex, Market.Oanda);
+
+            var indexCfdSymbol = Symbol.Create("IBUS500", SecurityType.Cfd, Market.InteractiveBrokers);
+            var equityCfdSymbol = Symbol.Create("SPY", SecurityType.Cfd, Market.InteractiveBrokers);
+            var forexCfdSymbol = Symbol.Create("EURUSD", SecurityType.Cfd, Market.InteractiveBrokers);
+            // Londong Gold
+            var metalCfdSymbol1 = Symbol.Create("XAUUSD", SecurityType.Cfd, Market.InteractiveBrokers);
+            // Londong Silver
+            var metalCfdSymbol2 = Symbol.Create("XAGUSD", SecurityType.Cfd, Market.InteractiveBrokers);
+
             return new[]
             {
                 // 30 min RTH today + 60 min RTH yesterday
@@ -983,9 +996,76 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 new TestCaseData(optionSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
                     new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), true, 5400),
 
+                new TestCaseData(forexSymbol, Resolution.Daily, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(10), true, 8),
+
                 // delisted asset
                 new TestCaseData(delistedEquity, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
                     new DateTime(2021, 8, 6, 10, 0, 0), TimeSpan.FromHours(19), false, 0),
+
+                // Index Cfd:
+                // daily
+                new TestCaseData(indexCfdSymbol, Resolution.Daily, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(10), true, 7),
+                // hourly
+                new TestCaseData(indexCfdSymbol, Resolution.Hour, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(5), false, 75),
+                // minute
+                new TestCaseData(indexCfdSymbol, Resolution.Minute, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromMinutes(60 * 8), false, 420),
+                // second
+                new TestCaseData(indexCfdSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 22, 0, 0), TimeSpan.FromMinutes(60), false, 3600),
+
+                // Equity Cfd:
+                // daily
+                new TestCaseData(equityCfdSymbol, Resolution.Daily, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(10), true, 8),
+                // hourly
+                new TestCaseData(equityCfdSymbol, Resolution.Hour, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(5), false, 48),
+                // minute
+                new TestCaseData(equityCfdSymbol, Resolution.Minute, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromMinutes(60 * 8), false, 240),
+                // second: only 1 RTH from 19 to 20
+                new TestCaseData(equityCfdSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 22, 0, 0), TimeSpan.FromMinutes(3 * 60), false, 3600),
+
+                // Forex Cfd:
+                // daily
+                new TestCaseData(forexCfdSymbol, Resolution.Daily, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(10), true, 8),
+                // hourly
+                new TestCaseData(forexCfdSymbol, Resolution.Hour, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(5), false, 79),
+                // minute
+                new TestCaseData(forexCfdSymbol, Resolution.Minute, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromMinutes(60 * 8), false, 465),
+                // second
+                new TestCaseData(forexCfdSymbol, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 22, 0, 0), TimeSpan.FromMinutes(60), false, 3600),
+
+                // Metal Cfd:
+                // daily
+                new TestCaseData(metalCfdSymbol1, Resolution.Daily, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(10), true, 8),
+                new TestCaseData(metalCfdSymbol2, Resolution.Daily, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(10), true, 8),
+                // hourly
+                new TestCaseData(metalCfdSymbol1, Resolution.Hour, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(5), false, 75),
+                new TestCaseData(metalCfdSymbol2, Resolution.Hour, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromDays(5), false, 75),
+                // minute
+                new TestCaseData(metalCfdSymbol1, Resolution.Minute, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromMinutes(60 * 8), false, 420),
+                new TestCaseData(metalCfdSymbol2, Resolution.Minute, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 0, 0, 0), TimeSpan.FromMinutes(60 * 8), false, 420),
+                // second
+                new TestCaseData(metalCfdSymbol1, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 22, 0, 0), TimeSpan.FromMinutes(60), false, 3600),
+                new TestCaseData(metalCfdSymbol2, Resolution.Second, TimeZones.NewYork, TimeZones.NewYork,
+                    new DateTime(2023, 12, 21, 22, 0, 0), TimeSpan.FromMinutes(60), false, 3600),
             };
         }
 

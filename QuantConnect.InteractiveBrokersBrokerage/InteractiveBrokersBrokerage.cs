@@ -53,6 +53,7 @@ using Order = QuantConnect.Orders.Order;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using QuantConnect.Data.Auxiliary;
+using QuantConnect.Securities.Forex;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -75,8 +76,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static bool _submissionOrdersWarningSent;
 
         private readonly HashSet<OrderType> _noSubmissionOrderTypes = new(new[] {
-            OrderType.MarketOnOpen
-            ,OrderType.ComboLegLimit,
+            OrderType.MarketOnOpen,
+            OrderType.ComboLegLimit,
             // combo market & limit do not send submission event when trading only options
             OrderType.ComboMarket,
             OrderType.ComboLimit
@@ -194,9 +195,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         // See https://interactivebrokers.github.io/tws-api/historical_limitations.html
         // Making more than 60 requests within any ten minute period will cause a pacing violation for Small Bars (30 secs or less)
-        private readonly RateGate _historyHighResolutionRateLimiter = new (58, TimeSpan.FromMinutes(10));
+        private readonly RateGate _historyHighResolutionRateLimiter = new(58, TimeSpan.FromMinutes(10));
         // The maximum number of simultaneous open historical data requests from the API is 50, we limit the count further so we can server them as best as possible
-        private readonly SemaphoreSlim _concurrentHistoryRequests = new (20);
+        private readonly SemaphoreSlim _concurrentHistoryRequests = new(20);
 
         // additional IB request information, will be matched with errors in the handler, for better error reporting
         private readonly ConcurrentDictionary<int, RequestInformation> _requestInformation = new();
@@ -222,6 +223,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyDelistedAssetWarning;
         private bool _historyExpiredAssetWarning;
         private bool _historyOpenInterestWarning;
+        private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
 
         /// <summary>
@@ -1285,6 +1287,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _client.TickPrice += HandleTickPrice;
             _client.TickSize += HandleTickSize;
             _client.CurrentTimeUtc += HandleBrokerTime;
+            _client.ReRouteMarketDataRequest += HandleMarketDataReRoute;
 
             // we need to wait until we receive the next valid id from the server
             _client.NextValidId += (sender, e) =>
@@ -1412,7 +1415,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     if (noSubmissionOrderTypes)
                     {
-                        if(!_submissionOrdersWarningSent)
+                        if (!_submissionOrdersWarningSent)
                         {
                             _submissionOrdersWarningSent = true;
                             OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning,
@@ -1446,6 +1449,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static string GetUniqueKey(Contract contract)
         {
+            var leanSecurityType = ConvertSecurityType(contract);
+            if (leanSecurityType == SecurityType.Equity ||
+                leanSecurityType == SecurityType.Forex ||
+                leanSecurityType == SecurityType.Cfd ||
+                leanSecurityType == SecurityType.Index)
+            {
+                return contract.ToString().ToUpperInvariant();
+            }
+
             // for IB trading class can be different depending on the contract flavor, e.g. index options SPX & SPXW
             return $"{contract.ToString().ToUpperInvariant()} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right} {contract.TradingClass}";
         }
@@ -1516,13 +1528,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="contract">The target contract</param>
         /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
-        private ContractDetails GetContractDetails(Contract contract, string ticker)
+        private ContractDetails GetContractDetails(Contract contract, string ticker, bool failIfNotFound = true)
         {
             if (_contractDetails.TryGetValue(GetUniqueKey(contract), out var details))
             {
                 return details;
             }
-            return GetContractDetailsImpl(contract, ticker);
+            return GetContractDetailsImpl(contract, ticker, failIfNotFound);
         }
 
         /// <summary>
@@ -1530,7 +1542,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="contract">The target contract</param>
         /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
-        private ContractDetails GetContractDetailsImpl(Contract contract, string ticker)
+        private ContractDetails GetContractDetailsImpl(Contract contract, string ticker, bool failIfNotFound = true)
         {
             const int timeout = 60; // sec
 
@@ -1543,7 +1555,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _requestInformation[requestId] = new RequestInformation
             {
                 RequestId = requestId,
-                RequestType = RequestType.ContractDetails,
+                RequestType = failIfNotFound ? RequestType.ContractDetails : RequestType.SoftContractDetails,
                 Message = $"[Id={requestId}] GetContractDetails: {ticker} ({contract})"
             };
 
@@ -1817,21 +1829,32 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (errorCode == 200)
             {
                 // No security definition has been found for the request
-                // This is a common error when requesting historical data for expired contracts, in which case can ignore it
-                if (requestInfo is not null && requestInfo.RequestType == RequestType.History)
+                if (requestInfo is not null)
                 {
-                    MapFile mapFile = null;
-                    if (requestInfo.AssociatedSymbol.RequiresMapping())
+                    // This is a common error when requesting historical data for expired contracts, in which case can ignore it
+                    if (requestInfo.RequestType == RequestType.History)
                     {
-                    var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(requestInfo.AssociatedSymbol));
-                        mapFile = resolver.ResolveMapFile(requestInfo.AssociatedSymbol);
-                    }
-                    var historicalLimitDate = requestInfo.AssociatedSymbol.GetDelistingDate(mapFile).AddDays(1)
-                        .ConvertToUtc(requestInfo.HistoryRequest.ExchangeHours.TimeZone);
+                        MapFile mapFile = null;
+                        if (requestInfo.AssociatedSymbol.RequiresMapping())
+                        {
+                            var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(requestInfo.AssociatedSymbol));
+                            mapFile = resolver.ResolveMapFile(requestInfo.AssociatedSymbol);
+                        }
+                        var historicalLimitDate = requestInfo.AssociatedSymbol.GetDelistingDate(mapFile).AddDays(1)
+                            .ConvertToUtc(requestInfo.HistoryRequest.ExchangeHours.TimeZone);
 
-                    if (DateTime.UtcNow.Date > historicalLimitDate)
+                        if (DateTime.UtcNow.Date > historicalLimitDate)
+                        {
+                            Log.Trace($"InteractiveBrokersBrokerage.HandleError(): Expired contract historical data request, ignoring error.  ErrorCode: {errorCode} - {errorMsg}");
+                            return;
+                        }
+                    }
+                    // If the request is marked as a soft contract details reques, we won't exit if not found.
+                    // This can happen when checking whether a cfd if a forex cfd to create a contract,
+                    // the first contract details request might return this error if it's in fact a forex CFD
+                    // since the whole symbol (e.g. EURUSD) will be used first. We can ignore it
+                    else if (requestInfo.RequestType == RequestType.SoftContractDetails)
                     {
-                        Log.Trace($"InteractiveBrokersBrokerage.HandleError(): Expired contract historical data request, ignoring error.  ErrorCode: {errorCode} - {errorMsg}");
                         return;
                     }
                 }
@@ -2178,7 +2201,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                if(executionDetails.Contract.SecType == IB.SecurityType.Bag)
+                if (executionDetails.Contract.SecType == IB.SecurityType.Bag)
                 {
                     // for combo order we get an initial event but later we get a global event for each leg in the combo
                     return;
@@ -2319,7 +2342,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private Order TryGetOrderForFilling(int orderId)
         {
-            if(_pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters))
+            if (_pendingGroupOrdersForFilling.TryGetValue(orderId, out var fillingParameters))
             {
                 return fillingParameters.First().Order;
             }
@@ -2328,7 +2351,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private List<PendingFillEvent> RemoveCachedOrdersForFilling(Order order)
         {
-            if(order.GroupOrderManager == null)
+            if (order.GroupOrderManager == null)
             {
                 // not a combo order
                 _pendingGroupOrdersForFilling.TryGetValue(order.Id, out var details);
@@ -2571,7 +2594,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     });
                 }
             }
-            else if(limitOrder != null)
+            else if (limitOrder != null)
             {
                 ibOrder.LmtPrice = NormalizePriceToBrokerage(limitOrder.LimitPrice, contract, order.Symbol);
             }
@@ -2604,7 +2627,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ibOrder.LmtPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.LimitPrice, contract, order.Symbol, minTick);
                 ibOrder.AuxPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.TriggerPrice, contract, order.Symbol, minTick);
             }
-            else if(comboLimitOrder != null)
+            else if (comboLimitOrder != null)
             {
                 AddGuaranteedTag(ibOrder, false);
                 var baseContract = CreateContract(order.Symbol, includeExpired: false);
@@ -2846,6 +2869,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 SecType = securityType,
                 Currency = symbolProperties.QuoteCurrency
             };
+
             if (symbol.ID.SecurityType == SecurityType.Forex)
             {
                 // forex is special, so rewrite some of the properties to make it work
@@ -2853,19 +2877,37 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 contract.Symbol = ibSymbol.Substring(0, 3);
                 contract.Currency = ibSymbol.Substring(3);
             }
+            else if (symbol.ID.SecurityType == SecurityType.Cfd)
+            {
+                // Let's try getting the contract details in order to get the type of CFD (stock, index or forex)
+                var details = GetContractDetails(contract, symbol.Value, failIfNotFound: false);
 
-            if (symbol.ID.SecurityType == SecurityType.Equity)
+                // if null, it might be a forex CFD, we need to split the symbol just like we do for forex
+                if (details == null)
+                {
+                    contract.Exchange = "SMART";
+                    contract.Symbol = ibSymbol.Substring(0, 3);
+                    contract.Currency = ibSymbol.Substring(3);
+
+                    details = GetContractDetails(contract, symbol.Value);
+
+                    if (details == null || details.UnderSecType != IB.SecurityType.Cash)
+                    {
+                        Log.Error("InteractiveBrokersBrokerage.CreateContract(): Unable to resolve CFD symbol: " + symbol.Value);
+                        return null;
+                    }
+                }
+            }
+            else if (symbol.ID.SecurityType == SecurityType.Equity)
             {
                 contract.PrimaryExch = GetPrimaryExchange(contract, symbol);
             }
-
             // Indexes requires that the exchange be specified exactly
-            if (symbol.ID.SecurityType == SecurityType.Index)
+            else if (symbol.ID.SecurityType == SecurityType.Index)
             {
                 contract.Exchange = IndexSymbol.GetIndexExchange(symbol);
             }
-
-            if (symbol.ID.SecurityType.IsOption())
+            else if (symbol.ID.SecurityType.IsOption())
             {
                 // Subtract a day from Index Options, since their last trading date
                 // is on the day before the expiry.
@@ -2905,7 +2947,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 contract.TradingClass = GetTradingClass(contract, symbol);
                 contract.IncludeExpired = includeExpired;
             }
-            if (symbol.ID.SecurityType == SecurityType.Future)
+            else if (symbol.ID.SecurityType == SecurityType.Future)
             {
                 // we convert Market.* markets into IB exchanges if we have them in our map
 
@@ -3178,6 +3220,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case SecurityType.Future:
                     return IB.SecurityType.Future;
 
+                case SecurityType.Cfd:
+                    return IB.SecurityType.ContractForDifference;
+
                 default:
                     throw new ArgumentException($"The {type} security type is not currently supported.");
             }
@@ -3186,7 +3231,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Maps SecurityType enum
         /// </summary>
-        private SecurityType ConvertSecurityType(Contract contract)
+        private static SecurityType ConvertSecurityType(Contract contract)
         {
             switch (contract.SecType)
             {
@@ -3209,6 +3254,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 case IB.SecurityType.Future:
                     return SecurityType.Future;
+
+                case IB.SecurityType.ContractForDifference:
+                    return SecurityType.Cfd;
 
                 default:
                     throw new NotSupportedException(
@@ -3329,7 +3377,25 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             try
             {
                 var securityType = ConvertSecurityType(contract);
-                var ibSymbol = securityType == SecurityType.Forex ? contract.Symbol + contract.Currency : contract.Symbol;
+
+                var ibSymbol = contract.Symbol;
+                if (securityType == SecurityType.Forex)
+                {
+                    ibSymbol += contract.Currency;
+                }
+                else if (securityType == SecurityType.Cfd)
+                {
+                    // If this is a forex CFD, we need to compose the symbol like we do for forex
+                    var potentialCurrencyPair = contract.TradingClass.Replace(".", "");
+                    if (CurrencyPairUtil.IsForexDecomposable(potentialCurrencyPair))
+                    {
+                        Forex.DecomposeCurrencyPair(potentialCurrencyPair, out var baseCurrency, out var quoteCurrency);
+                        if (baseCurrency == contract.Symbol && quoteCurrency == contract.Currency)
+                        {
+                            ibSymbol += contract.Currency;
+                        }
+                    }
+                }
 
                 var market = InteractiveBrokersBrokerageModel.DefaultMarketMap[securityType];
                 var isFutureOption = contract.SecType == IB.SecurityType.FutureOption;
@@ -3499,6 +3565,40 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
+        /// Submits a market data request (a subscription) for a given contract to IB.
+        /// </summary>
+        private void RequestMarketData(Contract contract, int requestId)
+        {
+            if (_enableDelayedStreamingData)
+            {
+                // Switch to delayed market data if the user does not have the necessary real time data subscription.
+                // If live data is available, it will always be returned instead of delayed data.
+                Client.ClientSocket.reqMarketDataType(3);
+            }
+
+            // we would like to receive OI (101)
+            Client.ClientSocket.reqMktData(requestId, contract, "101", false, false, new List<TagValue>());
+        }
+
+        /// <summary>
+        /// Handles the re-rout market data request event issued by the IB server
+        /// </summary>
+        private void HandleMarketDataReRoute(object sender, IB.RerouteMarketDataRequestEventArgs e)
+        {
+            var requestInformation = _requestInformation.GetValueOrDefault(e.RequestId);
+            Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Re-routing {requestInformation?.AssociatedSymbol} CFD data request to underlying");
+
+            // re-route the request to the underlying
+            var underlyingContract = new Contract
+            {
+                ConId = e.ContractId,
+                Exchange = e.UnderlyingPrimaryExchange,
+            };
+
+            RequestMarketData(underlyingContract, e.RequestId);
+        }
+
+        /// <summary>
         /// Adds the specified symbols to the subscription
         /// </summary>
         /// <param name="symbols">The symbols to be added keyed by SecurityType</param>
@@ -3546,15 +3646,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             // track subscription time for minimum delay in unsubscribe
                             _subscriptionTimes[id] = DateTime.UtcNow;
 
-                            if (_enableDelayedStreamingData)
-                            {
-                                // Switch to delayed market data if the user does not have the necessary real time data subscription.
-                                // If live data is available, it will always be returned instead of delayed data.
-                                Client.ClientSocket.reqMarketDataType(3);
-                            }
-
-                            // we would like to receive OI (101)
-                            Client.ClientSocket.reqMktData(id, contract, "101", false, false, new List<TagValue>());
+                            RequestMarketData(contract, id);
 
                             _subscribedSymbols[symbol] = id;
                             _subscribedTickers[id] = new SubscriptionEntry { Symbol = subscribeSymbol, PriceMagnifier = priceMagnifier };
@@ -3677,7 +3769,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 (securityType == SecurityType.IndexOption && market == Market.USA) ||
                 (securityType == SecurityType.Index && market == Market.USA) ||
                 (securityType == SecurityType.FutureOption) ||
-                (securityType == SecurityType.Future);
+                (securityType == SecurityType.Future) ||
+                (securityType == SecurityType.Cfd && market == Market.InteractiveBrokers);
         }
 
         /// <summary>
@@ -4018,7 +4111,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static string GetContractMultiplier(decimal contractMultiplier)
         {
-            if(contractMultiplier >= 1)
+            if (contractMultiplier >= 1)
             {
                 // IB doesn't like 5000.0
                 return Convert.ToInt32(contractMultiplier).ToStringInvariant();
@@ -4079,6 +4172,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return null;
             }
 
+            if (request.Symbol.SecurityType == SecurityType.Cfd && request.TickType == TickType.Trade)
+            {
+                if (!_historyCfdTradeWarning)
+                {
+                    _historyCfdTradeWarning = true;
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "GetHistoryCfdTrade", "IB does not provide CFD trade historical data"));
+                }
+                return null;
+            }
+
             if (request.EndTimeUtc < request.StartTimeUtc)
             {
                 if (!_historyInvalidPeriodWarning)
@@ -4118,7 +4221,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return Enumerable.Empty<BaseData>();
                 }
             }
-            else if(request.Symbol.ID.SecurityType == SecurityType.Equity)
+            else if (request.Symbol.ID.SecurityType == SecurityType.Equity)
             {
                 var localNow = DateTime.UtcNow.ConvertFromUtc(request.ExchangeHours.TimeZone);
                 var resolver = _mapFileProvider.Get(AuxiliaryDataKey.Create(request.Symbol));
@@ -4146,6 +4249,24 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // preparing the data for IB request
             var contract = CreateContract(request.Symbol, includeExpired: true);
+            var contractDetails = GetContractDetails(contract, request.Symbol.Value);
+            if (contract.SecType == IB.SecurityType.ContractForDifference)
+            {
+                // IB does not have data for equity and forex CFDs, we need to use the underlying security
+                var underlyingSecurityType = contractDetails.UnderSecType switch
+                {
+                    IB.SecurityType.Stock => SecurityType.Equity,
+                    IB.SecurityType.Cash => SecurityType.Forex,
+                    _ => (SecurityType?)null
+                };
+
+                if (underlyingSecurityType.HasValue)
+                {
+                    var underlyingSymbol = Symbol.Create(request.Symbol.Value, underlyingSecurityType.Value, request.Symbol.ID.Market);
+                    contract = CreateContract(underlyingSymbol, includeExpired: true);
+                }
+            }
+
             var resolution = ConvertResolution(request.Resolution);
 
             var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
@@ -4341,9 +4462,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         waitResult = WaitHandle.WaitAny(new WaitHandle[] { dataDownloaded }, timeOut * 1000);
 
-                        if(waitResult == WaitHandle.WaitTimeout)
+                        if (waitResult == WaitHandle.WaitTimeout)
                         {
-                            if(Interlocked.Exchange(ref dataDownloadedCount, 0) != 0)
+                            if (Interlocked.Exchange(ref dataDownloadedCount, 0) != 0)
                             {
                                 // timeout but data is being downloaded, so we are good, let's wait again but clear the data download count
                                 waitResult = 0;
@@ -4408,7 +4529,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Futures options share the same market as the underlying Symbol
                 case SecurityType.FutureOption:
                 case SecurityType.Future:
-                    if(_futuresExchanges.TryGetValue(market, out var result))
+                    if (_futuresExchanges.TryGetValue(market, out var result))
                     {
                         return result;
                     }
@@ -4452,7 +4573,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void CheckHighResolutionHistoryRateLimiting(Resolution resolution)
         {
-            if(resolution != Resolution.Tick && resolution != Resolution.Second)
+            if (resolution != Resolution.Tick && resolution != Resolution.Second)
             {
                 return;
             }
@@ -4608,7 +4729,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if (restart)
                 {
-                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
+                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
 
                     try
                     {
@@ -4706,9 +4827,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private TimeSpan GetRestartDelay()
         {
             // during weekends wait until one hour before FX market open before restarting IBAutomater
-             return _ibAutomater.IsWithinWeekendServerResetTimes()
-                ? GetNextWeekendReconnectionTimeUtc() - DateTime.UtcNow
-                : _defaultRestartDelay;
+            return _ibAutomater.IsWithinWeekendServerResetTimes()
+               ? GetNextWeekendReconnectionTimeUtc() - DateTime.UtcNow
+               : _defaultRestartDelay;
         }
 
         private TimeSpan GetWeeklyRestartDelay()
@@ -5059,6 +5180,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             ContractDetails,
             History,
             Executions,
+            SoftContractDetails,    // Don't fail if we can't find the contract
         }
 
         private class RequestInformation

@@ -1,5 +1,6 @@
 /* This is a manually created file that contains mappings from IB own naming to original symbols defined by respective exchanges. */
 {
+  // Futures
   "GBP": "6B",
   "CAD": "6C",
   "JPY": "6J",
