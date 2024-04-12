@@ -19,11 +19,9 @@ using System.Linq;
 using QuantConnect.Data;
 using QuantConnect.Util;
 using QuantConnect.Securities;
-using QuantConnect.Interfaces;
 using QuantConnect.Data.Market;
 using System.Collections.Generic;
 using QuantConnect.Configuration;
-using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Brokerages.InteractiveBrokers;
 
 namespace QuantConnect.ToolBox.IBDownloader
@@ -33,6 +31,7 @@ namespace QuantConnect.ToolBox.IBDownloader
     /// </summary>
     public class IBDataDownloader : IDataDownloader, IDisposable
     {
+        private readonly MarketHoursDatabase _marketHoursDatabase = MarketHoursDatabase.FromDataFolder();
         private readonly InteractiveBrokersBrokerage _brokerage;
 
         /// <summary>
@@ -40,10 +39,19 @@ namespace QuantConnect.ToolBox.IBDownloader
         /// </summary>
         public IBDataDownloader()
         {
-            _brokerage = new InteractiveBrokersBrokerage(null, null, null);
+            _brokerage = new InteractiveBrokersBrokerage(null, null, null,
+                Config.Get("ib-account"),
+                Config.Get("ib-host", "LOCALHOST"),
+                Config.GetInt("ib-port", 4001),
+                Config.Get("ib-tws-dir"),
+                Config.Get("ib-version", InteractiveBrokersBrokerage.DefaultVersion),
+                Config.Get("ib-user-name"),
+                Config.Get("ib-password"),
+                Config.Get("ib-trading-mode"),
+                Config.GetValue("ib-agent-description", Brokerages.InteractiveBrokers.Client.AgentDescription.Individual),
+                loadExistingHoldings: false);
             _brokerage.Connect();
         }
-
 
         /// <summary>
         /// Get historical data enumerable for a single symbol, type and resolution given this start and end time (in UTC).
@@ -74,8 +82,8 @@ namespace QuantConnect.ToolBox.IBDownloader
                 symbols = GetChainSymbols(symbol, true).ToList();
             }
 
-            var exchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
-            var dataTimeZone = MarketHoursDatabase.FromDataFolder().GetDataTimeZone(symbol.ID.Market, symbol, symbol.SecurityType);
+            var exchangeHours = _marketHoursDatabase.GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+            var dataTimeZone = _marketHoursDatabase.GetDataTimeZone(symbol.ID.Market, symbol, symbol.SecurityType);
 
             return symbols
                 .Select(symbol =>
@@ -130,51 +138,6 @@ namespace QuantConnect.ToolBox.IBDownloader
             var writer = new LeanDataWriter(Globals.DataFolder, resolution, securityType, tickType);
             writer.DownloadAndSave(_brokerage, symbols, startTimeUtc, endTimeUtc);
         }
-
-        /// <summary>
-        /// Groups a list of bars into a dictionary keyed by date
-        /// </summary>
-        /// <param name="bars"></param>
-        /// <returns></returns>
-        private static SortedDictionary<DateTime, List<QuoteBar>> GroupBarsByDate(IList<QuoteBar> bars)
-        {
-            var groupedBars = new SortedDictionary<DateTime, List<QuoteBar>>();
-
-            foreach (var bar in bars)
-            {
-                var date = bar.Time.Date;
-
-                if (!groupedBars.ContainsKey(date))
-                    groupedBars[date] = new List<QuoteBar>();
-
-                groupedBars[date].Add(bar);
-            }
-
-            return groupedBars;
-        }
-
-        #region Console Helper
-
-        /// <summary>
-        /// Draw a progress bar
-        /// </summary>
-        /// <param name="complete"></param>
-        /// <param name="maxVal"></param>
-        /// <param name="barSize"></param>
-        /// <param name="progressCharacter"></param>
-        private static void ProgressBar(long complete, long maxVal, long barSize, char progressCharacter)
-        {
-
-            decimal p = (decimal)complete / (decimal)maxVal;
-            int chars = (int)Math.Floor(p / ((decimal)1 / (decimal)barSize));
-            string bar = string.Empty;
-            bar = bar.PadLeft(chars, progressCharacter);
-            bar = bar.PadRight(Convert.ToInt32(barSize) - 1);
-
-            Console.Write($"\r[{bar}] {(p * 100).ToStringInvariant("N2")}%");
-        }
-
-        #endregion
 
         /// <summary>
         /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.

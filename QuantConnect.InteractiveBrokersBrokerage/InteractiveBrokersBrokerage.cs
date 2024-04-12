@@ -54,6 +54,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Securities.Forex;
+using QuantConnect.Lean.Engine.Results;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -340,8 +341,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 userName,
                 password,
                 tradingMode,
-                agentDescription = IB.AgentDescription.Individual,
-                loadExistingHoldings = true,
+                agentDescription,
+                loadExistingHoldings,
                 weeklyRestartUtcTime: weeklyRestartUtcTime);
         }
 
@@ -4047,7 +4048,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         symbol.ID.Market,
                         symbol,
                         symbol.SecurityType,
-                        _algorithm.Portfolio.CashBook.AccountCurrency);
+                        _algorithm != null ? _algorithm.Portfolio.CashBook.AccountCurrency : Currencies.USD);
 
             // setting up lookup request
             var contract = new Contract
@@ -4069,7 +4070,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // IB requests for full option chains are rate limited and responses can be delayed up to a minute for each underlying,
                 // so we fetch them from the OCC website instead of using the IB API.
                 // For futures options, we fetch the option chain from CME.
-                symbols.AddRange(_algorithm.OptionChainProvider.GetOptionContractList(symbol, DateTime.Today));
+                if (_algorithm != null)
+                {
+                    symbols.AddRange(_algorithm.OptionChainProvider.GetOptionContractList(symbol, DateTime.Today));
+                }
+                else
+                {
+                    symbols.AddRange(Composer.Instance.GetPart<IOptionChainProvider>().GetOptionContractList(symbol, DateTime.Today));
+                }
             }
             else if (symbol.SecurityType == SecurityType.Future)
             {
@@ -4598,6 +4606,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (string.IsNullOrEmpty(e.Data))
             {
                 return;
+            }
+
+            if (e.Data.Contains("Waiting for 2FA confirmation", StringComparison.InvariantCultureIgnoreCase))
+            {
+                // composer get IResultHandler send message
+                var resultHandler = Composer.Instance.GetPart<IResultHandler>();
+                resultHandler?.DebugMessage("Logging into account. Check phone for two-factor authentication verification...");
             }
 
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterOutputDataReceived(): {e.Data}");

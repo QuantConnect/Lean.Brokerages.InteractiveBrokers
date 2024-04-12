@@ -22,7 +22,7 @@ using System.Linq;
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
     [TestFixture]
-    [Ignore("These tests require the IBGateway to be installed.")]
+    [Explicit("These tests require the IBGateway to be installed.")]
     public class IBDataDownloaderTests
     {
         [TestCase("ES", Resolution.Daily, 15)]
