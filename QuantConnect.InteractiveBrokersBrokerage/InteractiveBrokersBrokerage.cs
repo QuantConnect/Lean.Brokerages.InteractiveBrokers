@@ -4119,7 +4119,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static string GetContractMultiplier(decimal contractMultiplier)
         {
-            if (contractMultiplier >= 1)
+            if (contractMultiplier % 1 == 0)
             {
                 // IB doesn't like 5000.0
                 return Convert.ToInt32(contractMultiplier).ToStringInvariant();
