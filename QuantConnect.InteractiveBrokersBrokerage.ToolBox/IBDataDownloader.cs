@@ -50,6 +50,19 @@ namespace QuantConnect.ToolBox.IBDownloader
                 Config.Get("ib-trading-mode"),
                 Config.GetValue("ib-agent-description", Brokerages.InteractiveBrokers.Client.AgentDescription.Individual),
                 loadExistingHoldings: false);
+
+            _brokerage.Message += (object _, Brokerages.BrokerageMessageEvent e) =>
+            {
+                if (e.Type == Brokerages.BrokerageMessageType.Error)
+                {
+                    Logging.Log.Error(e.Message);
+                }
+                else
+                {
+                    Logging.Log.Trace(e.Message);
+                }
+            };
+
             _brokerage.Connect();
         }
 
