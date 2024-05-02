@@ -13,5 +13,42 @@
   	"order-types": ["Market", "Limit", "Limit-If-Touched", "Stop Market",  "Stop Limit", "Trailing", "Market On Open", "Market On Close", "Combo Market", "Combo Limit", "Combo Leg Limit", "Exercise"],
 	"assets": ["Equity", "Equity Options", "Futures", "Future Options", "Index Options", "Forex"], 
 	"brokerage-url": "https://www.interactivebrokers.com/",
-  	"documentation": "/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers"
+  	"documentation": "/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers",
+	  "module-specification": {
+        "download": {
+            "data-types": [
+                "Trade",
+                "Quote"
+            ],
+            "resolutions": [
+                "Second",
+                "Minute",
+                "Hour",
+                "Daily"
+            ],
+            "security-types": [
+                "Equity",
+				"Option",
+				"Forex",
+				"Future",
+				"Cfd",
+				"FutureOption",
+				"Index",
+				"IndexOption"
+            ],
+            "markets": [
+                "USA",
+				"CME",
+				"NYMEX",
+				"COMEX",
+				"CBOT",
+				"CBOE",
+				"ICE",
+				"CFE",
+				"NYSELIFFE",
+				"Oanda",
+				"InteractiveBrokers"
+            ]
+        }
+    }
 }
