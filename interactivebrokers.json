@@ -14,20 +14,20 @@
 	"assets": ["Equity", "Equity Options", "Futures", "Future Options", "Index Options", "Forex"], 
 	"brokerage-url": "https://www.interactivebrokers.com/",
   	"documentation": "/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers",
-	  "module-specification": {
-        "download": {
-            "data-types": [
-                "Trade",
-                "Quote"
-            ],
-            "resolutions": [
-                "Second",
-                "Minute",
-                "Hour",
-                "Daily"
-            ],
-            "security-types": [
-                "Equity",
+	"module-specification": {
+		"download": {
+			"data-types": [
+				"Trade",
+				"Quote"
+			],
+			"resolutions": [
+				"Second",
+				"Minute",
+				"Hour",
+				"Daily"
+			],
+			"security-types": [
+				"Equity",
 				"Option",
 				"Forex",
 				"Future",
@@ -35,9 +35,9 @@
 				"FutureOption",
 				"Index",
 				"IndexOption"
-            ],
-            "markets": [
-                "USA",
+			],
+			"markets": [
+				"USA",
 				"CME",
 				"NYMEX",
 				"COMEX",
@@ -48,7 +48,7 @@
 				"NYSELIFFE",
 				"Oanda",
 				"InteractiveBrokers"
-            ]
-        }
-    }
+			]
+		}
+	}
 }
