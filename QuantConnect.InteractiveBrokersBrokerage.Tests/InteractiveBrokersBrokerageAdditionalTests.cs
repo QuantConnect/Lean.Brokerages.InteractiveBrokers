@@ -27,10 +27,11 @@ using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.InteractiveBrokers;
+using QuantConnect.Configuration;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
+using QuantConnect.IBAutomater;
 using QuantConnect.Interfaces;
-using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Lean.Engine.TransactionHandlers;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
@@ -60,6 +61,25 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         public void TearDown()
         {
             PythonInitializer.Shutdown();
+        }
+
+        [Test]
+        public void LoginFailOnInvalidUserName()
+        {
+            var originalUserName = Config.Get("ib-user-name");
+            Config.Set("ib-user-name", "User name with invalid characters");
+
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+
+            var exception = Assert.Throws<Exception>(() =>
+            {
+                using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
+            });
+
+            StringAssert.Contains(ErrorCode.LoginFailed.ToString(), exception.Message);
+
+            Config.Set("ib-user-name", originalUserName);
         }
 
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0, OrderDirection.Buy, OrderDirection.Sell)]
