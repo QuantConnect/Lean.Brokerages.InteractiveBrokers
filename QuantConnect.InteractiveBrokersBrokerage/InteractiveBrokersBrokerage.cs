@@ -1125,6 +1125,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         public override void Disconnect()
         {
+            Log.Trace("InteractiveBrokersBrokerage.Disconnect(): Starting");
             try
             {
                 if (_client != null && _client.ClientSocket != null && _client.Connected)
@@ -1142,9 +1143,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (_messageProcessingThread != null)
             {
                 _signal.issueSignal();
-                _messageProcessingThread.Join();
+                if (!_messageProcessingThread.Join(TimeSpan.FromSeconds(30)))
+                {
+                    Log.Error("InteractiveBrokersBrokerage.Disconnect(): timeout waiting for message processing thread to end");
+                }
                 _messageProcessingThread = null;
             }
+            Log.Trace("InteractiveBrokersBrokerage.Disconnect(): ended");
         }
 
         /// <summary>
