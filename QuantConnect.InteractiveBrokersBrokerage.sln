@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 16
-VisualStudioVersion = 16.0.31205.134
+# Visual Studio Version 17
+VisualStudioVersion = 17.9.34728.123
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "QuantConnect", "..\Lean\Common\QuantConnect.csproj", "{477827EE-5908-48AB-B6A4-DAB6E85D96DF}"
 EndProject
@@ -18,8 +18,6 @@ EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "QuantConnect.InteractiveBrokersBrokerage", "QuantConnect.InteractiveBrokersBrokerage\QuantConnect.InteractiveBrokersBrokerage.csproj", "{F9F3B5EA-3AFB-44FA-889D-E22082BD8F03}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "QuantConnect.InteractiveBrokersBrokerage.Tests", "QuantConnect.InteractiveBrokersBrokerage.Tests\QuantConnect.InteractiveBrokersBrokerage.Tests.csproj", "{582F7971-3EB7-418F-834A-FAAE479EC8AC}"
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "QuantConnect.InteractiveBrokersBrokerage.ToolBox", "QuantConnect.InteractiveBrokersBrokerage.ToolBox\QuantConnect.InteractiveBrokersBrokerage.ToolBox.csproj", "{2E005690-6E09-4847-96B1-7D3B2F84D100}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -59,10 +57,6 @@ Global
 		{582F7971-3EB7-418F-834A-FAAE479EC8AC}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{582F7971-3EB7-418F-834A-FAAE479EC8AC}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{582F7971-3EB7-418F-834A-FAAE479EC8AC}.Release|Any CPU.Build.0 = Release|Any CPU
-		{2E005690-6E09-4847-96B1-7D3B2F84D100}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{2E005690-6E09-4847-96B1-7D3B2F84D100}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{2E005690-6E09-4847-96B1-7D3B2F84D100}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{2E005690-6E09-4847-96B1-7D3B2F84D100}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
