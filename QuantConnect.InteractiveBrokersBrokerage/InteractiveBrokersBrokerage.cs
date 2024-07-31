@@ -3526,6 +3526,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var agentDescription = job.BrokerageData["ib-agent-description"];
 
             var loadExistingHoldings = Config.GetBool("load-existing-holdings", true);
+            if (job.BrokerageData.ContainsKey("load-existing-holdings"))
+            {
+                loadExistingHoldings = Convert.ToBoolean(job.BrokerageData["load-existing-holdings"]);
+            }
 
             Initialize(null,
                 null,
