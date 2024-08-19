@@ -3634,6 +3634,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 continue;
                             }
 
+                            // Skip subscribing to expired option contracts
+                            if (OptionSymbol.IsOptionContractExpired(symbol, DateTime.UtcNow))
+                            {
+                                Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Skipping subscription for {symbol} because the contract has expired.");
+                                continue;
+                            }
+
                             var id = GetNextId();
                             var contract = CreateContract(subscribeSymbol, includeExpired: false);
                             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(subscribeSymbol.ID.Market, subscribeSymbol, subscribeSymbol.SecurityType, Currencies.USD);
