@@ -147,6 +147,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private readonly ConcurrentDictionary<int, StopLimitOrder> _preSubmittedStopLimitOrders = new();
 
+        /// <summary>
+        /// Provides a thread-safe service for caching and managing original orders when they are part of a group.
+        /// </summary>
+        private GroupOrderCacheManager _groupOrderCacheManager = new();
+
         // tracks requested order updates, so we can flag Submitted order events as updates
         private readonly ConcurrentDictionary<int, int> _orderUpdates = new ConcurrentDictionary<int, int>();
 
@@ -1338,13 +1343,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="exchange">The exchange to send the order to, defaults to "Smart" to use IB's smart routing</param>
         private void IBPlaceOrder(Order order, bool needsNewId, string exchange = null)
         {
-            if (!order.TryGetGroupOrders(TryGetOrder, out var orders))
+            if (!order.TryGetGroupOrders(_groupOrderCacheManager.TryGetOrder, out var orders))
             {
                 // some order of the group is missing but cache the new one
-                CacheOrder(order);
+                _groupOrderCacheManager.CacheOrder(order);
                 return;
             }
-            RemoveCachedOrders(orders);
+            _groupOrderCacheManager.RemoveCachedOrders(orders);
 
             // MOO/MOC require directed option orders.
             // We resolve non-equity markets in the `CreateContract` method.
@@ -4973,29 +4978,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private void HandleManagedAccounts(object sender, IB.ManagedAccountsEventArgs e)
         {
             Log.Trace($"InteractiveBrokersBrokerage.HandleManagedAccounts(): Account list: {e.AccountList}");
-        }
-
-        /// <summary>
-        /// We cache the original orders when they are part of a group. We don't ask the order provider because we would get a clone
-        /// and we want to be able to modify the original setting the brokerage id
-        /// </summary>
-        private Order TryGetOrder(int orderId)
-        {
-            _pendingGroupOrders.TryGetValue(orderId, out var order);
-            return order;
-        }
-
-        private void CacheOrder(Order order)
-        {
-            _pendingGroupOrders[order.Id] = order;
-        }
-
-        private void RemoveCachedOrders(List<Order> orders)
-        {
-            for (var i = 0; i < orders.Count; i++)
-            {
-                _pendingGroupOrders.TryRemove(orders[i].Id, out _);
-            }
         }
 
         private void AddGuaranteedTag(IBApi.Order ibOrder, bool nonGuaranteed)
