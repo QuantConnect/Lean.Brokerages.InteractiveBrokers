@@ -1343,13 +1343,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="exchange">The exchange to send the order to, defaults to "Smart" to use IB's smart routing</param>
         private void IBPlaceOrder(Order order, bool needsNewId, string exchange = null)
         {
-            if (!order.TryGetGroupOrders(_groupOrderCacheManager.TryGetOrder, out var orders))
+            if (!_groupOrderCacheManager.TryGetGroupCachedOrders(order, out var orders))
             {
-                // some order of the group is missing but cache the new one
-                _groupOrderCacheManager.CacheOrder(order);
                 return;
             }
-            _groupOrderCacheManager.RemoveCachedOrders(orders);
 
             // MOO/MOC require directed option orders.
             // We resolve non-equity markets in the `CreateContract` method.
