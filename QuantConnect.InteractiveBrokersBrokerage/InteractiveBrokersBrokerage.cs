@@ -188,7 +188,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             { Market.CBOT, "CBOT" },
             { Market.ICE, "NYBOT" },
             { Market.CFE, "CFE" },
-            { Market.NYSELIFFE, "NYSELIFFE" }
+            { Market.NYSELIFFE, "NYSELIFFE" },
+            { Market.EUREX, "EUREX" }
         };
 
         private readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
@@ -3426,7 +3427,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Handle future options as a Future, up until we actually return the future.
                 if (isFutureOption || securityType == SecurityType.Future)
                 {
-                    var leanSymbol = _symbolMapper.GetLeanRootSymbol(ibSymbol);
+                    var leanSymbol = _symbolMapper.GetLeanRootSymbol(ibSymbol, securityType);
                     var defaultMarket = market;
 
                     if (!_symbolPropertiesDatabase.TryGetMarket(leanSymbol, SecurityType.Future, out market))
@@ -4067,7 +4068,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // setting up lookup request
             var contract = new Contract
             {
-                Symbol = _symbolMapper.GetBrokerageRootSymbol(lookupName),
+                Symbol = _symbolMapper.GetBrokerageRootSymbol(lookupName, symbol.SecurityType),
                 Currency = securityCurrency ?? symbolProperties.QuoteCurrency,
                 Exchange = exchangeSpecifier,
                 SecType = ConvertSecurityType(symbol.SecurityType),

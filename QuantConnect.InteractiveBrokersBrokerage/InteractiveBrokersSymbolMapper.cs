@@ -39,9 +39,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
     {
         private readonly IMapFileProvider _mapFileProvider;
 
-        // we have a special treatment of futures, because IB renamed several exchange tickers (like GBP instead of 6B). We fix this:
-        // We map those tickers back to their original names using the map below
-        private readonly Dictionary<string, string> _ibNameMap = new Dictionary<string, string>();
+        // we have a special treatment of futures and other security types, because IB renamed several exchange tickers (like GBP instead of 6B).
+        // We fix this: We map those tickers back to their original names using the map below
+        private readonly Dictionary<SecurityType, Dictionary<string, string>> _ibNameMap = new Dictionary<SecurityType, Dictionary<string, string>>();
 
         /// <summary>
         /// Constructs InteractiveBrokersSymbolMapper. Default parameters are used.
@@ -56,7 +56,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// Constructs InteractiveBrokersSymbolMapper
         /// </summary>
         /// <param name="ibNameMap">New names map (IB -> LEAN)</param>
-        public InteractiveBrokersSymbolMapper(Dictionary<string, string> ibNameMap)
+        public InteractiveBrokersSymbolMapper(Dictionary<SecurityType, Dictionary<string, string>> ibNameMap)
         {
             _ibNameMap = ibNameMap;
         }
@@ -69,7 +69,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             if (File.Exists(ibNameMapFullName))
             {
-                _ibNameMap = JsonConvert.DeserializeObject<Dictionary<string, string>>(File.ReadAllText(ibNameMapFullName));
+                _ibNameMap = JsonConvert.DeserializeObject<Dictionary<SecurityType, Dictionary<string, string>>>(File.ReadAllText(ibNameMapFullName));
             }
         }
         /// <summary>
@@ -124,16 +124,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 case SecurityType.Future:
                 case SecurityType.Cfd:
-                    return GetBrokerageRootSymbol(symbol.ID.Symbol);
+                    ticker = symbol.ID.Symbol;
+                    break;
 
                 case SecurityType.Equity:
-                    return ticker.Replace(".", " ");
-
-                case SecurityType.Index:
-                    return ticker;
+                    ticker = ticker.Replace(".", " ");
+                    break;
             }
 
-            return ticker;
+            return GetBrokerageRootSymbol(ticker, symbol.SecurityType);
         }
 
         /// <summary>
@@ -163,31 +162,35 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             try
             {
+                var ticker = GetLeanRootSymbol(brokerageSymbol, securityType);
                 switch (securityType)
                 {
                     case SecurityType.Future:
-                        return Symbol.CreateFuture(GetLeanRootSymbol(brokerageSymbol), market, expirationDate);
+                        return Symbol.CreateFuture(ticker, market, expirationDate);
 
                     case SecurityType.Option:
                         // See SecurityType.Equity case. The equity underlying may include a space, e.g. BRK B.
                         brokerageSymbol = brokerageSymbol.Replace(" ", ".");
-                        return Symbol.CreateOption(brokerageSymbol, market, OptionStyle.American, optionRight, strike, expirationDate);
+                        ticker = GetLeanRootSymbol(brokerageSymbol, securityType);
+                        return Symbol.CreateOption(ticker, market, OptionStyle.American, optionRight, strike, expirationDate);
 
                     case SecurityType.IndexOption:
                         // Index Options have their expiry offset from their last trading date by one day. We add one day
                         // to get the expected expiration date.
+                        ticker = GetLeanRootSymbol(brokerageSymbol, securityType);
                         return Symbol.CreateOption(
-                            Symbol.Create(IndexOptionSymbol.MapToUnderlying(brokerageSymbol), SecurityType.Index, market),
-                            brokerageSymbol,
+                            Symbol.Create(IndexOptionSymbol.MapToUnderlying(ticker), SecurityType.Index, market),
+                            ticker,
                             market,
                             securityType.DefaultOptionStyle(),
                             optionRight,
                             strike,
-                            IndexOptionSymbol.GetExpiryDate(brokerageSymbol, expirationDate));
+                            IndexOptionSymbol.GetExpiryDate(ticker, expirationDate));
 
                     case SecurityType.FutureOption:
+                        ticker = GetLeanRootSymbol(brokerageSymbol, securityType);
                         var future = FuturesOptionsUnderlyingMapper.GetUnderlyingFutureFromFutureOption(
-                            GetLeanRootSymbol(brokerageSymbol),
+                            GetLeanRootSymbol(ticker, securityType),
                             market,
                             expirationDate,
                             DateTime.Now);
@@ -209,10 +212,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     case SecurityType.Equity:
                         brokerageSymbol = brokerageSymbol.Replace(" ", ".");
+                        ticker = GetLeanRootSymbol(brokerageSymbol, securityType);
                         break;
                 }
 
-                return Symbol.Create(brokerageSymbol, securityType, market);
+                return Symbol.Create(ticker, securityType, market);
             }
             catch (Exception exception)
             {
@@ -226,11 +230,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="rootSymbol">LEAN root symbol</param>
         /// <returns></returns>
-        public string GetBrokerageRootSymbol(string rootSymbol)
+        public string GetBrokerageRootSymbol(string rootSymbol, SecurityType securityType)
         {
-            var brokerageSymbol = _ibNameMap.FirstOrDefault(kv => kv.Value == rootSymbol);
+            var brokerageSymbol = rootSymbol;
+            if (_ibNameMap.TryGetValue(securityType, out var symbolMap))
+            {
+                brokerageSymbol = symbolMap.FirstOrDefault(kv => kv.Value == rootSymbol).Key;
+            }
 
-            return brokerageSymbol.Key ?? rootSymbol;
+            return brokerageSymbol ?? rootSymbol;
         }
 
         /// <summary>
@@ -238,9 +246,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="brokerageRootSymbol">IB Brokerage root symbol</param>
         /// <returns></returns>
-        public string GetLeanRootSymbol(string brokerageRootSymbol)
+        public string GetLeanRootSymbol(string brokerageRootSymbol, SecurityType securityType)
         {
-            return _ibNameMap.ContainsKey(brokerageRootSymbol) ? _ibNameMap[brokerageRootSymbol] : brokerageRootSymbol;
+            return _ibNameMap.TryGetValue(securityType, out var symbolMap) && symbolMap.TryGetValue(brokerageRootSymbol, out var rootSymbol)
+                ? rootSymbol
+                : brokerageRootSymbol;
         }
 
         /// <summary>
@@ -271,7 +281,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var contractMonthExpiration = DateTime.ParseExact(match[2].Value, "MMM", CultureInfo.CurrentCulture).Month;
             var contractYearExpiration = match[3].Value;
 
-            var leanSymbol = GetLeanRootSymbol(contractSymbol);
+            var leanSymbol = GetLeanRootSymbol(contractSymbol, SecurityType.Future);
             string market;
             if (!symbolPropertiesDatabase.TryGetMarket(leanSymbol, SecurityType.Future, out market))
             {

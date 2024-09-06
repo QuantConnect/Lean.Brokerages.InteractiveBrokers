@@ -204,5 +204,38 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.AreEqual(expectedUnderlyingSymbol, futureOption.Underlying);
         }
+
+        private static TestCaseData[] LeanIbSymbolMappingTestCases = new TestCaseData[]
+        {
+            new("6B", "GBP", SecurityType.Future),
+            new("AW", "AIGCI", SecurityType.Future),
+            new("FESX", "ESTX50", SecurityType.Future),
+            new("SX5E", "ESTX50", SecurityType.Index),
+        };
+
+        [TestCaseSource(nameof(LeanIbSymbolMappingTestCases))]
+        public void MapsLeanToIBSymbolDependingOnSecurityType(string leanTicker, string ibTicker, SecurityType securityType)
+        {
+            var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
+
+            var leanSymbol = Symbol.Create(leanTicker, securityType, Market.InteractiveBrokers);
+            var resultIbTicker = mapper.GetBrokerageSymbol(leanSymbol);
+
+            Assert.AreEqual(ibTicker, resultIbTicker);
+        }
+
+        [TestCaseSource(nameof(LeanIbSymbolMappingTestCases))]
+        public void MapsIBToLeanSymbolDependingOnSecurityType(string leanTicker, string ibTicker, SecurityType securityType)
+        {
+            var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
+
+            var expiry = new DateTime(2024, 09, 20);
+            var expectedLeanSymbol = securityType == SecurityType.Future
+                ? Symbol.CreateFuture(leanTicker, Market.InteractiveBrokers, expiry)
+                : Symbol.Create(leanTicker, securityType, Market.InteractiveBrokers);
+            var resultLeanSymbol = mapper.GetLeanSymbol(ibTicker, securityType, expectedLeanSymbol.ID.Market, expiry);
+
+            Assert.AreEqual(expectedLeanSymbol, resultLeanSymbol);
+        }
     }
 }
