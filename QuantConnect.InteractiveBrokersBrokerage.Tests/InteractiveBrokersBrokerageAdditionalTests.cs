@@ -176,7 +176,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 brokerage.CancelOrder(order);
             }
 
-            var optionsExpiration = new DateTime(2023, 7, 21);
+            var optionsExpiration = new DateTime(2024, 9, 6);
             var orderProperties = new InteractiveBrokersOrderProperties();
             var group = new GroupOrderManager(1, legCount: orderType != OrderType.ComboLegLimit ? 3 : 2, quantity: comboDirection == OrderDirection.Buy ? 2 : -2);
 
