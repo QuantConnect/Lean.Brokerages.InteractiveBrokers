@@ -3783,7 +3783,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 (securityType == SecurityType.Forex && market == Market.Oanda) ||
                 (securityType == SecurityType.Option && market == Market.USA) ||
                 (securityType == SecurityType.IndexOption && market == Market.USA) ||
-                (securityType == SecurityType.Index && market == Market.USA) ||
+                (securityType == SecurityType.Index && (market == Market.USA || market == Market.EUREX)) ||
                 (securityType == SecurityType.FutureOption) ||
                 (securityType == SecurityType.Future) ||
                 (securityType == SecurityType.Cfd && market == Market.InteractiveBrokers);
