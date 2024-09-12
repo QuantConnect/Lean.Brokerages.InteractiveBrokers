@@ -84,13 +84,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 throw new ArgumentException("Invalid symbol: " + (symbol == null ? "null" : symbol.ToString()));
             }
 
-            var ticker = GetMappedTicker(symbol);
-
-            if (string.IsNullOrWhiteSpace(ticker))
-            {
-                throw new ArgumentException("Invalid symbol: " + symbol.ToString());
-            }
-
             if (symbol.ID.SecurityType != SecurityType.Forex &&
                 symbol.ID.SecurityType != SecurityType.Equity &&
                 symbol.ID.SecurityType != SecurityType.Index &&
@@ -103,33 +96,24 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 throw new ArgumentException("Invalid security type: " + symbol.ID.SecurityType);
             }
 
+            if (symbol.ID.SecurityType == SecurityType.FutureOption)
+            {
+                // We use the underlying Future Symbol since IB doesn't use
+                // the Futures Options' ticker, but rather uses the underlying's
+                // Symbol, mapped to the brokerage.
+                return GetBrokerageSymbol(symbol.Underlying);
+            }
+
+            var ticker = GetMappedTicker(symbol);
+
+            if (string.IsNullOrWhiteSpace(ticker))
+            {
+                throw new ArgumentException("Invalid symbol: " + symbol.ToString());
+            }
+
             if (symbol.ID.SecurityType == SecurityType.Forex && ticker.Length != 6)
             {
                 throw new ArgumentException("Forex symbol length must be equal to 6: " + symbol.Value);
-            }
-
-            switch (symbol.ID.SecurityType)
-            {
-                case SecurityType.Option:
-                case SecurityType.IndexOption:
-                    // Final case is for equities. We use the mapped value to select
-                    // the equity we want to trade. We skip mapping for index options.
-                    return GetMappedTicker(symbol.Underlying);
-
-                case SecurityType.FutureOption:
-                    // We use the underlying Future Symbol since IB doesn't use
-                    // the Futures Options' ticker, but rather uses the underlying's
-                    // Symbol, mapped to the brokerage.
-                    return GetBrokerageSymbol(symbol.Underlying);
-
-                case SecurityType.Future:
-                case SecurityType.Cfd:
-                    ticker = symbol.ID.Symbol;
-                    break;
-
-                case SecurityType.Equity:
-                    ticker = ticker.Replace(".", " ");
-                    break;
             }
 
             return GetBrokerageRootSymbol(ticker, symbol.SecurityType);
@@ -169,15 +153,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         return Symbol.CreateFuture(ticker, market, expirationDate);
 
                     case SecurityType.Option:
-                        // See SecurityType.Equity case. The equity underlying may include a space, e.g. BRK B.
-                        brokerageSymbol = brokerageSymbol.Replace(" ", ".");
-                        ticker = GetLeanRootSymbol(brokerageSymbol, securityType);
                         return Symbol.CreateOption(ticker, market, OptionStyle.American, optionRight, strike, expirationDate);
 
                     case SecurityType.IndexOption:
                         // Index Options have their expiry offset from their last trading date by one day. We add one day
                         // to get the expected expiration date.
-                        ticker = GetLeanRootSymbol(brokerageSymbol, securityType);
                         return Symbol.CreateOption(
                             Symbol.Create(IndexOptionSymbol.MapToUnderlying(ticker), SecurityType.Index, market),
                             ticker,
@@ -188,7 +168,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             IndexOptionSymbol.GetExpiryDate(ticker, expirationDate));
 
                     case SecurityType.FutureOption:
-                        ticker = GetLeanRootSymbol(brokerageSymbol, securityType);
                         var future = FuturesOptionsUnderlyingMapper.GetUnderlyingFutureFromFutureOption(
                             GetLeanRootSymbol(ticker, securityType),
                             market,
@@ -209,11 +188,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             optionRight,
                             strike,
                             expirationDate);
-
-                    case SecurityType.Equity:
-                        brokerageSymbol = brokerageSymbol.Replace(" ", ".");
-                        ticker = GetLeanRootSymbol(brokerageSymbol, securityType);
-                        break;
                 }
 
                 return Symbol.Create(ticker, securityType, market);
@@ -248,9 +222,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns></returns>
         public string GetLeanRootSymbol(string brokerageRootSymbol, SecurityType securityType)
         {
-            return _ibNameMap.TryGetValue(securityType, out var symbolMap) && symbolMap.TryGetValue(brokerageRootSymbol, out var rootSymbol)
+            var ticker = _ibNameMap.TryGetValue(securityType, out var symbolMap) && symbolMap.TryGetValue(brokerageRootSymbol, out var rootSymbol)
                 ? rootSymbol
                 : brokerageRootSymbol;
+
+            return ticker.Replace(" ", ".");
         }
 
         /// <summary>
@@ -306,6 +282,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private string GetMappedTicker(Symbol symbol)
         {
+            if (symbol.ID.SecurityType == SecurityType.Option || symbol.ID.SecurityType == SecurityType.IndexOption)
+            {
+                return GetMappedTicker(symbol.Underlying);
+            }
+
             var ticker = symbol.ID.Symbol;
             if (symbol.ID.SecurityType == SecurityType.Equity)
             {
@@ -313,7 +294,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ticker = mapFile.GetMappedSymbol(DateTime.UtcNow, symbol.Value);
             }
 
-            return ticker;
+            return ticker.Replace(".", " ");
         }
 
         /// <summary>

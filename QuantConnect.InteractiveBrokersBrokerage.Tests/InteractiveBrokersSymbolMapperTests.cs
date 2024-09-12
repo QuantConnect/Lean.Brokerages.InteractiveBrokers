@@ -82,6 +82,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             symbol = Symbol.Create("BRK.B", SecurityType.Equity, Market.USA);
             brokerageSymbol = mapper.GetBrokerageSymbol(symbol);
             Assert.AreEqual("BRK B", brokerageSymbol);
+
+            symbol = Symbol.CreateCanonicalOption(symbol);
+            brokerageSymbol = mapper.GetBrokerageSymbol(symbol);
+            Assert.AreEqual("BRK B", brokerageSymbol);
         }
 
         [TestCase("AAPL", "AAPL")]
