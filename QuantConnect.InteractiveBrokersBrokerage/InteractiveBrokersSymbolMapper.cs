@@ -96,14 +96,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 throw new ArgumentException("Invalid security type: " + symbol.ID.SecurityType);
             }
 
-            if (symbol.ID.SecurityType == SecurityType.FutureOption)
-            {
-                // We use the underlying Future Symbol since IB doesn't use
-                // the Futures Options' ticker, but rather uses the underlying's
-                // Symbol, mapped to the brokerage.
-                return GetBrokerageSymbol(symbol.Underlying);
-            }
-
             var ticker = GetMappedTicker(symbol);
 
             if (string.IsNullOrWhiteSpace(ticker))
@@ -226,7 +218,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ? rootSymbol
                 : brokerageRootSymbol;
 
-            return ticker.Replace(" ", ".");
+            if (securityType == SecurityType.Equity || securityType == SecurityType.Option)
+            {
+                ticker = ticker.Replace(" ", ".");
+            }
+
+            return ticker;
         }
 
         /// <summary>
@@ -282,19 +279,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private string GetMappedTicker(Symbol symbol)
         {
-            if (symbol.ID.SecurityType == SecurityType.Option || symbol.ID.SecurityType == SecurityType.IndexOption)
+            if (symbol.ID.SecurityType.IsOption())
             {
-                return GetMappedTicker(symbol.Underlying);
+                symbol = symbol.Underlying;
             }
 
             var ticker = symbol.ID.Symbol;
             if (symbol.ID.SecurityType == SecurityType.Equity)
             {
                 var mapFile = _mapFileProvider.Get(AuxiliaryDataKey.Create(symbol)).ResolveMapFile(symbol);
-                ticker = mapFile.GetMappedSymbol(DateTime.UtcNow, symbol.Value);
+                ticker = mapFile.GetMappedSymbol(DateTime.UtcNow, symbol.Value).Replace(".", " ");
             }
 
-            return ticker.Replace(".", " ");
+            return ticker;
         }
 
         /// <summary>
