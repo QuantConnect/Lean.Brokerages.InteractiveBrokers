@@ -298,6 +298,110 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsNull(enumerator);
         }
 
+        [Test]
+        public void CanSubscribeToEurexFutures()
+        {
+            // Wait a bit to make sure previous tests already disconnected from IB
+            Thread.Sleep(2000);
+
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+            ib.Connect();
+
+            var canonicalFuture = Symbol.Create("FESX", SecurityType.Future, Market.EUREX);
+            var contracts = TestUtils.GetFutureContracts(canonicalFuture, 3).ToList();
+            Assert.AreEqual(3, contracts.Count);
+
+            var resolutions = new[] { Resolution.Tick, Resolution.Second };
+            var configs = contracts.SelectMany(symbol => resolutions.SelectMany(resolution =>
+            {
+                return resolution switch
+                {
+                    Resolution.Tick => new[] { GetSubscriptionDataConfig<Tick>(symbol, resolution) },
+                    _ => new[]
+                    {
+                        GetSubscriptionDataConfig<TradeBar>(symbol, resolution),
+                        GetSubscriptionDataConfig<QuoteBar>(symbol, resolution)
+                    }
+                };
+            }));
+
+            var cancelationToken = new CancellationTokenSource();
+            var data = new List<IBaseData>();
+
+            foreach (var config in configs)
+            {
+                ProcessFeed(
+                    ib.Subscribe(config, (s, e) =>
+                    {
+                        var dataPoint = ((NewDataAvailableEventArgs)e).DataPoint;
+                        lock (data)
+                        {
+                            data.Add(dataPoint);
+                        }
+                    }),
+                    cancelationToken,
+                    (tick) => Log(tick));
+            }
+
+            Thread.Sleep(10 * 1000);
+            cancelationToken.Cancel();
+            cancelationToken.Dispose();
+
+            var symbolsWithData = data.Select(tick => tick.Symbol).Distinct().ToList();
+            CollectionAssert.AreEquivalent(contracts, symbolsWithData);
+
+            var dataTypesWithData = data.Select(tick => tick.GetType()).Distinct().ToList();
+            var expectedDataTypes = configs.Select(config => config.Type).Distinct().ToList();
+            Assert.AreEqual(expectedDataTypes.Count, dataTypesWithData.Count);
+        }
+
+        [Test]
+        public void CanSubscribeToEurexIndex()
+        {
+            // Wait a bit to make sure previous tests already disconnected from IB
+            Thread.Sleep(2000);
+
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+            ib.Connect();
+
+            var index = Symbol.Create("SX5E", SecurityType.Index, Market.EUREX);
+
+            var resolutions = new[] { Resolution.Tick, Resolution.Second };
+            var configs = resolutions.Select(resolution => resolution == Resolution.Tick
+                ? GetSubscriptionDataConfig<Tick>(index, resolution)
+                : GetSubscriptionDataConfig<TradeBar>(index, resolution));
+
+            var cancelationToken = new CancellationTokenSource();
+            var data = new List<IBaseData>();
+
+            foreach (var config in configs)
+            {
+                ProcessFeed(
+                    ib.Subscribe(config, (s, e) =>
+                    {
+                        var dataPoint = ((NewDataAvailableEventArgs)e).DataPoint;
+                        lock (data)
+                        {
+                            data.Add(dataPoint);
+                        }
+                    }),
+                    cancelationToken,
+                    (tick) => Log(tick));
+            }
+
+            Thread.Sleep(20 * 1000);
+            cancelationToken.Cancel();
+            cancelationToken.Dispose();
+
+            var symbolsWithData = data.Select(tick => tick.Symbol).Distinct().ToList();
+            Assert.AreEqual(1, symbolsWithData.Count);
+            Assert.AreEqual(index, symbolsWithData[0]);
+
+            var dataTypesWithData = data.Select(tick => tick.GetType()).Distinct().ToList();
+            var expectedDataTypes = configs.Select(config => config.Type).Distinct().ToList();
+            Assert.AreEqual(expectedDataTypes.Count, dataTypesWithData.Count);
+        }
+
         protected SubscriptionDataConfig GetSubscriptionDataConfig<T>(Symbol symbol, Resolution resolution)
         {
             var entry = MarketHoursDatabase.FromDataFolder().GetEntry(symbol.ID.Market, symbol, symbol.SecurityType);

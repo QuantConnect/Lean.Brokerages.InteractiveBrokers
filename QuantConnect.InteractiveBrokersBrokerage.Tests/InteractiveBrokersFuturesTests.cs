@@ -13,14 +13,13 @@
  * limitations under the License.
 */
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using IBApi;
 using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
-using QuantConnect.Data.Auxiliary;
-using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Logging;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
@@ -287,7 +286,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                     {
                         var contract = new Contract
                         {
-                            Symbol = symbolMapper.GetBrokerageRootSymbol(ticker),
+                            Symbol = symbolMapper.GetBrokerageRootSymbol(ticker, SecurityType.Future),
                             Currency = Currencies.USD,
                             Exchange = null,
                             SecType = "FUT"
@@ -318,17 +317,9 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 var tickersByMarket = new Dictionary<string, string[]>
                 {
                     {
-                        Market.HKFE,
-                        new[]
-                        {
-                            "HSI"
-                        }
-                    },
-                    {
                         Market.CME,
                         new[]
                         {
-                            "ACD",
                             "AJY",
                             "ANE"
                         }
@@ -340,26 +331,38 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                         {
                             "ZC"
                         }
-                    }
+                    },
+                    {
+                        Market.EUREX,
+                        new[]
+                        {
+                            "FESX"
+                        }
+                    },
                 };
 
-                foreach (var kvp in tickersByMarket)
+                Assert.Multiple(() =>
                 {
-                    var market = kvp.Key;
-                    var tickers = kvp.Value;
-
-                    foreach (var ticker in tickers)
+                    foreach (var kvp in tickersByMarket)
                     {
-                        var currentSymbol = Symbol.Create(ticker, SecurityType.Future, market);
-                        var symbolsFound = ib.LookupSymbols(currentSymbol, false);
-                        Assert.IsNotEmpty(symbolsFound);
+                        var market = kvp.Key;
+                        var tickers = kvp.Value;
 
-                        foreach (var symbol in symbolsFound)
+                        foreach (var ticker in tickers)
                         {
-                            Log.Trace($"Symbol found in IB: {symbol}");
+                            Log.Trace($"Market: {market} - Future Ticker: {ticker}");
+
+                            var currentSymbol = Symbol.Create(ticker, SecurityType.Future, market);
+                            var symbolsFound = ib.LookupSymbols(currentSymbol, false);
+                            Assert.IsNotEmpty(symbolsFound, $"No contracts found for Market: {market} - Future Ticker: {ticker}");
+
+                            foreach (var symbol in symbolsFound)
+                            {
+                                Log.Trace($"  - Symbol found in IB: {symbol} :: {symbol.Value} :: {symbol.ID.Date}");
+                            }
                         }
                     }
-                }
+                });
             }
         }
     }
