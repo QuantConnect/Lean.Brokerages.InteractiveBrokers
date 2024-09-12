@@ -316,18 +316,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
                 var tickersByMarket = new Dictionary<string, string[]>
                 {
-                    //{
-                    //    Market.HKFE,
-                    //    new[]
-                    //    {
-                    //        "HSI"
-                    //    }
-                    //},
                     {
                         Market.CME,
                         new[]
                         {
-                            //"ACD",
                             "AJY",
                             "ANE"
                         }
