@@ -1284,17 +1284,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             _client = new IB.InteractiveBrokersClient(_signal);
 
-            // set up event handlers
-            _client.UpdatePortfolio += HandlePortfolioUpdates;
-            _client.OrderStatus += HandleOrderStatusUpdates;
-            _client.OpenOrder += HandleOpenOrder;
-            _client.OpenOrderEnd += HandleOpenOrderEnd;
+            // running as a data provider only
+            if (_algorithm != null)
+            {
+                // set up event handlers
+                _client.UpdatePortfolio += HandlePortfolioUpdates;
+                _client.OrderStatus += HandleOrderStatusUpdates;
+                _client.OpenOrder += HandleOpenOrder;
+                _client.OpenOrderEnd += HandleOpenOrderEnd;
+                _client.ExecutionDetails += HandleExecutionDetails;
+                _client.CommissionReport += HandleCommissionReport;
+            }
             _client.UpdateAccountValue += HandleUpdateAccountValue;
             _client.AccountSummary += HandleAccountSummary;
             _client.ManagedAccounts += HandleManagedAccounts;
             _client.FamilyCodes += HandleFamilyCodes;
-            _client.ExecutionDetails += HandleExecutionDetails;
-            _client.CommissionReport += HandleCommissionReport;
             _client.Error += HandleError;
             _client.TickPrice += HandleTickPrice;
             _client.TickSize += HandleTickSize;
