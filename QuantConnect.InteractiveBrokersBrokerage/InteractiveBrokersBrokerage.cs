@@ -3636,6 +3636,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                             var id = GetNextId();
                             var contract = CreateContract(subscribeSymbol, includeExpired: false);
+                            if (subscribeSymbol.Value.EndsWith("CNT"))
+                            {
+                                Log.Trace($"InteractiveBrokersBrokerage.Subscribe: Cause {subscribeSymbol.Value} is Contingent Value Right, so ignore subscribe request");
+                                continue;
+                            }
+ 
                             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(subscribeSymbol.ID.Market, subscribeSymbol, subscribeSymbol.SecurityType, Currencies.USD);
                             var priceMagnifier = symbolProperties.PriceMagnifier;
 
@@ -3763,6 +3769,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // continuous futures and canonical symbols not supported
                 || symbol.IsCanonical())
             {
+                return false;
+            }
+
+            if (symbol.Value.EndsWith("CNT"))
+            {
+                Log.Trace($"InteractiveBrokersBrokerage.CanSubscribe: Cause {symbol.Value} is Contingent Value Right, so ignore get history");
                 return false;
             }
 
