@@ -6,13 +6,18 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v2
 
-      - name: Free space
-        run: df -h && rm -rf /opt/hostedtoolcache* && df -h
+      - name: Liberate disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
 
       - name: Checkout Lean Same Branch
         id: lean-same-branch
@@ -41,6 +46,6 @@ jobs:
           shell: bash
           run: |
             # Build
-            dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.InteractiveBrokersBrokerage.sln
+            dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.InteractiveBrokersBrokerage.sln && \
             # Run Tests
             dotnet test ./QuantConnect.InteractiveBrokersBrokerage.Tests/bin/Release/QuantConnect.Brokerages.InteractiveBrokers.Tests.dll

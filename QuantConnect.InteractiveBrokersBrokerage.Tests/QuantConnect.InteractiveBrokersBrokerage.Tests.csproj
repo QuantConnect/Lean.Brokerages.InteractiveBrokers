@@ -3,7 +3,7 @@
     <PropertyGroup>
         <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
         <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-        <TargetFramework>net6.0</TargetFramework>
+        <TargetFramework>net9.0</TargetFramework>
 
         <IsPackable>false</IsPackable>
         <Copyright>Copyright ©  2021</Copyright>
@@ -18,10 +18,9 @@
 
     <ItemGroup>
         <PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
-        <PackageReference Include="NUnit" Version="3.13.3" />
-        <PackageReference Include="NUnit3TestAdapter" Version="4.2.1">
+        <PackageReference Include="NUnit" Version="4.2.2" />
+        <PackageReference Include="NUnit3TestAdapter" Version="4.6.0">
             <PrivateAssets>all</PrivateAssets>
-            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.9.4" />
     </ItemGroup>
@@ -31,13 +30,18 @@
       <ProjectReference Include="..\QuantConnect.InteractiveBrokersBrokerage\QuantConnect.InteractiveBrokersBrokerage.csproj" />
     </ItemGroup>
 
-	<ItemGroup>
-		<Reference Include="CSharpAPI, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-			<HintPath>..\QuantConnect.InteractiveBrokersBrokerage\CSharpAPI.dll</HintPath>
-			<SpecificVersion>False</SpecificVersion>
-		</Reference>
-	</ItemGroup>
+    <ItemGroup>
+        <Reference Include="CSharpAPI, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+            <HintPath>..\QuantConnect.InteractiveBrokersBrokerage\CSharpAPI.dll</HintPath>
+            <SpecificVersion>False</SpecificVersion>
+        </Reference>
+    </ItemGroup>
 
+    <ItemGroup>
+        <Using Include="NUnit.Framework.Legacy.ClassicAssert" Alias="Assert" />
+        <Using Include="NUnit.Framework.Legacy.CollectionAssert" Alias="CollectionAssert" />
+        <Using Include="NUnit.Framework.Legacy.StringAssert" Alias="StringAssert" />
+    </ItemGroup>
     <ItemGroup>
         <None Remove="config.json" />
         <Content Include="config.json">
