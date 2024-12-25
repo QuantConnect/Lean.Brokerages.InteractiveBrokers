@@ -109,6 +109,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private CancellationTokenSource _gatewayRestartTokenSource;
 
+        private bool _useIBAutomator;
         private int _port;
         private string _account;
         private string _host;
@@ -295,6 +296,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Config.Get("ib-user-name"),
                 Config.Get("ib-password"),
                 Config.Get("ib-trading-mode"),
+                Config.GetValue("ib-use-ibautomator", true),
                 Config.GetValue("ib-agent-description", IB.AgentDescription.Individual)
                 )
         {
@@ -330,6 +332,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string userName,
             string password,
             string tradingMode,
+            bool useIBAutomator,
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
             TimeSpan? weeklyRestartUtcTime = null)
@@ -347,6 +350,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 userName,
                 password,
                 tradingMode,
+                useIBAutomator,
                 agentDescription,
                 loadExistingHoldings,
                 weeklyRestartUtcTime: weeklyRestartUtcTime);
@@ -1218,6 +1222,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string userName,
             string password,
             string tradingMode,
+            bool useIBAutomator,
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
             TimeSpan? weeklyRestartUtcTime = null)
@@ -1226,8 +1231,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 return;
             }
-
-            ValidateSubscription();
 
             _isInitialized = true;
             _loadExistingHoldings = loadExistingHoldings;
@@ -1254,6 +1257,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _account = account;
             _host = host;
             _port = port;
+            _useIBAutomator = useIBAutomator;
             _ibVersion = Convert.ToInt32(ibVersion, CultureInfo.InvariantCulture);
             _agentDescription = agentDescription;
 
@@ -1263,22 +1267,25 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _subscriptionManager.SubscribeImpl += (s, t) => Subscribe(s);
             _subscriptionManager.UnsubscribeImpl += (s, t) => Unsubscribe(s);
 
-            Log.Trace("InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): Starting IB Automater...");
+            if (useIBAutomator)
+            {
+                Log.Trace("InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): Starting IB Automater...");
 
-            // start IB Gateway
-            var exportIbGatewayLogs = true; // Config.GetBool("ib-export-ibgateway-logs");
-            _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, exportIbGatewayLogs);
-            _ibAutomater.OutputDataReceived += OnIbAutomaterOutputDataReceived;
-            _ibAutomater.ErrorDataReceived += OnIbAutomaterErrorDataReceived;
-            _ibAutomater.Exited += OnIbAutomaterExited;
-            _ibAutomater.Restarted += OnIbAutomaterRestarted;
+                // start IB Gateway
+                var exportIbGatewayLogs = true; // Config.GetBool("ib-export-ibgateway-logs");
+                _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, exportIbGatewayLogs);
+                _ibAutomater.OutputDataReceived += OnIbAutomaterOutputDataReceived;
+                _ibAutomater.ErrorDataReceived += OnIbAutomaterErrorDataReceived;
+                _ibAutomater.Exited += OnIbAutomaterExited;
+                _ibAutomater.Restarted += OnIbAutomaterRestarted;
 
-            CheckIbAutomaterError(_ibAutomater.Start(false));
+                CheckIbAutomaterError(_ibAutomater.Start(false));
 
-            // default the weekly restart to one hour before FX market open (GetNextWeekendReconnectionTimeUtc)
-            _weeklyRestartUtcTime = weeklyRestartUtcTime ?? _defaultWeeklyRestartUtcTime;
-            // schedule the weekly IB Gateway restart
-            StartGatewayWeeklyRestartTask();
+                // default the weekly restart to one hour before FX market open (GetNextWeekendReconnectionTimeUtc)
+                _weeklyRestartUtcTime = weeklyRestartUtcTime ?? _defaultWeeklyRestartUtcTime;
+                // schedule the weekly IB Gateway restart
+                StartGatewayWeeklyRestartTask();
+            }
 
             Log.Trace($"InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): Host: {host}, Port: {port}, Account: {account}, AgentDescription: {agentDescription}");
 
@@ -3531,7 +3538,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var password = job.BrokerageData["ib-password"];
             var tradingMode = job.BrokerageData["ib-trading-mode"];
             var agentDescription = job.BrokerageData["ib-agent-description"];
-
+            var useIBAutomator = Config.GetBool("ib-use-ibautomator", true);
             var loadExistingHoldings = Config.GetBool("load-existing-holdings", true);
             if (job.BrokerageData.ContainsKey("load-existing-holdings"))
             {
@@ -3549,6 +3556,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 userId,
                 password,
                 tradingMode,
+                useIBAutomator,
                 agentDescription,
                 loadExistingHoldings);
 
@@ -4639,6 +4647,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void StopGatewayRestartTask()
         {
+            if (!_useIBAutomator) return;
+
             if (IsRestartInProgress())
             {
                 _gatewayRestartTokenSource.Cancel();
@@ -4661,6 +4671,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void StartGatewayRestartTask()
         {
+            if (!_useIBAutomator) return;
             try
             {
                 if (_isDisposeCalled || IsRestartInProgress())
@@ -4722,6 +4733,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void StartGatewayWeeklyRestartTask()
         {
+            if (!_useIBAutomator) return;
+
             if (_isDisposeCalled)
             {
                 Log.Trace("InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skipped request: we are disposed");
@@ -4860,6 +4873,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private TimeSpan GetRestartDelay()
         {
+            if (!_useIBAutomator) return new TimeSpan(0);
             // during weekends wait until one hour before FX market open before restarting IBAutomater
             return _ibAutomater.IsWithinWeekendServerResetTimes()
                ? GetNextWeekendReconnectionTimeUtc() - DateTime.UtcNow
@@ -4868,6 +4882,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private TimeSpan GetWeeklyRestartDelay()
         {
+            if (!_useIBAutomator) return new TimeSpan(0);
+
             var utcNow = DateTime.UtcNow;
             // during weekends (including the whole Sunday) we wait until the time configured by the user
             if (_ibAutomater.IsWithinWeekendServerResetTimes() || utcNow.DayOfWeek == DayOfWeek.Sunday)
@@ -5009,136 +5025,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             public string License;
             [JsonProperty(PropertyName = "organizationId")]
             public string OrganizationId;
-        }
-
-        /// <summary>
-        /// Validate the user of this project has permission to be using it via our web API.
-        /// </summary>
-        private static void ValidateSubscription()
-        {
-            try
-            {
-                var productId = 181;
-                var userId = Globals.UserId;
-                var token = Globals.UserToken;
-                var organizationId = Globals.OrganizationID;
-                // Verify we can authenticate with this user and token
-                var api = new ApiConnection(userId, token);
-                if (!api.Connected)
-                {
-                    throw new ArgumentException("Invalid api user id or token, cannot authenticate subscription.");
-                }
-                // Compile the information we want to send when validating
-                var information = new Dictionary<string, object>()
-                {
-                    {"productId", productId},
-                    {"machineName", Environment.MachineName},
-                    {"userName", Environment.UserName},
-                    {"domainName", Environment.UserDomainName},
-                    {"os", Environment.OSVersion}
-                };
-                // IP and Mac Address Information
-                try
-                {
-                    var interfaceDictionary = new List<Dictionary<string, object>>();
-                    foreach (var nic in NetworkInterface.GetAllNetworkInterfaces().Where(nic => nic.OperationalStatus == OperationalStatus.Up))
-                    {
-                        var interfaceInformation = new Dictionary<string, object>();
-                        // Get UnicastAddresses
-                        var addresses = nic.GetIPProperties().UnicastAddresses
-                            .Select(uniAddress => uniAddress.Address)
-                            .Where(address => !IPAddress.IsLoopback(address)).Select(x => x.ToString());
-                        // If this interface has non-loopback addresses, we will include it
-                        if (!addresses.IsNullOrEmpty())
-                        {
-                            interfaceInformation.Add("unicastAddresses", addresses);
-                            // Get MAC address
-                            interfaceInformation.Add("MAC", nic.GetPhysicalAddress().ToString());
-                            // Add Interface name
-                            interfaceInformation.Add("name", nic.Name);
-                            // Add these to our dictionary
-                            interfaceDictionary.Add(interfaceInformation);
-                        }
-                    }
-                    information.Add("networkInterfaces", interfaceDictionary);
-                }
-                catch (Exception)
-                {
-                    // NOP, not necessary to crash if fails to extract and add this information
-                }
-                // Include our OrganizationId is specified
-                if (!string.IsNullOrEmpty(organizationId))
-                {
-                    information.Add("organizationId", organizationId);
-                }
-                var request = new RestRequest("modules/license/read", Method.POST) { RequestFormat = DataFormat.Json };
-                request.AddParameter("application/json", JsonConvert.SerializeObject(information), ParameterType.RequestBody);
-                api.TryRequest(request, out ModulesReadLicenseRead result);
-                if (!result.Success)
-                {
-                    throw new InvalidOperationException($"Request for subscriptions from web failed, Response Errors : {string.Join(',', result.Errors)}");
-                }
-
-                var encryptedData = result.License;
-                // Decrypt the data we received
-                DateTime? expirationDate = null;
-                long? stamp = null;
-                bool? isValid = null;
-                if (encryptedData != null)
-                {
-                    // Fetch the org id from the response if we are null, we need it to generate our validation key
-                    if (string.IsNullOrEmpty(organizationId))
-                    {
-                        organizationId = result.OrganizationId;
-                    }
-                    // Create our combination key
-                    var password = $"{token}-{organizationId}";
-                    var key = SHA256.HashData(Encoding.UTF8.GetBytes(password));
-                    // Split the data
-                    var info = encryptedData.Split("::");
-                    var buffer = Convert.FromBase64String(info[0]);
-                    var iv = Convert.FromBase64String(info[1]);
-                    // Decrypt our information
-                    using var aes = new AesManaged();
-                    var decryptor = aes.CreateDecryptor(key, iv);
-                    using var memoryStream = new MemoryStream(buffer);
-                    using var cryptoStream = new CryptoStream(memoryStream, decryptor, CryptoStreamMode.Read);
-                    using var streamReader = new StreamReader(cryptoStream);
-                    var decryptedData = streamReader.ReadToEnd();
-                    if (!decryptedData.IsNullOrEmpty())
-                    {
-                        var jsonInfo = JsonConvert.DeserializeObject<JObject>(decryptedData);
-                        expirationDate = jsonInfo["expiration"]?.Value<DateTime>();
-                        isValid = jsonInfo["isValid"]?.Value<bool>();
-                        stamp = jsonInfo["stamped"]?.Value<int>();
-                    }
-                }
-                // Validate our conditions
-                if (!expirationDate.HasValue || !isValid.HasValue || !stamp.HasValue)
-                {
-                    throw new InvalidOperationException("Failed to validate subscription.");
-                }
-
-                var nowUtc = DateTime.UtcNow;
-                var timeSpan = nowUtc - Time.UnixTimeStampToDateTime(stamp.Value);
-                if (timeSpan > TimeSpan.FromHours(12))
-                {
-                    throw new InvalidOperationException("Invalid API response.");
-                }
-                if (!isValid.Value)
-                {
-                    throw new ArgumentException($"Your subscription is not valid, please check your product subscriptions on our website.");
-                }
-                if (expirationDate < nowUtc)
-                {
-                    throw new ArgumentException($"Your subscription expired {expirationDate}, please renew in order to use this product.");
-                }
-            }
-            catch (Exception e)
-            {
-                Log.Error($"ValidateSubscription(): Failed during validation, shutting down. Error : {e.Message}");
-                Environment.Exit(1);
-            }
         }
 
         private static class AccountValueKeys
