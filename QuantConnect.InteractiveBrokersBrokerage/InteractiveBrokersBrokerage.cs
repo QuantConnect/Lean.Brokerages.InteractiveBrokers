@@ -1285,6 +1285,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _weeklyRestartUtcTime = weeklyRestartUtcTime ?? _defaultWeeklyRestartUtcTime;
                 // schedule the weekly IB Gateway restart
                 StartGatewayWeeklyRestartTask();
+            } else
+            {
+                _ibAutomater = new IBAutomater.IBAutomater();
             }
 
             Log.Trace($"InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): Host: {host}, Port: {port}, Account: {account}, AgentDescription: {agentDescription}");
