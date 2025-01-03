@@ -45,7 +45,7 @@
     <ItemGroup>
         <None Remove="config.json" />
         <Content Include="config.json">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToOutputDirectory>Never</CopyToOutputDirectory>
         </Content>
     </ItemGroup>
 </Project>
