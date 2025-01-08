@@ -92,7 +92,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// The default gateway version to use
         /// </summary>
-        public static string DefaultVersion { get; } = "1019";
+        public static string DefaultVersion { get; } = "1023";
 
         private IBAutomater.IBAutomater _ibAutomater;
 
@@ -100,7 +100,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private const int ClientId = 0;
 
         // daily restart is at 23:45 local host time
-        private static TimeSpan _heartBeatTimeLimit = new(23, 0, 0);
+        private static TimeSpan _heartBeatTimeLimit = new(23, 00, 0);
 
         // next valid order id (or request id, or ticker id) for this client
         private int _nextValidId;
