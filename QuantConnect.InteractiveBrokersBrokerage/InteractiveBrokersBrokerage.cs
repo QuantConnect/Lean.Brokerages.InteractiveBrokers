@@ -2918,7 +2918,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // Indexes requires that the exchange be specified exactly
             else if (symbol.ID.SecurityType == SecurityType.Index)
             {
-                contract.Exchange = IndexSymbol.GetIndexExchange(symbol);
+                if (string.Equals(symbol.ID.Market, Market.OSE, StringComparison.InvariantCultureIgnoreCase))
+                {
+                    contract.Exchange = "OSE.JPN";
+                }
+                else
+                {
+                    contract.Exchange = IndexSymbol.GetIndexExchange(symbol);
+                }
             }
             else if (symbol.ID.SecurityType.IsOption())
             {
@@ -3787,7 +3794,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 (securityType == SecurityType.Forex && market == Market.Oanda) ||
                 (securityType == SecurityType.Option && market == Market.USA) ||
                 (securityType == SecurityType.IndexOption && market == Market.USA) ||
-                (securityType == SecurityType.Index && (market == Market.USA || market == Market.EUREX)) ||
+                (securityType == SecurityType.Index && (market == Market.USA || market == Market.EUREX || market == Market.OSE || market == Market.HKFE)) ||
                 (securityType == SecurityType.FutureOption) ||
                 (securityType == SecurityType.Future) ||
                 (securityType == SecurityType.Cfd && market == Market.InteractiveBrokers);
