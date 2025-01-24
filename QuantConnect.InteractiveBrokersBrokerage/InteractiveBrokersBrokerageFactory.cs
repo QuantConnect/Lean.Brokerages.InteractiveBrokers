@@ -76,7 +76,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var twsDirectory = Config.Get("ib-tws-dir", "C:\\Jts");
             var ibVersion = Config.Get("ib-version", InteractiveBrokersBrokerage.DefaultVersion);
             var useIBAutomator = Config.GetBool("ib-use-ibautomator", true);
-
+            var clientID = Config.GetInt("ib-clientid", 0);
             var account = Read<string>(job.BrokerageData, "ib-account", errors);
             var userId = Read<string>(job.BrokerageData, "ib-user-name", errors);
             var password = Read<string>(job.BrokerageData, "ib-password", errors);
@@ -120,6 +120,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 password,
                 tradingMode,
                 useIBAutomator,
+                clientID,
                 agentDescription,
                 loadExistingHoldings,
                 weeklyRestartUtcTime);

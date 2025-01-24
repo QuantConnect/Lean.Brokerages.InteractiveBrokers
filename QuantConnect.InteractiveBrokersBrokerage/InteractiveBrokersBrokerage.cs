@@ -92,15 +92,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// The default gateway version to use
         /// </summary>
-        public static string DefaultVersion { get; } = "1023";
+        public static string DefaultVersion { get; } = "1030";
 
         private IBAutomater.IBAutomater _ibAutomater;
 
         // Existing orders created in TWS can *only* be cancelled/modified when connected with ClientId = 0
-        private const int ClientId = 0;
+        private int ClientId = 0;
 
         // daily restart is at 23:45 local host time
-        private static TimeSpan _heartBeatTimeLimit = new(23, 00, 0);
+        private static TimeSpan _heartBeatTimeLimit = new(23, 30, 0);
+
+        // daily restart is at 23:45 local host time, this is the time on dev computer to exclude heartbeats while testing
+        private static TimeSpan _heartBeatTimeLimitDev = new(16, 30, 0);
 
         // next valid order id (or request id, or ticker id) for this client
         private int _nextValidId;
@@ -297,6 +300,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Config.Get("ib-password"),
                 Config.Get("ib-trading-mode"),
                 Config.GetValue("ib-use-ibautomator", true),
+                Config.GetInt("ib-clientid", 0),
                 Config.GetValue("ib-agent-description", IB.AgentDescription.Individual)
                 )
         {
@@ -333,6 +337,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string password,
             string tradingMode,
             bool useIBAutomator,
+            int clientid = 0,
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
             TimeSpan? weeklyRestartUtcTime = null)
@@ -351,6 +356,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 password,
                 tradingMode,
                 useIBAutomator,
+                clientid,
                 agentDescription,
                 loadExistingHoldings,
                 weeklyRestartUtcTime: weeklyRestartUtcTime);
@@ -965,6 +971,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 IsConnected &&
                 // do not run heart beat if we are close to daily restarts
                 DateTime.Now.TimeOfDay < _heartBeatTimeLimit &&
+                (
+                    DateTime.Now.TimeOfDay < _heartBeatTimeLimitDev ||
+                    DateTime.Now.TimeOfDay > _heartBeatTimeLimitDev.Add(new TimeSpan(1,0,0))
+                ) &&
                 // do not run heart beat if we are restarting
                 !IsRestartInProgress())
             {
@@ -975,6 +985,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (!result)
                 {
                     Log.Error("InteractiveBrokersBrokerage.HeartBeat(): failed!", overrideMessageFloodProtection: true);
+                    Log.Error($"DateTime.Now.TimeOfDay: {DateTime.Now.TimeOfDay} < {_heartBeatTimeLimit}", overrideMessageFloodProtection: true);
+                    Log.Error($"_isDisposeCalled: {_isDisposeCalled}", overrideMessageFloodProtection: true);
+                    Log.Error($"IsConnected: {IsConnected}", overrideMessageFloodProtection: true);
+                    Log.Error($"_ibAutomater.IsWithinScheduledServerResetTimes(): {_ibAutomater.IsWithinScheduledServerResetTimes()}", overrideMessageFloodProtection: true);
+                    Log.Error($"IsRestartInProgress(): {IsRestartInProgress()}", overrideMessageFloodProtection: true);
                 }
                 return result;
             }
@@ -1223,6 +1238,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string password,
             string tradingMode,
             bool useIBAutomator,
+            int clientid = 0,
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
             TimeSpan? weeklyRestartUtcTime = null)
@@ -1258,6 +1274,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _host = host;
             _port = port;
             _useIBAutomator = useIBAutomator;
+            ClientId = clientid;
             _ibVersion = Convert.ToInt32(ibVersion, CultureInfo.InvariantCulture);
             _agentDescription = agentDescription;
 
@@ -3542,6 +3559,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var tradingMode = job.BrokerageData["ib-trading-mode"];
             var agentDescription = job.BrokerageData["ib-agent-description"];
             var useIBAutomator = Config.GetBool("ib-use-ibautomator", true);
+            var clientid = Config.GetInt("ib-clientid", 0);
             var loadExistingHoldings = Config.GetBool("load-existing-holdings", true);
             if (job.BrokerageData.ContainsKey("load-existing-holdings"))
             {
@@ -3560,6 +3578,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 password,
                 tradingMode,
                 useIBAutomator,
+                clientid,
                 agentDescription,
                 loadExistingHoldings);
 
