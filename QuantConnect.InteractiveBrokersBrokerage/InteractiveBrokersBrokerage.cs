@@ -4201,6 +4201,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <remarks>For IB history limitations see https://www.interactivebrokers.com/en/software/api/apiguide/tables/historical_data_limitations.htm </remarks>
         public override IEnumerable<BaseData> GetHistory(HistoryRequest request)
         {
+            start:
             if (!IsConnected)
             {
                 OnMessage(
@@ -4208,7 +4209,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         BrokerageMessageType.Warning,
                         "GetHistoryWhenDisconnected",
                         "History requests cannot be submitted when disconnected."));
-                Connect();
+                try
+                {
+                    Connect();
+                }catch(Exception ex){goto start;}
+                goto start;
             }
 
             // skipping universe and canonical symbols
