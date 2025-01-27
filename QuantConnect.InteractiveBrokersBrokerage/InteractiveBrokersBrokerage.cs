@@ -4208,7 +4208,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         BrokerageMessageType.Warning,
                         "GetHistoryWhenDisconnected",
                         "History requests cannot be submitted when disconnected."));
-                return null;
+                Connect();
             }
 
             // skipping universe and canonical symbols
