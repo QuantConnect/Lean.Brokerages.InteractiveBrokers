@@ -22,6 +22,10 @@
     "ESTX50": "FESX"
   },
   "Index": {
-    "ESTX50": "SX5E"
+    "ESTX50": "SX5E",
+    "XJO": "ASX",
+    "INDU": "DJI",
+    "UTIL": "DJU",
+    "GSCI": "SGSCI"
   }
 }
