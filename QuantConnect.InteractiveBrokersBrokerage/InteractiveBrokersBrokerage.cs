@@ -942,13 +942,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
             _stateManager.IsConnecting = false;
+            _stateManager.Disconnected1100Fired = false;
 
             // if we reached here we should be connected, check just in case
             if (IsConnected)
             {
                 Log.Trace("InteractiveBrokersBrokerage.Connect(): Restoring data subscriptions...");
                 RestoreDataSubscriptions();
-
                 // we need to tell the DefaultBrokerageMessageHandler we are connected else he will kill us
                 OnMessage(BrokerageMessageEvent.Reconnected("Connect() finished successfully"));
             }
