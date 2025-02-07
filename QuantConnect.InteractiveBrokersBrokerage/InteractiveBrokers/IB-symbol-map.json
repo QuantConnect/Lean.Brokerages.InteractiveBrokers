@@ -23,9 +23,8 @@
   },
   "Index": {
     "ESTX50": "SX5E",
-    "XJO": "ASX",
     "INDU": "DJI",
-    "UTIL": "DJU",
-    "GSCI": "SGSCI"
+    "GSCI": "SPGSCI",
+    "XJO": "ASX"
   }
 }
