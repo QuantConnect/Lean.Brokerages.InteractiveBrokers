@@ -59,7 +59,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             _monitor.AddPendingFill(
                 Order.CreateOrder(new SubmitOrderRequest(OrderType.ComboMarket, SecurityType.Option, Symbols.SPY, 1, 0, 0, _timeProvider.GetUtcNow(), "")),
                 new IB.ExecutionDetailsEventArgs(1, new Contract(), new Execution()),
-                new CommissionReport()
+                new CommissionAndFeesReport()
             );
 
             Thread.Sleep(_timeout * 2);
@@ -98,7 +98,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 _monitor.AddPendingFill(
                     Order.CreateOrder(new SubmitOrderRequest(OrderType.ComboMarket, SecurityType.Option, Symbols.SPY, 1, 0, 0, _timeProvider.GetUtcNow(), "")),
                     new IB.ExecutionDetailsEventArgs(1, new Contract(), new Execution()),
-                    new CommissionReport()
+                    new CommissionAndFeesReport()
                 );
 
                 _timeProvider.Advance(_timeout / 4);

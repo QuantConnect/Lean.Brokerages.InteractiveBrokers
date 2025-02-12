@@ -210,7 +210,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="e">The exception that occurred.</param>
         public override void error(Exception e)
         {
-            error(-1, -1, e.ToString(), string.Empty);
+            error(-1, -1, -1, e.ToString(), string.Empty);
         }
 
         /// <summary>
@@ -219,19 +219,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="str">This is the text of the error message.</param>
         public override void error(string str)
         {
-            error(-1, -1, str, string.Empty);
+            error(-1, -1, -1, str, string.Empty);
         }
 
         /// <summary>
         /// This method is called when there is an error with the communication or when TWS wants to send a message to the client.
         /// </summary>
         /// <param name="id">The request identifier that generated the error.</param>
+        /// <param name="errorTime">The error timestamp.</param
         /// <param name="errorCode">The code identifying the error.</param>
         /// <param name="errorMsg">The description of the error.</param>
         /// <param name="advancedOrderRejectJson">Advanced order reject description in json format</param>
-        public override void error(int id, int errorCode, string errorMsg, string advancedOrderRejectJson)
+        public override void error(int id, long errorTime, int errorCode, string errorMsg, string advancedOrderRejectJson)
         {
-            OnError(new ErrorEventArgs(id, errorCode, errorMsg));
+            OnError(new ErrorEventArgs(id, errorTime, errorCode, errorMsg));
         }
 
         /// <summary>
@@ -372,8 +373,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="clientId">The ID of the client (or TWS) that placed the order. Note that TWS orders have a fixed clientId and orderId of 0 that distinguishes them from API orders.</param>
         /// <param name="whyHeld">This field is used to identify an order held when TWS is trying to locate shares for a short sell. The value used to indicate this is 'locate'.</param>
         /// <param name="mktCapPrice">If an order has been capped, this indicates the current capped price. Requires TWS 967+ and API v973.04+. Python API specifically requires API v973.06+.</param>
-        public override void orderStatus(int orderId, string status, decimal filled, decimal remaining, double avgFillPrice, int permId,
-            int parentId, double lastFillPrice, int clientId, string whyHeld, double mktCapPrice)
+        public override void orderStatus(int orderId, string status, decimal filled, decimal remaining, double avgFillPrice, long permId, int parentId, double lastFillPrice, int clientId, string whyHeld, double mktCapPrice)
         {
             var filledValue = Convert.ToInt32(filled);
             var remainingValue = Convert.ToInt32(remaining);
@@ -443,7 +443,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// This callback returns the commission report portion of an execution and is triggered immediately after a trade execution, or by calling reqExecution().
         /// </summary>
         /// <param name="commissionReport">The structure that contains commission details.</param>
-        public override void commissionReport(CommissionReport commissionReport)
+        public override void commissionAndFeesReport(CommissionAndFeesReport commissionReport)
         {
             OnCommissionReport(new CommissionReportEventArgs(commissionReport));
         }

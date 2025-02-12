@@ -130,7 +130,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Add a new pending fill
         /// </summary>
-        public void AddPendingFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport)
+        public void AddPendingFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionAndFeesReport commissionReport)
         {
             _pendingFillingEventDetails.Enqueue(new PendingFillEvent
             {
@@ -148,7 +148,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
     {
         public Order Order { get; set; }
         public IB.ExecutionDetailsEventArgs ExecutionDetails { get; set; }
-        public CommissionReport CommissionReport { get; set; }
+        public CommissionAndFeesReport CommissionReport { get; set; }
         public DateTime ExpirationTime { get; set; }
     }
 }
