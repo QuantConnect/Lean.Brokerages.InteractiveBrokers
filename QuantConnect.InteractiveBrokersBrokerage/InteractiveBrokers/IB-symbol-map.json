@@ -23,8 +23,18 @@
   },
   "Index": {
     "ESTX50": "SX5E",
+    "BXO": "BXM",
+    "DWCF": "FTW5000",
+    "DX": "DXY",
+    "CKG": "SMLG",
+    "GD": "SPGSCI",
+    "VA": "VAF",
+    "EOE": "AEX",
     "INDU": "DJI",
-    "GSCI": "SPGSCI",
-    "XJO": "ASX"
+    "ECM": "DJINET",
+    "DTX": "DJTTR",
+    "SML": "SP600",
+    "CVK": "SPSV",
+    "WFVK.IV": "DWCF"
   }
 }
