@@ -96,9 +96,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private IBAutomater.IBAutomater _ibAutomater;
 
-        // Flag to indicate if the IB Gateway is being soft restarted
-        private bool _isRestarting;
-
         // Existing orders created in TWS can *only* be cancelled/modified when connected with ClientId = 0
         private const int ClientId = 0;
 
@@ -3706,7 +3703,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private bool CanHandleSubscriptionRequest(IEnumerable<Symbol> symbols, string message)
         {
-            var result = !_isRestarting && IsConnected;
+            var result = !IsRestartInProgress() && IsConnected;
             if (!result)
             {
                 // skip while restarting and not connected, once restart has ended and we are connected
@@ -4652,7 +4649,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (IsRestartInProgress())
             {
                 _gatewayRestartTokenSource.Cancel();
-                _isRestarting = false;
                 Log.Trace($"InteractiveBrokersBrokerage.StopGatewayRestartTask(): cancelled");
             }
         }
@@ -4712,7 +4708,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         {
                             Log.Trace($"InteractiveBrokersBrokerage.StartGatewayRestartTask(): triggering soft restart");
                             _ibAutomater.SoftRestart();
-                            _isRestarting = true;
                         }
                     }
                     catch (Exception ex)
