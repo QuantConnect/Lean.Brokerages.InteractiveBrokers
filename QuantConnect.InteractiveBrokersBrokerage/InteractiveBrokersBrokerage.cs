@@ -1901,7 +1901,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            if (!FilteredCodes.Contains(errorCode))
+            if (!FilteredCodes.Contains(errorCode) && errorCode != -1)
             {
                 OnMessage(new BrokerageMessageEvent(brokerageMessageType, errorCode, errorMsg));
             }
