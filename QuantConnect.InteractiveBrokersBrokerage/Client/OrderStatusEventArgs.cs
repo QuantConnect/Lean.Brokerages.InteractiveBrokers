@@ -52,7 +52,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <summary>
         /// The TWS id used to identify orders. Remains the same over TWS sessions.
         /// </summary>
-        public int PermId { get; }
+        public long PermId { get; }
 
         /// <summary>
         /// The order ID of the parent order, used for bracket and auto trailing stop orders.
@@ -87,7 +87,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <summary>
         /// Initializes a new instance of the <see cref="OrderStatusEventArgs"/> class
         /// </summary>
-        public OrderStatusEventArgs(int orderId, string status, int filled, int remaining, double averageFillPrice, int permId, int parentId, double lastFillPrice, int clientId, string whyHeld, double mktCapPrice)
+        public OrderStatusEventArgs(int orderId, string status, int filled, int remaining, double averageFillPrice, long permId, int parentId, double lastFillPrice, int clientId, string whyHeld, double mktCapPrice)
         {
             OrderId = orderId;
             Status = status;

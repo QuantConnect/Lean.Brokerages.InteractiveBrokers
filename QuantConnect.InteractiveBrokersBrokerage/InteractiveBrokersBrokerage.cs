@@ -92,7 +92,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// The default gateway version to use
         /// </summary>
-        public static string DefaultVersion { get; } = "1019";
+        public static string DefaultVersion { get; } = "1030";
 
         private IBAutomater.IBAutomater _ibAutomater;
 
@@ -159,7 +159,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ConcurrentDictionary<string, IB.ExecutionDetailsEventArgs> _orderExecutions = new ConcurrentDictionary<string, IB.ExecutionDetailsEventArgs>();
 
         // tracks commission reports before executions, map: execId -> commission report
-        private readonly ConcurrentDictionary<string, CommissionReport> _commissionReports = new ConcurrentDictionary<string, CommissionReport>();
+        private readonly ConcurrentDictionary<string, CommissionAndFeesReport> _commissionReports = new ConcurrentDictionary<string, CommissionAndFeesReport>();
 
         // holds account properties, cash balances and holdings for the account
         private readonly InteractiveBrokersAccountData _accountData = new InteractiveBrokersAccountData();
@@ -461,7 +461,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     var eventSlim = new ManualResetEventSlim(false);
                     _pendingOrderResponse[orderId] = eventSlim;
 
-                    _client.ClientSocket.cancelOrder(orderId, string.Empty);
+                    _client.ClientSocket.cancelOrder(orderId, new OrderCancel());
 
                     if (!eventSlim.Wait(_responseTimeout))
                     {
@@ -1414,7 +1414,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (order.Type == OrderType.OptionExercise)
             {
                 // IB API requires exerciseQuantity to be positive
-                _client.ClientSocket.exerciseOptions(ibOrderId, contract, 1, decimal.ToInt32(order.AbsoluteQuantity), _account, 0);
+                _client.ClientSocket.exerciseOptions(ibOrderId, contract, 1, decimal.ToInt32(order.AbsoluteQuantity), _account, 0,
+                    string.Empty, string.Empty, false);
             }
             else
             {
@@ -1900,7 +1901,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            if (!FilteredCodes.Contains(errorCode))
+            if (!FilteredCodes.Contains(errorCode) && errorCode != -1)
             {
                 OnMessage(new BrokerageMessageEvent(brokerageMessageType, errorCode, errorMsg));
             }
@@ -2232,8 +2233,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // so we ignore events received after the order is completely filled or
                 // executions for allocations which are already included in the master execution.
 
-                CommissionReport commissionReport;
-                if (_commissionReports.TryGetValue(executionDetails.Execution.ExecId, out commissionReport))
+                if (_commissionReports.TryGetValue(executionDetails.Execution.ExecId, out var commissionReport))
                 {
                     if (CanEmitFill(order, executionDetails.Execution))
                     {
@@ -2392,7 +2392,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// For combo orders, it will wait until all the orders in the group have filled before emitting the events.
         /// If all orders in the group are not filled within a certain time, it will emit the events for the orders that have filled so far.
         /// </summary>
-        private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport, bool forceFillEmission = false)
+        private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionAndFeesReport commissionReport, bool forceFillEmission = false)
         {
             List<PendingFillEvent> pendingOrdersFillDetails = null;
 
@@ -2433,7 +2433,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var remainingQuantity = Convert.ToInt32(absoluteQuantity - totalQuantityFilled);
                 var price = NormalizePriceToLean(targetOrderExecutionDetails.Execution.Price, targetOrder.Symbol);
                 var orderFee = new OrderFee(new CashAmount(
-                    Convert.ToDecimal(targetOrderCommissionReport.Commission),
+                    Convert.ToDecimal(targetOrderCommissionReport.CommissionAndFees),
                     targetOrderCommissionReport.Currency.ToUpperInvariant()));
 
                 // set order status based on remaining quantity
