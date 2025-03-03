@@ -33,6 +33,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         public int Code { get; }
 
         /// <summary>
+        /// The error time.
+        /// </summary>
+        public long Time{ get; }
+
+        /// <summary>
         /// The description of the error.
         /// </summary>
         public string Message { get; }
@@ -40,10 +45,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <summary>
         /// Initializes a new instance of the <see cref="ErrorEventArgs"/> class
         /// </summary>
-        public ErrorEventArgs(int id, int code, string message)
+        public ErrorEventArgs(int id, long time, int code, string message)
         {
             Id = id;
             Code = code;
+            Time = time;
             Message = message;
         }
     }
