@@ -1037,9 +1037,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private bool DownloadFinancialAdvisorAccount()
         {
-            if (!_accountData.FinancialAdvisorConfiguration.Load(_client))
-                return false;
-
             // Only one account can be subscribed at a time.
             // With Financial Advisory (FA) account structures there is an alternative way of
             // specifying the account code such that information is returned for 'All' sub accounts.
