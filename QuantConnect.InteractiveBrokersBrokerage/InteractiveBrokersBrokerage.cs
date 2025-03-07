@@ -75,6 +75,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <remarks>I've seen combo limit order take up to 5 seconds to be trigger a submission event</remarks>
         private static readonly TimeSpan _noSubmissionOrdersResponseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-no-submission-orders-response-timeout", 10));
         private static bool _submissionOrdersWarningSent;
+        private bool _sentFAOrderPropertiesWarning;
 
         private readonly HashSet<OrderType> _noSubmissionOrderTypes = new(new[] {
             OrderType.MarketOnOpen,
@@ -2655,15 +2656,32 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if (orderProperties != null)
                 {
+                    if (!_sentFAOrderPropertiesWarning &&
+                        (!string.IsNullOrEmpty(orderProperties.FaProfile) && !string.IsNullOrEmpty(orderProperties.Account)
+                        || !string.IsNullOrEmpty(orderProperties.FaProfile) && !string.IsNullOrEmpty(orderProperties.FaGroup)
+                        || !string.IsNullOrEmpty(orderProperties.Account) && !string.IsNullOrEmpty(orderProperties.FaGroup)))
+                    {
+                        // warning these are mutually exclusive
+                        _sentFAOrderPropertiesWarning = true;
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "PlaceOrder",
+                            "Order properties 'FaProfile', 'FaGroup' & 'Account' are mutually exclusive"));
+                    }
+
                     if (!string.IsNullOrWhiteSpace(orderProperties.Account))
                     {
                         // order for a single managed account
                         ibOrder.Account = orderProperties.Account;
                     }
-                    else if (!string.IsNullOrWhiteSpace(orderProperties.FaGroup))
+                    else if (!string.IsNullOrWhiteSpace(orderProperties.FaGroup) || !string.IsNullOrWhiteSpace(orderProperties.FaProfile))
                     {
                         // order for an account group
                         ibOrder.FaGroup = orderProperties.FaGroup;
+                        if (string.IsNullOrWhiteSpace(ibOrder.FaGroup))
+                        {
+                            // we were given a profile
+                            ibOrder.FaGroup = orderProperties.FaProfile;
+                        }
+
                         ibOrder.FaMethod = orderProperties.FaMethod;
 
                         if (ibOrder.FaMethod == "PctChange")
@@ -2672,6 +2690,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             ibOrder.TotalQuantity = 0;
                         }
                     }
+                    // IB docs say "Use an empty string if not applicable."  https://www.interactivebrokers.com/campus/ibkr-api-page/twsapi-ref/#order-ref
+                    ibOrder.FaMethod ??= string.Empty;
+                    ibOrder.FaGroup ??= string.Empty;
+                    ibOrder.Account ??= string.Empty;
                 }
             }
 
