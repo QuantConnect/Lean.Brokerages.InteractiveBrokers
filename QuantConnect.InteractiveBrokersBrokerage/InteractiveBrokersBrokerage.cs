@@ -2657,9 +2657,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (orderProperties != null)
                 {
                     if (!_sentFAOrderPropertiesWarning &&
-                        (!string.IsNullOrEmpty(orderProperties.FaProfile) && !string.IsNullOrEmpty(orderProperties.Account)
-                        || !string.IsNullOrEmpty(orderProperties.FaProfile) && !string.IsNullOrEmpty(orderProperties.FaGroup)
-                        || !string.IsNullOrEmpty(orderProperties.Account) && !string.IsNullOrEmpty(orderProperties.FaGroup)))
+                        (!string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.Account)
+                        || !string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)
+                        || !string.IsNullOrWhiteSpace(orderProperties.Account) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)))
                     {
                         // warning these are mutually exclusive
                         _sentFAOrderPropertiesWarning = true;
