@@ -1271,7 +1271,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _ibAutomater.Exited += OnIbAutomaterExited;
             _ibAutomater.Restarted += OnIbAutomaterRestarted;
 
-            CheckIbAutomaterError(_ibAutomater.Start(false));
+            try
+            {
+                CheckIbAutomaterError(_ibAutomater.Start(false));
+            }
+            catch
+            {
+                // we are going the kill the deployment, let's clean up the automater
+                _ibAutomater.DisposeSafely();
+                throw;
+            }
 
             // default the weekly restart to one hour before FX market open (GetNextWeekendReconnectionTimeUtc)
             _weeklyRestartUtcTime = weeklyRestartUtcTime ?? _defaultWeeklyRestartUtcTime;
