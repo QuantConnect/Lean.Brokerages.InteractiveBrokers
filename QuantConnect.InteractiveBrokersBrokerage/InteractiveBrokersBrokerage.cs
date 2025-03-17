@@ -773,7 +773,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _accountData.Clear();
 
             var attempt = 1;
-            const int maxAttempts = 5;
+            const int maxAttempts = 7;
 
             var subscribedSymbolsCount = _subscriptionManager.GetSubscribedSymbols().Count();
             if (subscribedSymbolsCount > 0)
@@ -793,9 +793,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     // At initial startup or after a gateway restart, we need to wait for the gateway to be ready for a connect request.
                     // Attempting to connect to the socket too early will get a SocketException: Connection refused.
-                    if (attempt == 1)
+                    if (_cancellationTokenSource.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(10)))
                     {
-                        Thread.Sleep(2500);
+                        break;
                     }
 
                     _connectEvent.Reset();
