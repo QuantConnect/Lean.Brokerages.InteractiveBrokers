@@ -2984,11 +2984,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     contract.Strike = Convert.ToDouble(symbol.ID.StrikePrice);
                 }
                 contract.Symbol = ibSymbol;
-                contract.Multiplier = _symbolPropertiesDatabase.GetSymbolProperties(
-                        symbol.ID.Market,
-                        symbol,
-                        symbol.SecurityType,
-                        _algorithm.Portfolio.CashBook.AccountCurrency)
+                contract.Multiplier = GetSymbolProperties(symbol)
                     .ContractMultiplier
                     .ToStringInvariant();
 
@@ -3030,6 +3026,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             return contract;
+        }
+
+        private SymbolProperties GetSymbolProperties(Symbol symbol)
+        {
+            return _symbolPropertiesDatabase.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType,
+                        _algorithm != null ? _algorithm.Portfolio.CashBook.AccountCurrency : Currencies.USD);
         }
 
         /// <summary>
@@ -3714,7 +3716,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             catch (Exception err)
             {
-                Log.Error("InteractiveBrokersBrokerage.Subscribe(): " + err.Message);
+                Log.Error(err, "InteractiveBrokersBrokerage.Subscribe(): " + err.Message);
             }
             return false;
         }
@@ -4098,11 +4100,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 lookupName = symbol.Underlying.ID.Symbol;
             }
 
-            var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(
-                        symbol.ID.Market,
-                        symbol,
-                        symbol.SecurityType,
-                        _algorithm != null ? _algorithm.Portfolio.CashBook.AccountCurrency : Currencies.USD);
+            var symbolProperties = GetSymbolProperties(symbol);
 
             // setting up lookup request
             var contract = new Contract
