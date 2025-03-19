@@ -791,6 +791,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     // if message processing thread is still running, wait until it terminates
                     Disconnect();
 
+                    // At initial startup or after a gateway restart, we need to wait for the gateway to be ready for a connect request.
+                    // Attempting to connect to the socket too early will get a SocketException: Connection refused.
+                    if (_cancellationTokenSource.Token.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(2500)))
+                    {
+                        break;
+                    }
+
                     _waitForNextValidId.Reset();
                     _connectEvent.Reset();
 
