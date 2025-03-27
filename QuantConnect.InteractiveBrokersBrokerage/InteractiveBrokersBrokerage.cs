@@ -1010,7 +1010,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         if (!HeartBeat(waitTimeMs))
                         {
                             // just in case we were unlucky, we are reconnecting or similar let's retry with a longer wait
-                            if (!HeartBeat(waitTimeMs * 3))
+                            if (!HeartBeat(waitTimeMs * 1))
                             {
                                 // we emit the disconnected event so that if the re connection below fails it will kill the algorithm
                                 OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. Heart beat failed."));
