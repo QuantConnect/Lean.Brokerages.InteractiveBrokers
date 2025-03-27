@@ -75,6 +75,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <remarks>I've seen combo limit order take up to 5 seconds to be trigger a submission event</remarks>
         private static readonly TimeSpan _noSubmissionOrdersResponseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-no-submission-orders-response-timeout", 10));
         private static bool _submissionOrdersWarningSent;
+        private bool _sentFAOrderPropertiesWarning;
 
         private readonly HashSet<OrderType> _noSubmissionOrderTypes = new(new[] {
             OrderType.MarketOnOpen,
@@ -92,7 +93,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// The default gateway version to use
         /// </summary>
-        public static string DefaultVersion { get; } = "1030";
+        public static string DefaultVersion { get; } = "1034";
 
         private IBAutomater.IBAutomater _ibAutomater;
 
@@ -163,7 +164,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ConcurrentDictionary<string, IB.ExecutionDetailsEventArgs> _orderExecutions = new ConcurrentDictionary<string, IB.ExecutionDetailsEventArgs>();
 
         // tracks commission reports before executions, map: execId -> commission report
-        private readonly ConcurrentDictionary<string, CommissionReport> _commissionReports = new ConcurrentDictionary<string, CommissionReport>();
+        private readonly ConcurrentDictionary<string, CommissionAndFeesReport> _commissionReports = new ConcurrentDictionary<string, CommissionAndFeesReport>();
 
         // holds account properties, cash balances and holdings for the account
         private readonly InteractiveBrokersAccountData _accountData = new InteractiveBrokersAccountData();
@@ -471,7 +472,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     var eventSlim = new ManualResetEventSlim(false);
                     _pendingOrderResponse[orderId] = eventSlim;
 
-                    _client.ClientSocket.cancelOrder(orderId, string.Empty);
+                    _client.ClientSocket.cancelOrder(orderId, new OrderCancel());
 
                     if (!eventSlim.Wait(_responseTimeout))
                     {
@@ -782,7 +783,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _accountData.Clear();
 
             var attempt = 1;
-            const int maxAttempts = 5;
+            const int maxAttempts = 7;
 
             var subscribedSymbolsCount = _subscriptionManager.GetSubscribedSymbols().Count();
             if (subscribedSymbolsCount > 0)
@@ -802,11 +803,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     // At initial startup or after a gateway restart, we need to wait for the gateway to be ready for a connect request.
                     // Attempting to connect to the socket too early will get a SocketException: Connection refused.
-                    if (attempt == 1)
+                    if (_cancellationTokenSource.Token.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(2500)))
                     {
-                        Thread.Sleep(2500);
+                        break;
                     }
 
+                    _waitForNextValidId.Reset();
                     _connectEvent.Reset();
 
                     // we're going to try and connect several times, if successful break
@@ -1056,9 +1058,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private bool DownloadFinancialAdvisorAccount()
         {
-            if (!_accountData.FinancialAdvisorConfiguration.Load(_client))
-                return false;
-
             // Only one account can be subscribed at a time.
             // With Financial Advisory (FA) account structures there is an alternative way of
             // specifying the account code such that information is returned for 'All' sub accounts.
@@ -1296,7 +1295,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _ibAutomater.Exited += OnIbAutomaterExited;
                 _ibAutomater.Restarted += OnIbAutomaterRestarted;
 
+            try
+            {
                 CheckIbAutomaterError(_ibAutomater.Start(false));
+            }
+            catch
+            {
+                // we are going the kill the deployment, let's clean up the automater
+                _ibAutomater.DisposeSafely();
+                throw;
+            }
 
                 // default the weekly restart to one hour before FX market open (GetNextWeekendReconnectionTimeUtc)
                 _weeklyRestartUtcTime = weeklyRestartUtcTime ?? _defaultWeeklyRestartUtcTime;
@@ -1441,7 +1449,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (order.Type == OrderType.OptionExercise)
             {
                 // IB API requires exerciseQuantity to be positive
-                _client.ClientSocket.exerciseOptions(ibOrderId, contract, 1, decimal.ToInt32(order.AbsoluteQuantity), _account, 0);
+                _client.ClientSocket.exerciseOptions(ibOrderId, contract, 1, decimal.ToInt32(order.AbsoluteQuantity), _account, 0,
+                    string.Empty, string.Empty, false);
             }
             else
             {
@@ -1927,7 +1936,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            if (!FilteredCodes.Contains(errorCode))
+            if (!FilteredCodes.Contains(errorCode) && errorCode != -1)
             {
                 OnMessage(new BrokerageMessageEvent(brokerageMessageType, errorCode, errorMsg));
             }
@@ -2259,8 +2268,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // so we ignore events received after the order is completely filled or
                 // executions for allocations which are already included in the master execution.
 
-                CommissionReport commissionReport;
-                if (_commissionReports.TryGetValue(executionDetails.Execution.ExecId, out commissionReport))
+                if (_commissionReports.TryGetValue(executionDetails.Execution.ExecId, out var commissionReport))
                 {
                     if (CanEmitFill(order, executionDetails.Execution))
                     {
@@ -2419,7 +2427,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// For combo orders, it will wait until all the orders in the group have filled before emitting the events.
         /// If all orders in the group are not filled within a certain time, it will emit the events for the orders that have filled so far.
         /// </summary>
-        private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionReport commissionReport, bool forceFillEmission = false)
+        private void EmitOrderFill(Order order, IB.ExecutionDetailsEventArgs executionDetails, CommissionAndFeesReport commissionReport, bool forceFillEmission = false)
         {
             List<PendingFillEvent> pendingOrdersFillDetails = null;
 
@@ -2460,7 +2468,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var remainingQuantity = Convert.ToInt32(absoluteQuantity - totalQuantityFilled);
                 var price = NormalizePriceToLean(targetOrderExecutionDetails.Execution.Price, targetOrder.Symbol);
                 var orderFee = new OrderFee(new CashAmount(
-                    Convert.ToDecimal(targetOrderCommissionReport.Commission),
+                    Convert.ToDecimal(targetOrderCommissionReport.CommissionAndFees),
                     targetOrderCommissionReport.Currency.ToUpperInvariant()));
 
                 // set order status based on remaining quantity
@@ -2685,15 +2693,32 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 if (orderProperties != null)
                 {
+                    if (!_sentFAOrderPropertiesWarning &&
+                        (!string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.Account)
+                        || !string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)
+                        || !string.IsNullOrWhiteSpace(orderProperties.Account) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)))
+                    {
+                        // warning these are mutually exclusive
+                        _sentFAOrderPropertiesWarning = true;
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "PlaceOrder",
+                            "Order properties 'FaProfile', 'FaGroup' & 'Account' are mutually exclusive"));
+                    }
+
                     if (!string.IsNullOrWhiteSpace(orderProperties.Account))
                     {
                         // order for a single managed account
                         ibOrder.Account = orderProperties.Account;
                     }
-                    else if (!string.IsNullOrWhiteSpace(orderProperties.FaGroup))
+                    else if (!string.IsNullOrWhiteSpace(orderProperties.FaGroup) || !string.IsNullOrWhiteSpace(orderProperties.FaProfile))
                     {
                         // order for an account group
                         ibOrder.FaGroup = orderProperties.FaGroup;
+                        if (string.IsNullOrWhiteSpace(ibOrder.FaGroup))
+                        {
+                            // we were given a profile
+                            ibOrder.FaGroup = orderProperties.FaProfile;
+                        }
+
                         ibOrder.FaMethod = orderProperties.FaMethod;
 
                         if (ibOrder.FaMethod == "PctChange")
@@ -2702,6 +2727,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             ibOrder.TotalQuantity = 0;
                         }
                     }
+                    // IB docs say "Use an empty string if not applicable."  https://www.interactivebrokers.com/campus/ibkr-api-page/twsapi-ref/#order-ref
+                    ibOrder.FaMethod ??= string.Empty;
+                    ibOrder.FaGroup ??= string.Empty;
+                    ibOrder.Account ??= string.Empty;
                 }
             }
 
@@ -2983,11 +3012,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     contract.Strike = Convert.ToDouble(symbol.ID.StrikePrice);
                 }
                 contract.Symbol = ibSymbol;
-                contract.Multiplier = _symbolPropertiesDatabase.GetSymbolProperties(
-                        symbol.ID.Market,
-                        symbol,
-                        symbol.SecurityType,
-                        _algorithm.Portfolio.CashBook.AccountCurrency)
+                contract.Multiplier = GetSymbolProperties(symbol)
                     .ContractMultiplier
                     .ToStringInvariant();
 
@@ -3029,6 +3054,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             return contract;
+        }
+
+        private SymbolProperties GetSymbolProperties(Symbol symbol)
+        {
+            return _symbolPropertiesDatabase.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType,
+                        _algorithm != null ? _algorithm.Portfolio.CashBook.AccountCurrency : Currencies.USD);
         }
 
         /// <summary>
@@ -3716,7 +3747,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             catch (Exception err)
             {
-                Log.Error("InteractiveBrokersBrokerage.Subscribe(): " + err.Message);
+                Log.Error(err, "InteractiveBrokersBrokerage.Subscribe(): " + err.Message);
             }
             return false;
         }
@@ -4100,11 +4131,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 lookupName = symbol.Underlying.ID.Symbol;
             }
 
-            var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(
-                        symbol.ID.Market,
-                        symbol,
-                        symbol.SecurityType,
-                        _algorithm != null ? _algorithm.Portfolio.CashBook.AccountCurrency : Currencies.USD);
+            var symbolProperties = GetSymbolProperties(symbol);
 
             // setting up lookup request
             var contract = new Contract
