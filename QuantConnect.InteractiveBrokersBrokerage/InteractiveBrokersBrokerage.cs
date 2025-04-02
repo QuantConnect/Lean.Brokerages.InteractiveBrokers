@@ -1312,7 +1312,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 StartGatewayWeeklyRestartTask();
             } else
             {
-                _ibAutomater = new IBAutomater.IBAutomater();
+                _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, true);
             }
 
             Log.Trace($"InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): Host: {host}, Port: {port}, Account: {account}, AgentDescription: {agentDescription}");

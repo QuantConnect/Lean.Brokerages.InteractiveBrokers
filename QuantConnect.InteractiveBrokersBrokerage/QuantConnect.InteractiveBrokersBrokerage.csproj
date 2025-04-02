@@ -47,9 +47,10 @@
     </None>
 	<Reference Include="CSharpAPI">
 		<HintPath>CSharpAPI.dll</HintPath>
+		<Private>True</Private>
 	</Reference>
 	<None Update="CSharpAPI.dll" Pack="True">
-		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		<CopyToOutputDirectory>Never</CopyToOutputDirectory>
 		<PackageCopyToOutput>true</PackageCopyToOutput>
 	</None>
 	<None Update="CSharpAPI.deps.json" Pack="True">
