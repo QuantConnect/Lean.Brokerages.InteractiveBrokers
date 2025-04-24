@@ -336,7 +336,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                         Market.EUREX,
                         new[]
                         {
-                            "FESX"
+                            "FESX",
+                            "FDAX"
                         }
                     },
                 };
