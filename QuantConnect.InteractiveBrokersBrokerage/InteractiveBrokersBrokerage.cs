@@ -3866,9 +3866,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var symbol = entry.Symbol;
 
-            if (Log.DebuggingEnabled && symbol.SecurityType == SecurityType.Index)
+            if (symbol.SecurityType != SecurityType.Forex)
             {
-                Log.Debug($"{nameof(HandleTickPrice)}.Field({IBApi.TickType.getField(e.Field)}): Symbol: {symbol} | Price: {e.Price} | Field: {e.Field}");
+                Log.Trace($"{nameof(HandleTickPrice)}.Field({IBApi.TickType.getField(e.Field)}): Symbol: {symbol} | Price: {e.Price} | Field: {e.Field}");
             }
 
             // negative price (-1) means no price available, normalize to zero
@@ -3946,9 +3946,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var symbol = entry.Symbol;
 
-            if (Log.DebuggingEnabled && symbol.SecurityType == SecurityType.Index)
+            if (symbol.SecurityType != SecurityType.Forex)
             {
-                Log.Debug($"{nameof(HandleTickPrice)}.Field({IBApi.TickType.getField(e.Field)}): Symbol: {symbol} | Size: {e.Size} | Field: {e.Field}");
+                Log.Trace($"{nameof(HandleTickPrice)}.Field({IBApi.TickType.getField(e.Field)}): Symbol: {symbol} | Size: {e.Size} | Field: {e.Field}");
             }
 
             // negative size (-1) means no quantity available, normalize to zero
