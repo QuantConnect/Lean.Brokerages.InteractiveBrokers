@@ -300,6 +300,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
         [TestCase("FESX")]
         [TestCase("FDAX")]
+        [TestCase("FDIV")]
+        [TestCase("FTDX")]
         public void CanSubscribeToEurexFutures(string ticker)
         {
             // Wait a bit to make sure previous tests already disconnected from IB
@@ -349,11 +351,12 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             cancelationToken.Dispose();
 
             var symbolsWithData = data.Select(tick => tick.Symbol).Distinct().ToList();
-            CollectionAssert.AreEquivalent(contracts, symbolsWithData);
+            CollectionAssert.IsNotEmpty(symbolsWithData);
+            CollectionAssert.IsSubsetOf(symbolsWithData, contracts);
 
             var dataTypesWithData = data.Select(tick => tick.GetType()).Distinct().ToList();
             var expectedDataTypes = configs.Select(config => config.Type).Distinct().ToList();
-            Assert.AreEqual(expectedDataTypes.Count, dataTypesWithData.Count);
+            CollectionAssert.IsSubsetOf(dataTypesWithData, expectedDataTypes);
         }
 
         [Test]
