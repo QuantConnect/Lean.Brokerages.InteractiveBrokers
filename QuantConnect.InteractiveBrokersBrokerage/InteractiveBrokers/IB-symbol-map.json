@@ -20,7 +20,9 @@
     "DA": "DC",
     "BQX": "BIO",
     "ESTX50": "FESX",
-    "DAX": "FDAX"
+    "DAX": "FDAX",
+    "DDAX": "FDIV",
+    "TDX": "FTDX"
   },
   "Index": {
     "ESTX50": "SX5E",

@@ -337,7 +337,9 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                         new[]
                         {
                             "FESX",
-                            "FDAX"
+                            "FDAX",
+                            "FDIV",
+                            "FTDX"
                         }
                     },
                 };
