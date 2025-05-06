@@ -238,9 +238,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyInvalidPeriodWarning;
 
         /// <summary>
-        /// Tracks the next date when the first 'lastPrice' tick for NDX should be skipped
+        /// Represents the next local market open time after which the first 'lastPrice' tick for the NDX index should be skipped.
+        /// This is used to ensure only the initial tick after market open is ignored each trading day.
         /// </summary>
-        private static DateTime _nextSkipLocaleDate = DateTime.MinValue;
+        private static DateTime _nextNdxMarketOpenSkipTime = default;
 
         /// <summary>
         /// Stores the exchange hours for the NDX security, used to determine market open/close times and related calculations.
@@ -3921,7 +3922,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 case IBApi.TickType.LAST:
                 case IBApi.TickType.DELAYED_LAST:
-
+                    
                     if (symbol.SecurityType == SecurityType.Index && symbol.Value.Equals("NDX", StringComparison.InvariantCultureIgnoreCase))
                     {
                         _ndxSecurityExchangeHours ??= MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
@@ -5054,27 +5055,26 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ConcurrentDictionary<int, SubscriptionEntry> _subscribedTickers = new ConcurrentDictionary<int, SubscriptionEntry>();
 
         /// <summary>
-        /// Determines if the current tick should be skipped based on market open time and the skip window.
+        /// Determines whether the current tick should be skipped for the NDX index
+        /// based on whether the current local time has reached or passed the next
+        /// scheduled market open. If the skip condition is met, the next skip time is updated.
         /// </summary>
-        /// <param name="exchangeHours">The security exchange hours.</param>
-        /// <param name="localDateTime">The current local time.</param>
-        /// <returns>True if the tick should be skipped, otherwise false.</returns>
+        /// <param name="exchangeHours">The exchange hours used to determine market open times.</param>
+        /// <param name="localDateTime">The current local time to evaluate.</param>
+        /// <returns>
+        /// True if the tick should be skipped (i.e., it's the first tick after market open);
+        /// otherwise, false.
+        /// </returns>
         internal static bool ShouldSkipTick(SecurityExchangeHours exchangeHours, DateTime localDateTime)
         {
-            if (!exchangeHours.IsOpen(localDateTime, false) || _nextSkipLocaleDate.Date > localDateTime)
+            if (_nextNdxMarketOpenSkipTime == default)
             {
-                return false;
+                _nextNdxMarketOpenSkipTime = exchangeHours.GetNextMarketOpen(localDateTime, false);
             }
 
-            var marketStartRegularHours = exchangeHours.GetMarketHours(localDateTime).Segments.First(x => x.State == MarketHoursState.Market).Start;
-
-            var skipWindowEnd = marketStartRegularHours.Add(TimeSpan.FromSeconds(30));
-
-            // The market is open, but if the current time hasn't passed the skip window, we should skip the tick for tomorrow.
-            _nextSkipLocaleDate = localDateTime.Date.AddDays(1);
-
-            if (localDateTime.TimeOfDay >= marketStartRegularHours && localDateTime.TimeOfDay < skipWindowEnd)
+            if (localDateTime >= _nextNdxMarketOpenSkipTime)
             {
+                _nextNdxMarketOpenSkipTime = exchangeHours.GetNextMarketOpen(localDateTime, false);
                 return true;
             }
 
