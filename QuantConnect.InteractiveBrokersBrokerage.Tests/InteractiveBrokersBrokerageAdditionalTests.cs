@@ -926,7 +926,9 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
 
-            var result = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, DateTimeLocalNow);
+            var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+
+            var result = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, DateTimeLocalNow);
 
             Assert.AreEqual(expectedResult, result);
         }
@@ -936,24 +938,26 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         {
             var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
 
+            var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+
             // Tick on 2025-05-06 within the skip window - should skip
             var firstLocalDateTime = DateTime.Parse("2025-05-06T09:30:15");
-            var firstResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, firstLocalDateTime);
+            var firstResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, firstLocalDateTime);
             Assert.IsTrue(firstResult, "Expected skip on first tick within window");
 
             // Another tick same day - should not skip again
             var secondLocalDateTime = DateTime.Parse("2025-05-06T09:30:17");
-            var secondResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, secondLocalDateTime);
+            var secondResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, secondLocalDateTime);
             Assert.IsFalse(secondResult, "Expected no skip after already skipped once today");
 
             // Next day before market open - should not skip
             var thirdLocalDateTime = DateTime.Parse("2025-05-07T09:29:28");
-            var thirdResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, thirdLocalDateTime);
+            var thirdResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, thirdLocalDateTime);
             Assert.IsFalse(thirdResult, "Expected no skip before market open next day");
 
             // Next day within skip window - should skip again
             var fourthLocalDateTime = DateTime.Parse("2025-05-07T09:30:02");
-            var fourthResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, fourthLocalDateTime);
+            var fourthResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, fourthLocalDateTime);
             Assert.IsTrue(fourthResult, "Expected skip on new day within skip window");
         }
 

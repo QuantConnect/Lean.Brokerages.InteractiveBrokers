@@ -243,6 +243,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static DateTime _nextSkipLocaleDate = DateTime.MinValue;
 
         /// <summary>
+        /// Stores the exchange hours for the NDX security, used to determine market open/close times and related calculations.
+        /// </summary>
+        private static SecurityExchangeHours _ndxSecurityExchangeHours;
+
+        /// <summary>
         /// Returns true if we're currently connected to the broker
         /// </summary>
         public override bool IsConnected => _client != null && _client.Connected && !_stateManager.Disconnected1100Fired && !_stateManager.IsConnecting;
@@ -3919,7 +3924,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (symbol.SecurityType == SecurityType.Index && symbol.Value.Equals("NDX", StringComparison.InvariantCultureIgnoreCase))
                     {
-                        if (ShouldSkipTick(symbol, DateTime.Now))
+                        _ndxSecurityExchangeHours ??= MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+                        if (ShouldSkipTick(_ndxSecurityExchangeHours, DateTime.Now))
                         {
                             return;
                         }
@@ -5050,12 +5056,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Determines if the current tick should be skipped based on market open time and the skip window.
         /// </summary>
-        /// <param name="symbol">The symbol for the market.</param>
+        /// <param name="exchangeHours">The security exchange hours.</param>
         /// <param name="localDateTime">The current local time.</param>
         /// <returns>True if the tick should be skipped, otherwise false.</returns>
-        internal static bool ShouldSkipTick(Symbol symbol, DateTime localDateTime)
+        internal static bool ShouldSkipTick(SecurityExchangeHours exchangeHours, DateTime localDateTime)
         {
-            var exchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
             if (!exchangeHours.IsOpen(localDateTime, false) || _nextSkipLocaleDate.Date > localDateTime)
             {
                 return false;
@@ -5065,9 +5070,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var skipWindowEnd = marketStartRegularHours.Add(TimeSpan.FromSeconds(30));
 
+            // The market is open, but if the current time hasn't passed the skip window, we should skip the tick for tomorrow.
+            _nextSkipLocaleDate = localDateTime.Date.AddDays(1);
+
             if (localDateTime.TimeOfDay >= marketStartRegularHours && localDateTime.TimeOfDay < skipWindowEnd)
             {
-                _nextSkipLocaleDate = localDateTime.Date.AddDays(1);
                 return true;
             }
 
