@@ -55,6 +55,9 @@ using Newtonsoft.Json.Linq;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Securities.Forex;
 using QuantConnect.Lean.Engine.Results;
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("QuantConnect.Tests.Brokerages.InteractiveBrokers")]
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -233,6 +236,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyOpenInterestWarning;
         private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
+
+        /// <summary>
+        /// Tracks the next date when the first 'lastPrice' tick for NDX should be skipped,
+        /// based on market open time (13:30 UTC).
+        /// </summary>
+        private static DateTime _nextSkipDate = DateTime.MinValue;
 
         /// <summary>
         /// Returns true if we're currently connected to the broker
@@ -3909,6 +3918,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case IBApi.TickType.LAST:
                 case IBApi.TickType.DELAYED_LAST:
 
+                    if (symbol.SecurityType == SecurityType.Index && symbol.Value.Equals("NDX", StringComparison.InvariantCultureIgnoreCase))
+                    {
+                        var nowUtc = DateTime.UtcNow;
+
+                        if (ShouldSkipTick(symbol, nowUtc))
+                        {
+                            return;
+                        }
+                    }
+
                     if (entry.LastTradeTick == null)
                     {
                         entry.LastTradeTick = new Tick
@@ -5030,6 +5049,31 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _maxSubscribedSymbolsReached = false;
         private readonly ConcurrentDictionary<Symbol, int> _subscribedSymbols = new ConcurrentDictionary<Symbol, int>();
         private readonly ConcurrentDictionary<int, SubscriptionEntry> _subscribedTickers = new ConcurrentDictionary<int, SubscriptionEntry>();
+
+        /// <summary>
+        /// Determines if the current tick should be skipped based on market open time and the skip window.
+        /// </summary>
+        /// <param name="symbol">The symbol for the market.</param>
+        /// <param name="nowUtc">The current UTC time.</param>
+        /// <returns>True if the tick should be skipped, otherwise false.</returns>
+        internal static bool ShouldSkipTick(Symbol symbol, DateTime nowUtc)
+        {
+            if (!symbol.IsMarketOpen(nowUtc, false) || _nextSkipDate.Date > nowUtc)
+            {
+                return false;
+            }
+
+            var marketOpenUtcTime = new TimeSpan(13, 30, 0); // 9:30 AM ET
+            var skipWindowEnd = marketOpenUtcTime.Add(TimeSpan.FromSeconds(30));
+
+            if (nowUtc.TimeOfDay >= marketOpenUtcTime && nowUtc.TimeOfDay < skipWindowEnd)
+            {
+                _nextSkipDate = nowUtc.Date.AddDays(1);
+                return true;
+            }
+
+            return false;
+        }
 
         private class SubscriptionEntry
         {
