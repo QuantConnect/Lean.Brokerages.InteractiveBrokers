@@ -238,10 +238,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyInvalidPeriodWarning;
 
         /// <summary>
-        /// Tracks the next date when the first 'lastPrice' tick for NDX should be skipped,
-        /// based on market open time (13:30 UTC).
+        /// Tracks the next date when the first 'lastPrice' tick for NDX should be skipped
         /// </summary>
-        private static DateTime _nextSkipDate = DateTime.MinValue;
+        private static DateTime _nextSkipLocaleDate = DateTime.MinValue;
 
         /// <summary>
         /// Returns true if we're currently connected to the broker
@@ -3920,9 +3919,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (symbol.SecurityType == SecurityType.Index && symbol.Value.Equals("NDX", StringComparison.InvariantCultureIgnoreCase))
                     {
-                        var nowUtc = DateTime.UtcNow;
-
-                        if (ShouldSkipTick(symbol, nowUtc))
+                        if (ShouldSkipTick(symbol, DateTime.Now))
                         {
                             return;
                         }
@@ -5054,21 +5051,23 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// Determines if the current tick should be skipped based on market open time and the skip window.
         /// </summary>
         /// <param name="symbol">The symbol for the market.</param>
-        /// <param name="nowUtc">The current UTC time.</param>
+        /// <param name="localDateTime">The current local time.</param>
         /// <returns>True if the tick should be skipped, otherwise false.</returns>
-        internal static bool ShouldSkipTick(Symbol symbol, DateTime nowUtc)
+        internal static bool ShouldSkipTick(Symbol symbol, DateTime localDateTime)
         {
-            if (!symbol.IsMarketOpen(nowUtc, false) || _nextSkipDate.Date > nowUtc)
+            var exchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+            if (!exchangeHours.IsOpen(localDateTime, false) || _nextSkipLocaleDate.Date > localDateTime)
             {
                 return false;
             }
 
-            var marketOpenUtcTime = new TimeSpan(13, 30, 0); // 9:30 AM ET
-            var skipWindowEnd = marketOpenUtcTime.Add(TimeSpan.FromSeconds(30));
+            var marketStartRegularHours = exchangeHours.GetMarketHours(localDateTime).Segments.First(x => x.State == MarketHoursState.Market).Start;
 
-            if (nowUtc.TimeOfDay >= marketOpenUtcTime && nowUtc.TimeOfDay < skipWindowEnd)
+            var skipWindowEnd = marketStartRegularHours.Add(TimeSpan.FromSeconds(30));
+
+            if (localDateTime.TimeOfDay >= marketStartRegularHours && localDateTime.TimeOfDay < skipWindowEnd)
             {
-                _nextSkipDate = nowUtc.Date.AddDays(1);
+                _nextSkipLocaleDate = localDateTime.Date.AddDays(1);
                 return true;
             }
 

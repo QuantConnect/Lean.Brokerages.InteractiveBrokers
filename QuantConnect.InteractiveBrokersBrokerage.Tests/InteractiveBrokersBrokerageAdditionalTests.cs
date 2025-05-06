@@ -915,45 +915,45 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             brokerage.Message -= onMessage;
         }
 
-        [TestCase("2025-05-06T13:29:59", false, Description = "Before market open")]
-        [TestCase("2025-05-06T13:30:00", true, Description = "At market open")]
-        [TestCase("2025-05-06T13:30:15", true, Description = "Within first 30 seconds")]
-        [TestCase("2025-05-06T13:30:30", false, Description = "Exactly at 30 seconds")]
-        [TestCase("2025-05-06T13:31:00", false, Description = "After skip window")]
-        public void ShouldSkipTickMarketClosed(string utcTimeString, bool expectedResult)
+        [TestCase("2025-05-06T09:29:59", false, Description = "Before market open")]
+        [TestCase("2025-05-06T09:30:00", true, Description = "At market open")]
+        [TestCase("2025-05-06T09:30:15", true, Description = "Within first 30 seconds")]
+        [TestCase("2025-05-06T09:30:30", false, Description = "Exactly at 30 seconds")]
+        [TestCase("2025-05-06T09:31:00", false, Description = "After skip window")]
+        public void ShouldSkipTickMarketClosed(string localTimeString, bool expectedResult)
         {
-            var DateTimeUtcNow = DateTime.Parse(utcTimeString);
+            var DateTimeLocalNow = DateTime.Parse(localTimeString);
 
             var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
 
-            var result = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, DateTimeUtcNow);
+            var result = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, DateTimeLocalNow);
 
             Assert.AreEqual(expectedResult, result);
         }
 
         [Test]
-        public void ShouldSkipTick_OnlyOnceWithinSkipWindow()
+        public void ShouldSkipTickOnlyOnceWithinSkipWindow()
         {
             var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
 
-            // Tick on 2025-05-06 within the skip window — should skip
-            var firstUtc = DateTime.Parse("2025-05-06T13:30:15");
-            var firstResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, firstUtc);
+            // Tick on 2025-05-06 within the skip window - should skip
+            var firstLocalDateTime = DateTime.Parse("2025-05-06T09:30:15");
+            var firstResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, firstLocalDateTime);
             Assert.IsTrue(firstResult, "Expected skip on first tick within window");
 
-            // Another tick same day — should not skip again
-            var secondUtc = DateTime.Parse("2025-05-06T13:30:17");
-            var secondResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, secondUtc);
+            // Another tick same day - should not skip again
+            var secondLocalDateTime = DateTime.Parse("2025-05-06T09:30:17");
+            var secondResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, secondLocalDateTime);
             Assert.IsFalse(secondResult, "Expected no skip after already skipped once today");
 
-            // Next day before market open — should not skip
-            var thirdUtc = DateTime.Parse("2025-05-07T13:29:28");
-            var thirdResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, thirdUtc);
+            // Next day before market open - should not skip
+            var thirdLocalDateTime = DateTime.Parse("2025-05-07T09:29:28");
+            var thirdResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, thirdLocalDateTime);
             Assert.IsFalse(thirdResult, "Expected no skip before market open next day");
 
-            // Next day within skip window — should skip again
-            var fourthUtc = DateTime.Parse("2025-05-07T13:30:02");
-            var fourthResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, fourthUtc);
+            // Next day within skip window - should skip again
+            var fourthLocalDateTime = DateTime.Parse("2025-05-07T09:30:02");
+            var fourthResult = InteractiveBrokersBrokerage.ShouldSkipTick(symbol, fourthLocalDateTime);
             Assert.IsTrue(fourthResult, "Expected skip on new day within skip window");
         }
 
