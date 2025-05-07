@@ -319,7 +319,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Config.Get("ib-user-name"),
                 Config.Get("ib-password"),
                 Config.Get("ib-trading-mode"),
-                Config.GetValue("ib-agent-description", IB.AgentDescription.Individual)
+                Config.GetValue("ib-agent-description", IB.AgentDescription.Individual),
+                financialAdvisorsGroup: Config.Get("ib-financial-advisors-group")
                 )
         {
         }
@@ -341,6 +342,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="agentDescription">Used for Rule 80A describes the type of trader.</param>
         /// <param name="loadExistingHoldings">False will ignore existing security holdings from being loaded.</param>
         /// <param name="weeklyRestartUtcTime">The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)</param>
+        /// <param name="financialAdvisorsGroup">The name of the financial advisors group associated with this client.</param>
         public InteractiveBrokersBrokerage(
             IAlgorithm algorithm,
             IOrderProvider orderProvider,
@@ -355,7 +357,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string tradingMode,
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
-            TimeSpan? weeklyRestartUtcTime = null)
+            TimeSpan? weeklyRestartUtcTime = null,
+            string financialAdvisorsGroup = default)
             : base(BrokerageName)
         {
             Initialize(
@@ -372,7 +375,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 tradingMode,
                 agentDescription,
                 loadExistingHoldings,
-                weeklyRestartUtcTime: weeklyRestartUtcTime);
+                weeklyRestartUtcTime,
+                financialAdvisorsGroup);
         }
 
         /// <summary>
@@ -881,7 +885,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     if (!_client.Connected) throw new Exception("InteractiveBrokersBrokerage.Connect(): Connection returned but was not in connected state.");
 
                     // request account information for logging purposes
-                    _client.ClientSocket.reqAccountSummary(GetNextId(), "All", "AccountType");
+                    _client.ReqAccountSummary(GetNextId());
                     _client.ClientSocket.reqManagedAccts();
                     _client.ClientSocket.reqFamilyCodes();
 
@@ -1117,7 +1121,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _client.UpdateAccountValue += clientOnUpdateAccountValue;
 
             // first we won't subscribe, wait for this to finish, below we'll subscribe for continuous updates
-            _client.ClientSocket.reqAccountUpdates(true, account);
+            _client.RequestAccountUpdates(true, account, GetNextId());
 
             // wait to see the first account value update
             firstAccountUpdateReceived.WaitOne(2500);
@@ -1158,7 +1162,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (_client != null && _client.ClientSocket != null && _client.Connected)
                 {
                     // unsubscribe from account updates
-                    _client.ClientSocket.reqAccountUpdates(subscribe: false, GetAccountName());
+                    _client.RequestAccountUpdates(subscribe: false, GetAccountName(), GetNextId());
                 }
             }
             catch (Exception exception)
@@ -1228,6 +1232,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="agentDescription">Used for Rule 80A describes the type of trader.</param>
         /// <param name="loadExistingHoldings">False will ignore existing security holdings from being loaded.</param>
         /// <param name="weeklyRestartUtcTime">The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)</param>
+        /// <param name="financialAdvisorsGroup">The name of the financial advisors group associated with this client.</param>
         private void Initialize(
             IAlgorithm algorithm,
             IOrderProvider orderProvider,
@@ -1242,7 +1247,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string tradingMode,
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
-            TimeSpan? weeklyRestartUtcTime = null)
+            TimeSpan? weeklyRestartUtcTime = null,
+            string financialAdvisorsGroup = default)
         {
             if (_isInitialized)
             {
@@ -1313,7 +1319,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             Log.Trace($"InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): Host: {host}, Port: {port}, Account: {account}, AgentDescription: {agentDescription}");
 
-            _client = new IB.InteractiveBrokersClient(_signal);
+            _client = new IB.InteractiveBrokersClient(_signal, financialAdvisorsGroup);
 
             // running as a data provider only
             if (_algorithm != null)
@@ -1453,7 +1459,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ManualResetEventSlim eventSlim = _pendingOrderResponse[ibOrderId] = eventSlim = new ManualResetEventSlim(false);
 
                 var ibOrder = ConvertOrder(orders, contract, ibOrderId);
-                _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
+                _client.PlaceOrder(ibOrder, contract);
 
                 var noSubmissionOrderTypes = _noSubmissionOrderTypes.Contains(order.Type);
                 if (!eventSlim.Wait(noSubmissionOrderTypes ? _noSubmissionOrdersResponseTimeout : _responseTimeout))
