@@ -918,6 +918,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [Test]
         public void ShouldSkipTickOnlyOnceWithinSkipWindow()
         {
+            InteractiveBrokersBrokerage._nextNdxMarketOpenSkipTime = default;
+
             var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
 
             var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
@@ -941,6 +943,49 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var fourthLocalDateTime = DateTime.Parse("2025-05-07T09:30:02");
             var fourthResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, fourthLocalDateTime);
             Assert.IsTrue(fourthResult, "Expected skip on next day after market open");
+        }
+
+        [TestCase("2025-05-06T13:29:59", false, Description = "Tick just before market open")]
+        [TestCase("2025-05-06T13:30:00", true, Description = "Tick at exact market open time")]
+        [TestCase("2025-05-06T13:30:15", true, Description = "Tick 15 seconds after market open")]
+        [TestCase("2025-05-06T13:30:30", false, Description = "Tick 30 seconds after market open")]
+        [TestCase("2025-05-06T13:31:00", false, Description = "Tick 1 minute after market open � outside skip window")]
+        [TestCase("2025-05-06T13:32:00", false, Description = "Tick well after skip window")]
+        [TestCase("2025-05-06T17:31:00", false, Description = "Tick at 1:31 PM EST � unrelated time")]
+        [TestCase("2025-05-06T21:31:00", false, Description = "Tick at market close")]
+        public void ShouldSkipTickMarketClosed(string utcTimeString, bool expectedResult)
+        {
+            InteractiveBrokersBrokerage._nextNdxMarketOpenSkipTime = default;
+
+            var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
+
+            var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+
+            var DateTimeUtcNow = DateTime.Parse(utcTimeString).ConvertFromUtc(ndxSecurityExchangeHours.TimeZone);
+
+            var result = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, DateTimeUtcNow);
+
+            Assert.AreEqual(expectedResult, result);
+        }
+
+        [Test]
+        public void ShouldSkipTickOnlyOnce()
+        {
+            InteractiveBrokersBrokerage._nextNdxMarketOpenSkipTime = default;
+
+            var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
+
+            var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+
+            // Tick before market open on 2025-05-06 - should not skip
+            var firstLocalDateTime = DateTime.Parse("2025-05-06T09:30:00");
+            var firstResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, firstLocalDateTime);
+            Assert.IsTrue(firstResult, "Expected no skip on first tick before market open");
+
+            // First tick after market open on 2025-05-06 - should skip
+            var secondLocalDateTime = DateTime.Parse("2025-05-06T09:30:17");
+            var secondResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, secondLocalDateTime);
+            Assert.IsFalse(secondResult, "Expected skip after market open");
         }
 
         private List<BaseData> GetHistory(
