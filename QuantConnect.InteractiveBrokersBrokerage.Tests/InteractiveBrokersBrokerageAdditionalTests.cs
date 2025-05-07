@@ -988,6 +988,51 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(secondResult, "Expected skip after market open");
         }
 
+        [Test]
+        public void ShouldSkipTickOnlyOnceFromFridayToMonday()
+        {
+            InteractiveBrokersBrokerage._nextNdxMarketOpenSkipTime = default;
+
+            var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
+
+            var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+
+            var fridayPreMarketDateTime = DateTime.Parse("2025-05-09T09:25:00");
+            var fridayPreMarketResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, fridayPreMarketDateTime);
+
+            Assert.IsFalse(fridayPreMarketResult);
+
+            var fridayMarketOpenDateTimeFirstTick = DateTime.Parse("2025-05-09T09:30:01");
+            var fridayMarketOpenFirstTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, fridayMarketOpenDateTimeFirstTick);
+
+            Assert.IsTrue(fridayMarketOpenFirstTickResult);
+
+            var fridayMarketOpenDateTimeSecondTick = DateTime.Parse("2025-05-09T09:30:01");
+            var fridayMarketOpenSecondTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, fridayMarketOpenDateTimeSecondTick);
+
+            Assert.IsFalse(fridayMarketOpenSecondTickResult);
+
+            var sundayDateTime = DateTime.Parse("2025-05-11T09:30:01");
+            var sundayResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, sundayDateTime);
+
+            Assert.IsFalse(sundayResult);
+
+            var mondayPreMarketDateTime = DateTime.Parse("2025-05-12T09:25:00");
+            var mondayPreMarketResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, mondayPreMarketDateTime);
+
+            Assert.IsFalse(mondayPreMarketResult);
+
+            var mondayMarketOpenDateTimeFirstTick = DateTime.Parse("2025-05-12T09:30:01");
+            var mondayMarketOpenFirstTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, mondayMarketOpenDateTimeFirstTick);
+
+            Assert.IsTrue(mondayMarketOpenFirstTickResult);
+
+            var mondayMarketOpenDateTimeSecondTick = DateTime.Parse("2025-05-12T09:30:01");
+            var mondayMarketOpenSecondTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, mondayMarketOpenDateTimeFirstTick);
+
+            Assert.IsFalse(mondayMarketOpenSecondTickResult);
+        }
+
         private List<BaseData> GetHistory(
             Symbol symbol,
             Resolution resolution,
