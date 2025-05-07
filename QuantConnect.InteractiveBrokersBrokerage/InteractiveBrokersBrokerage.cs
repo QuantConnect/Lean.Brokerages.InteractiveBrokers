@@ -127,7 +127,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private IMapFileProvider _mapFileProvider;
         private IDataAggregator _aggregator;
         private IB.InteractiveBrokersClient _client;
-        private int _ibVersion;
+
         private string _agentDescription;
         private EventBasedDataQueueHandlerSubscriptionManager _subscriptionManager;
 
@@ -1276,7 +1276,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _account = account;
             _host = host;
             _port = port;
-            _ibVersion = Convert.ToInt32(ibVersion, CultureInfo.InvariantCulture);
+
             _agentDescription = agentDescription;
 
             _symbolMapper = new InteractiveBrokersSymbolMapper(_mapFileProvider);
