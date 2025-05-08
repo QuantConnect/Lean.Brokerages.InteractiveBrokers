@@ -3874,10 +3874,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             SubscriptionEntry entry;
             if (!_subscribedTickers.TryGetValue(e.TickerId, out entry))
             {
+                Log.Trace($"{nameof(HandleTickPrice)}.TickerId({e.TickerId}) NOT FOUND | Price: {e.Price} | Field: {IBApi.TickType.getField(e.Field)}");
                 return;
             }
 
             var symbol = entry.Symbol;
+
+            if (symbol.SecurityType != SecurityType.Forex)
+            {
+                Log.Trace($"{nameof(HandleTickPrice)}.Field({IBApi.TickType.getField(e.Field)}): Symbol: {symbol} | Price: {e.Price} | Field: {e.Field}");
+            }
 
             // negative price (-1) means no price available, normalize to zero
             var price = e.Price < 0 ? 0 : Convert.ToDecimal(e.Price) / entry.PriceMagnifier;
@@ -3957,10 +3963,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             SubscriptionEntry entry;
             if (!_subscribedTickers.TryGetValue(e.TickerId, out entry))
             {
+                Log.Trace($"{nameof(HandleTickSize)}.TickerId({e.TickerId}) NOT FOUND | Price: {e.Size} | Field: {IBApi.TickType.getField(e.Field)}");
                 return;
             }
 
             var symbol = entry.Symbol;
+
+            if (symbol.SecurityType != SecurityType.Forex)
+            {
+                Log.Trace($"{nameof(HandleTickSize)}.Field({IBApi.TickType.getField(e.Field)}): Symbol: {symbol} | Size: {e.Size} | Field: {e.Field}");
+            }
 
             // negative size (-1) means no quantity available, normalize to zero
             var quantity = e.Size < 0 ? 0 : e.Size;
