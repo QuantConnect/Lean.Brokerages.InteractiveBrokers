@@ -3934,6 +3934,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         _ndxSecurityExchangeHours ??= MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
                         if (ShouldSkipTick(_ndxSecurityExchangeHours, GetRealTimeTickTime(symbol)))
                         {
+                            Log.Trace($"SKIP FIRST TICKER.TickerId({e.TickerId}) | Price: {e.Price} | Field: {IBApi.TickType.getField(e.Field)}");
                             return;
                         }
                     }
@@ -5079,6 +5080,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </returns>
         internal static bool ShouldSkipTick(SecurityExchangeHours exchangeHours, DateTime symbolTickTime)
         {
+            var str = new StringBuilder($"ShouldSkipTick.symbolTickTime: {symbolTickTime:yyyyMMdd HH:mm:ss.fff} and _nextNdxMarketOpenSkipTime: {_nextNdxMarketOpenSkipTime:yyyyMMdd HH:mm:ss.fff} |");
             // Subtracting 30 seconds here is intentional:
             // When the market opens (e.g., 9:30 AM EST), the first tick received for NDX via the IB API
             // often contains the *previous day's close* as the price. This stale tick appears at or just after open.
@@ -5093,14 +5095,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (_nextNdxMarketOpenSkipTime == default)
             {
                 _nextNdxMarketOpenSkipTime = exchangeHours.GetNextMarketOpen(symbolTickTime.AddSeconds(-30), false);
+                str.Append($"Default, NEW _nextNdxMarketOpenSkipTime = {_nextNdxMarketOpenSkipTime:yyyyMMdd HH:mm:ss.fff} |");
             }
 
             if (symbolTickTime >= _nextNdxMarketOpenSkipTime)
             {
                 _nextNdxMarketOpenSkipTime = exchangeHours.GetNextMarketOpen(symbolTickTime, false);
+
+                Log.Trace(str.Append($"SKIP TICK. NEW _nextNdxMarketOpenSkipTime = {_nextNdxMarketOpenSkipTime:yyyyMMdd HH:mm:ss.fff} |").ToString());
                 return true;
             }
 
+            Log.Trace(str.Append("FALSE").ToString());
             return false;
         }
 
