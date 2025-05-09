@@ -3928,6 +3928,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         _ndxSecurityExchangeHours ??= MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
                         if (ShouldSkipTick(_ndxSecurityExchangeHours, GetRealTimeTickTime(symbol)))
                         {
+                            // Clear the last trade tick to prevent using outdated data from the previous day.
+                            entry.LastTradeTick = null;
                             return;
                         }
                     }
