@@ -2726,6 +2726,102 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 AddGuaranteedTag(ibOrder, orders.All(x => x.SecurityType == SecurityType.Equity));
             }
 
+            // add financial advisor properties
+            if (IsFinancialAdvisor)
+            {
+                // https://interactivebrokers.github.io/tws-api/financial_advisor.html#gsc.tab=0
+
+                if (orderProperties != null)
+                {
+                    if (!_sentFAOrderPropertiesWarning &&
+                        (!string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.Account)
+                        || !string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)
+                        || !string.IsNullOrWhiteSpace(orderProperties.Account) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)))
+                    {
+                        // warning these are mutually exclusive
+                        _sentFAOrderPropertiesWarning = true;
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "PlaceOrder",
+                            "Order properties 'FaProfile', 'FaGroup' & 'Account' are mutually exclusive"));
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(orderProperties.Account))
+                    {
+                        // order for a single managed account
+                        ibOrder.Account = orderProperties.Account;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(orderProperties.FaGroup) || !string.IsNullOrWhiteSpace(orderProperties.FaProfile))
+                    {
+                        // order for an account group
+                        ibOrder.FaGroup = orderProperties.FaGroup;
+                        if (string.IsNullOrWhiteSpace(ibOrder.FaGroup))
+                        {
+                            // we were given a profile
+                            ibOrder.FaGroup = orderProperties.FaProfile;
+                        }
+
+                        ibOrder.FaMethod = orderProperties.FaMethod;
+
+                        if (ibOrder.FaMethod == "PctChange")
+                        {
+                            ibOrder.FaPercentage = orderProperties.FaPercentage.ToStringInvariant();
+                            ibOrder.TotalQuantity = 0;
+                        }
+                    }
+                    // IB docs say "Use an empty string if not applicable."  https://www.interactivebrokers.com/campus/ibkr-api-page/twsapi-ref/#order-ref
+                    ibOrder.FaMethod ??= string.Empty;
+                    ibOrder.FaGroup ??= string.Empty;
+                    ibOrder.Account ??= string.Empty;
+                }
+            }
+
+            // add financial advisor properties
+            if (IsFinancialAdvisor)
+            {
+                // https://interactivebrokers.github.io/tws-api/financial_advisor.html#gsc.tab=0
+
+                if (orderProperties != null)
+                {
+                    if (!_sentFAOrderPropertiesWarning &&
+                        (!string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.Account)
+                        || !string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)
+                        || !string.IsNullOrWhiteSpace(orderProperties.Account) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)))
+                    {
+                        // warning these are mutually exclusive
+                        _sentFAOrderPropertiesWarning = true;
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "PlaceOrder",
+                            "Order properties 'FaProfile', 'FaGroup' & 'Account' are mutually exclusive"));
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(orderProperties.Account))
+                    {
+                        // order for a single managed account
+                        ibOrder.Account = orderProperties.Account;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(orderProperties.FaGroup) || !string.IsNullOrWhiteSpace(orderProperties.FaProfile))
+                    {
+                        // order for an account group
+                        ibOrder.FaGroup = orderProperties.FaGroup;
+                        if (string.IsNullOrWhiteSpace(ibOrder.FaGroup))
+                        {
+                            // we were given a profile
+                            ibOrder.FaGroup = orderProperties.FaProfile;
+                        }
+
+                        ibOrder.FaMethod = orderProperties.FaMethod;
+
+                        if (ibOrder.FaMethod == "PctChange")
+                        {
+                            ibOrder.FaPercentage = orderProperties.FaPercentage.ToStringInvariant();
+                            ibOrder.TotalQuantity = 0;
+                        }
+                    }
+                    // IB docs say "Use an empty string if not applicable."  https://www.interactivebrokers.com/campus/ibkr-api-page/twsapi-ref/#order-ref
+                    ibOrder.FaMethod ??= string.Empty;
+                    ibOrder.FaGroup ??= string.Empty;
+                    ibOrder.Account ??= string.Empty;
+                }
+            }
+
             // not yet supported
             //ibOrder.ParentId =
             //ibOrder.OcaGroup =
@@ -2808,13 +2904,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         private bool TryConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
-            double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager, OrderState orderState,
+            double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager, OrderState orderState, string account,
             out Order leanOrder)
         {
             try
             {
                 leanOrder = ConvertOrder(timeInForce, goodTillDate, ibOrderId, auxPrice, orderType, quantity,
-                    limitPrice, trailingStopPrice, trailingPercentage, contract, groupOrderManager, orderState);
+                    limitPrice, trailingStopPrice, trailingPercentage, contract, groupOrderManager, orderState, account);
                 return true;
             }
             catch (Exception ex)
@@ -2826,8 +2922,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
-            double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager, OrderState orderState,
-            string account)
+            double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager, OrderState orderState)
         {
             // this function is called by GetOpenOrders which is mainly used by the setup handler to
             // initialize algorithm state.  So the only time we'll be executing this code is when the account
@@ -2836,28 +2931,25 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             Order order;
             var mappedSymbol = MapSymbol(contract);
-            var orderProperties = string.IsNullOrEmpty(account) ? default : new InteractiveBrokersOrderProperties() { Account = account };
             switch (orderType)
             {
                 case OrderType.Market:
                     order = new MarketOrder(mappedSymbol,
                         quantity,
-                        new DateTime(), // not sure how to get this data
-                        properties: orderProperties);
+                        new DateTime() // not sure how to get this data
+                        );
                     break;
 
                 case OrderType.MarketOnOpen:
                     order = new MarketOnOpenOrder(mappedSymbol,
                         quantity,
-                        new DateTime(),
-                        properties: orderProperties);
+                        new DateTime());
                     break;
 
                 case OrderType.MarketOnClose:
                     order = new MarketOnCloseOrder(mappedSymbol,
                         quantity,
-                        new DateTime(),
-                        properties: orderProperties
+                        new DateTime()
                         );
                     break;
 
@@ -2865,8 +2957,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     order = new LimitOrder(mappedSymbol,
                         quantity,
                         NormalizePriceToLean(limitPrice, mappedSymbol),
-                        new DateTime(),
-                        properties: orderProperties
+                        new DateTime()
                         );
                     break;
 
@@ -2874,8 +2965,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     order = new StopMarketOrder(mappedSymbol,
                         quantity,
                         NormalizePriceToLean(auxPrice, mappedSymbol),
-                        new DateTime(),
-                        properties: orderProperties
+                        new DateTime()
                         );
                     break;
 
@@ -2884,8 +2974,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         quantity,
                         NormalizePriceToLean(auxPrice, mappedSymbol),
                         NormalizePriceToLean(limitPrice, mappedSymbol),
-                        new DateTime(),
-                        properties: orderProperties
+                        new DateTime()
                         );
                     break;
 
@@ -2908,8 +2997,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         NormalizePriceToLean(trailingStopPrice, mappedSymbol),
                         trailingAmount,
                         trailingAsPecentage,
-                        new DateTime(),
-                        properties: orderProperties
+                        new DateTime()
                     );
                     break;
 
@@ -2918,8 +3006,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         quantity,
                         NormalizePriceToLean(auxPrice, mappedSymbol),
                         NormalizePriceToLean(limitPrice, mappedSymbol),
-                        new DateTime(),
-                        properties: orderProperties
+                        new DateTime()
                     );
                     break;
 
