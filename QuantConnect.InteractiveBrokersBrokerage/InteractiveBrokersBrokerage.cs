@@ -3874,10 +3874,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             SubscriptionEntry entry;
             if (!_subscribedTickers.TryGetValue(e.TickerId, out entry))
             {
+                Log.Trace($"{nameof(HandleTickPrice)}.TickerId({e.TickerId}) NOT FOUND | Price: {e.Price} | Field: {IBApi.TickType.getField(e.Field)}");
                 return;
             }
 
             var symbol = entry.Symbol;
+
+            if (symbol.SecurityType != SecurityType.Forex)
+            {
+                Log.Trace($"{nameof(HandleTickPrice)}.Field({IBApi.TickType.getField(e.Field)}): Symbol: {symbol} | Price: {e.Price} | Field: {e.Field}");
+            }
 
             // negative price (-1) means no price available, normalize to zero
             var price = e.Price < 0 ? 0 : Convert.ToDecimal(e.Price) / entry.PriceMagnifier;
@@ -3930,6 +3936,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         {
                             // Clear the last trade tick to prevent using outdated data from the previous day.
                             entry.LastTradeTick = null;
+                            Log.Trace($"SKIP FIRST TICKER.TickerId({e.TickerId}) | Price: {e.Price} | Field: {IBApi.TickType.getField(e.Field)}");
                             return;
                         }
                     }
@@ -3959,10 +3966,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             SubscriptionEntry entry;
             if (!_subscribedTickers.TryGetValue(e.TickerId, out entry))
             {
+                Log.Trace($"{nameof(HandleTickSize)}.TickerId({e.TickerId}) NOT FOUND | Price: {e.Size} | Field: {IBApi.TickType.getField(e.Field)}");
                 return;
             }
 
             var symbol = entry.Symbol;
+
+            if (symbol.SecurityType != SecurityType.Forex)
+            {
+                Log.Trace($"{nameof(HandleTickSize)}.Field({IBApi.TickType.getField(e.Field)}): Symbol: {symbol} | Size: {e.Size} | Field: {e.Field}");
+            }
 
             // negative size (-1) means no quantity available, normalize to zero
             var quantity = e.Size < 0 ? 0 : e.Size;
@@ -5069,6 +5082,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </returns>
         internal static bool ShouldSkipTick(SecurityExchangeHours exchangeHours, DateTime symbolTickTime)
         {
+            var str = new StringBuilder($"ShouldSkipTick.symbolTickTime: {symbolTickTime:yyyyMMdd HH:mm:ss.fff} and _nextNdxMarketOpenSkipTime: {_nextNdxMarketOpenSkipTime:yyyyMMdd HH:mm:ss.fff} |");
             // Subtracting 30 seconds here is intentional:
             // When the market opens (e.g., 9:30 AM EST), the first tick received for NDX via the IB API
             // often contains the *previous day's close* as the price. This stale tick appears at or just after open.
@@ -5083,14 +5097,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (_nextNdxMarketOpenSkipTime == default)
             {
                 _nextNdxMarketOpenSkipTime = exchangeHours.GetNextMarketOpen(symbolTickTime.AddSeconds(-30), false);
+                str.Append($"Default, NEW _nextNdxMarketOpenSkipTime = {_nextNdxMarketOpenSkipTime:yyyyMMdd HH:mm:ss.fff} |");
             }
 
             if (symbolTickTime >= _nextNdxMarketOpenSkipTime)
             {
                 _nextNdxMarketOpenSkipTime = exchangeHours.GetNextMarketOpen(symbolTickTime, false);
+
+                Log.Trace(str.Append($"SKIP TICK. NEW _nextNdxMarketOpenSkipTime = {_nextNdxMarketOpenSkipTime:yyyyMMdd HH:mm:ss.fff} |").ToString());
                 return true;
             }
 
+            Log.Trace(str.Append("FALSE").ToString());
             return false;
         }
 
