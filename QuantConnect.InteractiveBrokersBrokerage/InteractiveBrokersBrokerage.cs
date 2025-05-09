@@ -328,7 +328,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Config.Get("ib-password"),
                 Config.Get("ib-trading-mode"),
                 Config.GetValue("ib-agent-description", IB.AgentDescription.Individual),
-                financialAdvisorsGroup: Config.Get("ib-financial-advisors-group")
+                financialAdvisorsGroupFilter: Config.Get("ib-financial-advisors-group-filter")
                 )
         {
         }
@@ -350,7 +350,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="agentDescription">Used for Rule 80A describes the type of trader.</param>
         /// <param name="loadExistingHoldings">False will ignore existing security holdings from being loaded.</param>
         /// <param name="weeklyRestartUtcTime">The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)</param>
-        /// <param name="financialAdvisorsGroup">The name of the financial advisors group associated with this client.</param>
+        /// <param name="financialAdvisorsGroupFilter">The name of the financial advisors group filter associated with this client.</param>
         public InteractiveBrokersBrokerage(
             IAlgorithm algorithm,
             IOrderProvider orderProvider,
@@ -366,7 +366,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
             TimeSpan? weeklyRestartUtcTime = null,
-            string financialAdvisorsGroup = default)
+            string financialAdvisorsGroupFilter = default)
             : base(BrokerageName)
         {
             Initialize(
@@ -384,7 +384,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 agentDescription,
                 loadExistingHoldings,
                 weeklyRestartUtcTime,
-                financialAdvisorsGroup);
+                financialAdvisorsGroupFilter);
         }
 
         /// <summary>
