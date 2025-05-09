@@ -173,14 +173,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         #endregion
 
         /// <summary>
-        /// Represents the allocation group managed by financial advisors.
-        /// </summary>
-        /// <remarks>
-        /// The specific Advisor Account Group name that has already been created in TWS Global Configuration.
-        /// </remarks>
-        private string _financialAdvisorsGroup;
-
-        /// <summary>
         /// Returns true if we're currently connected to the broker
         /// </summary>
         public bool Connected => ClientSocket.IsConnected();
@@ -198,11 +190,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// using the specified EReader signal and financial advisors group name.
         /// </summary>
         /// <param name="signal">The signal mechanism used for coordinating socket read events.</param>
-        /// <param name="financialAdvisorsGroup">The name of the financial advisors group associated with this client.</param>
-        public InteractiveBrokersClient(EReaderSignal signal, string financialAdvisorsGroup)
+        public InteractiveBrokersClient(EReaderSignal signal)
         {
             ClientSocket = new EClientSocket(this, signal);
-            _financialAdvisorsGroup = financialAdvisorsGroup;
         }
 
         /// <summary>
@@ -311,40 +301,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         }
 
         /// <summary>
-        /// Requests a specific account’s summary.
-        /// </summary>
-        /// <param name="requestId">The unique request identifier.</param>
-        public void ReqAccountSummary(int requestId)
-        {
-            var group = string.IsNullOrEmpty(_financialAdvisorsGroup) ? "All" : _financialAdvisorsGroup;
-            ClientSocket.reqAccountSummary(requestId, group, "AccountType");
-        }
-
-        public void PlaceOrder(Order order, Contract contract)
-        {
-            if (!string.IsNullOrEmpty(_financialAdvisorsGroup))
-            {
-                order.FaGroup = _financialAdvisorsGroup;
-            }
-
-            ClientSocket.placeOrder(order.OrderId, contract, order);
-        }
-
-        /// <summary>
         /// Subscribes to a specific account’s information and portfolio.
         /// </summary>
         /// <param name="subscribe">Set to true to start the subscription and to false to stop it.</param>
         /// <param name="account"> The account id (i.e. U123456) for which the information is requested.</param>
         /// <param name="requestId">Identifier to label the request</param>
-        public void RequestAccountUpdates(bool subscribe, string account, int requestId)
+        /// <param name="financialAdvisorsGroupFilter"></param>
+        public void RequestAccountUpdates(bool subscribe, string account, int requestId, string financialAdvisorsGroupFilter)
         {
-            if (string.IsNullOrEmpty(_financialAdvisorsGroup))
+            if (string.IsNullOrEmpty(financialAdvisorsGroupFilter))
             {
                 ClientSocket.reqAccountUpdates(subscribe, account);
             }
             else
             {
-                ClientSocket.reqAccountUpdatesMulti(requestId, _financialAdvisorsGroup, string.Empty, subscribe);
+                ClientSocket.reqAccountUpdatesMulti(requestId, financialAdvisorsGroupFilter, string.Empty, subscribe);
             }
         }
 
