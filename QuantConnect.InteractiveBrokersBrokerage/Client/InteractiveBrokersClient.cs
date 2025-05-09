@@ -186,8 +186,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         }
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="InteractiveBrokersClient"/> class
+        /// Initializes a new instance of the <see cref="InteractiveBrokersClient"/> class 
+        /// using the specified EReader signal and financial advisors group name.
         /// </summary>
+        /// <param name="signal">The signal mechanism used for coordinating socket read events.</param>
         public InteractiveBrokersClient(EReaderSignal signal)
         {
             ClientSocket = new EClientSocket(this, signal);
@@ -296,6 +298,25 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         public override void accountSummary(int reqId, string account, string tag, string value, string currency)
         {
             OnAccountSummary(new AccountSummaryEventArgs(reqId, account, tag, value, currency));
+        }
+
+        /// <summary>
+        /// Subscribes to a specific account’s information and portfolio.
+        /// </summary>
+        /// <param name="subscribe">Set to true to start the subscription and to false to stop it.</param>
+        /// <param name="account"> The account id (i.e. U123456) for which the information is requested.</param>
+        /// <param name="requestId">Identifier to label the request</param>
+        /// <param name="financialAdvisorsGroupFilter"></param>
+        public void RequestAccountUpdates(bool subscribe, string account, int requestId, string financialAdvisorsGroupFilter)
+        {
+            if (string.IsNullOrEmpty(financialAdvisorsGroupFilter))
+            {
+                ClientSocket.reqAccountUpdates(subscribe, account);
+            }
+            else
+            {
+                ClientSocket.reqAccountUpdatesMulti(requestId, financialAdvisorsGroupFilter, string.Empty, subscribe);
+            }
         }
 
         /// <summary>
