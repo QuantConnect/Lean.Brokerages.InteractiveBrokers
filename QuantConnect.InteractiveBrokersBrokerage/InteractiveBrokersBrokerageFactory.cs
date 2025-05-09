@@ -51,7 +51,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             { "ib-trading-mode", Config.Get("ib-trading-mode") },
             { "ib-agent-description", Config.Get("ib-agent-description") },
             { "ib-weekly-restart-utc-time", Config.Get("ib-weekly-restart-utc-time") },
-            { "ib-financial-advisors-group", Config.Get("ib-financial-advisors-group") }
+            { "ib-financial-advisors-group-filter", Config.Get("ib-financial-advisors-group-filter") }
         };
 
         /// <summary>
@@ -81,7 +81,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var password = Read<string>(job.BrokerageData, "ib-password", errors);
             var tradingMode = Read<string>(job.BrokerageData, "ib-trading-mode", errors);
             var agentDescription = Read<string>(job.BrokerageData, "ib-agent-description", errors);
-            var financialAdvisorsGroup = Read<string>(job.BrokerageData, "ib-financial-advisors-group", errors);
+            var financialAdvisorsGroupFilter = Read<string>(job.BrokerageData, "ib-financial-advisors-group-filter", errors);
 
             var loadExistingHoldings = true;
             if (job.BrokerageData.ContainsKey("load-existing-holdings"))
@@ -122,7 +122,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 agentDescription,
                 loadExistingHoldings,
                 weeklyRestartUtcTime,
-                financialAdvisorsGroup);
+                financialAdvisorsGroupFilter);
             Composer.Instance.AddPart<IDataQueueHandler>(ib);
 
             return ib;
