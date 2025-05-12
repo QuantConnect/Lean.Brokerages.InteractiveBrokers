@@ -237,6 +237,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
 
+        // Symbols that IB doesn't support ("No security definition has been found for the request")
+        // We keep track of them to avoid flooding the logs with the same error/warning
+        private readonly HashSet<Symbol> _unsupportedSymbols = new();
+
         /// <summary>
         /// Represents the next local market open time after which the first 'lastPrice' tick for the NDX index should be skipped.
         /// This is used to ensure only the initial tick after market open is ignored each trading day.
@@ -1892,6 +1896,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     else if (requestInfo.RequestType == RequestType.SoftContractDetails)
                     {
                         return;
+                    }
+                    else if (_algorithm.Settings.IgnoreUnknownAssetTypes)
+                    {
+                        // Let's make it a one time warning, we don't want to flood the logs with this message
+                        if (requestInfo?.AssociatedSymbol != null)
+                        {
+                            if (_unsupportedSymbols.Contains(requestInfo.AssociatedSymbol))
+                            {
+                                return;
+                            }
+                            _unsupportedSymbols.Add(requestInfo.AssociatedSymbol);
+                        }
+
+                        brokerageMessageType = BrokerageMessageType.Warning;
                     }
                 }
             }
@@ -3777,7 +3795,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 foreach (var symbol in symbols)
                 {
-                    if (CanSubscribe(symbol))
+                    if (CanSubscribe(symbol)
+                        // We tried to subscribe to this symbol but IB rejected it ("No security definition has been found for the request"),
+                        // no need to unsubscribe.
+                        && !_unsupportedSymbols.Contains(symbol))
                     {
                         lock (_sync)
                         {
