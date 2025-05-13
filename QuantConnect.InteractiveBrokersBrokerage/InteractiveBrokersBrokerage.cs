@@ -649,6 +649,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns>The current holdings from the account</returns>
         public override List<Holding> GetAccountHoldings()
         {
+            if (_algorithm == null && _accountHoldingsLastException != null)
+            {
+                if (!CheckContractConversionError(_accountHoldingsLastException))
+                {
+                    // if an exception was thrown during account download, exit immediately
+                    throw new Exception(_accountHoldingsLastException.Message, _accountHoldingsLastException);
+                }
+
+                _accountHoldingsLastException = null;
+            }
+
             if (!IsConnected)
             {
                 Log.Trace("InteractiveBrokersBrokerage.GetAccountHoldings(): not connected, connecting now");
@@ -889,13 +900,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                             Disconnect();
 
-                            if (_accountHoldingsLastException != null)
-                            {
-                                // if an exception was thrown during account download, do not retry but exit immediately
-                                attempt = maxAttempts;
-                                throw new Exception(_accountHoldingsLastException.Message, _accountHoldingsLastException);
-                            }
-
                             if (attempt++ < maxAttempts)
                             {
                                 Thread.Sleep(1000);
@@ -912,13 +916,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             Log.Trace($"InteractiveBrokersBrokerage.Connect(): DownloadAccount failed, attempt {attempt}");
 
                             Disconnect();
-
-                            if (_accountHoldingsLastException != null)
-                            {
-                                // if an exception was thrown during account download, do not retry but exit immediately
-                                attempt = maxAttempts;
-                                throw new Exception(_accountHoldingsLastException.Message, _accountHoldingsLastException);
-                            }
 
                             if (attempt++ < maxAttempts)
                             {
@@ -1140,7 +1137,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _cancellationTokenSource.Token.WaitHandle.WaitOne(TimeSpan.FromMinutes(30));
             }
 
-            return result && _accountHoldingsLastException == null;
+            return result;
         }
 
         /// <summary>
@@ -1902,11 +1899,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         // Let's make it a one time warning, we don't want to flood the logs with this message
                         if (requestInfo?.AssociatedSymbol != null)
                         {
-                            if (_unsupportedSymbols.Contains(requestInfo.AssociatedSymbol))
+                            lock (_unsupportedSymbols)
                             {
-                                return;
+                                if (!_unsupportedSymbols.Add(requestInfo.AssociatedSymbol))
+                                {
+                                    return;
+                                }
                             }
-                            _unsupportedSymbols.Add(requestInfo.AssociatedSymbol);
                         }
 
                         brokerageMessageType = BrokerageMessageType.Warning;
@@ -2755,44 +2754,71 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var quantitySign = ConvertOrderDirection(ibOrder.Action) == OrderDirection.Sell ? -1 : 1;
             var quantity = Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign;
 
-            if (contract.SecType == IB.SecurityType.Bag)
+            try
             {
-                // this is a combo order
-                var group = new GroupOrderManager(_algorithm.Transactions.GetIncrementGroupOrderManagerId(), contract.ComboLegs.Count, quantity);
-
-                var orderType = OrderType.ComboMarket;
-                if (ibOrder.LmtPrice != double.MaxValue)
+                if (contract.SecType == IB.SecurityType.Bag)
                 {
-                    orderType = OrderType.ComboLimit;
-                }
-                else if (!ibOrder.OrderComboLegs.IsNullOrEmpty() && ibOrder.OrderComboLegs.Any(p => p.Price != double.MaxValue))
-                {
-                    orderType = OrderType.ComboLegLimit;
-                }
+                    // this is a combo order
+                    var group = new GroupOrderManager(_algorithm.Transactions.GetIncrementGroupOrderManagerId(), contract.ComboLegs.Count, quantity);
 
-                for (var i = 0; i < contract.ComboLegs.Count; i++)
-                {
-                    var comboLeg = contract.ComboLegs[i];
-                    var comboLegContract = new Contract { ConId = comboLeg.ConId };
-                    var contractDetails = GetContractDetails(comboLegContract, string.Empty);
-                    var quantitySignLeg = ConvertOrderDirection(comboLeg.Action) == OrderDirection.Sell ? -1 : 1;
-
-                    var legLimitPrice = ibOrder.LmtPrice;
-                    if (ibOrder.OrderComboLegs.Count == contract.ComboLegs.Count)
+                    var orderType = OrderType.ComboMarket;
+                    if (ibOrder.LmtPrice != double.MaxValue)
                     {
-                        legLimitPrice = ibOrder.OrderComboLegs[i].Price;
+                        orderType = OrderType.ComboLimit;
                     }
-                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
-                        comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState));
+                    else if (!ibOrder.OrderComboLegs.IsNullOrEmpty() && ibOrder.OrderComboLegs.Any(p => p.Price != double.MaxValue))
+                    {
+                        orderType = OrderType.ComboLegLimit;
+                    }
+
+                    for (var i = 0; i < contract.ComboLegs.Count; i++)
+                    {
+                        var comboLeg = contract.ComboLegs[i];
+                        var comboLegContract = new Contract { ConId = comboLeg.ConId };
+                        var contractDetails = GetContractDetails(comboLegContract, string.Empty);
+                        var quantitySignLeg = ConvertOrderDirection(comboLeg.Action) == OrderDirection.Sell ? -1 : 1;
+
+                        var legLimitPrice = ibOrder.LmtPrice;
+                        if (ibOrder.OrderComboLegs.Count == contract.ComboLegs.Count)
+                        {
+                            legLimitPrice = ibOrder.OrderComboLegs[i].Price;
+                        }
+
+                        result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
+                            comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState));
+                    }
+                }
+                else
+                {
+                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
+                        ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState));
                 }
             }
-            else
+            catch (Exception ex)
             {
-                result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                    ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState));
+                if (CheckContractConversionError(ex))
+                {
+                    // Return empty so the algorithm is not terminated
+                    return new List<Order>();
+                }
+
+                throw;
             }
 
             return result;
+        }
+
+        private bool CheckContractConversionError(Exception exception)
+        {
+            var notSupportedException = exception as NotSupportedException;
+            notSupportedException ??= exception.InnerException as NotSupportedException;
+            if (notSupportedException != null && _algorithm.Settings.IgnoreUnknownAssetTypes)
+            {
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "ConvertOrders", notSupportedException.Message));
+                return true;
+            }
+
+            return false;
         }
 
         private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
@@ -3795,11 +3821,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 foreach (var symbol in symbols)
                 {
-                    if (CanSubscribe(symbol)
-                        // We tried to subscribe to this symbol but IB rejected it ("No security definition has been found for the request"),
-                        // no need to unsubscribe.
-                        && !_unsupportedSymbols.Contains(symbol))
+                    if (CanSubscribe(symbol))
                     {
+                        lock (_unsupportedSymbols)
+                        {
+                            // We tried to subscribe to this symbol but IB rejected it ("No security definition has been found for the request"),
+                            // no need to unsubscribe.
+                            if (_unsupportedSymbols.Contains(symbol))
+                            {
+                                continue;
+                            }
+                        }
+
                         lock (_sync)
                         {
                             Log.Trace($"InteractiveBrokersBrokerage.Unsubscribe(): Unsubscribe Request: {symbol.Value}. SubscribedSymbols.Count: {_subscribedSymbols.Count}");
