@@ -649,7 +649,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns>The current holdings from the account</returns>
         public override List<Holding> GetAccountHoldings()
         {
-            if (_algorithm == null && _accountHoldingsLastException != null)
+            if (_algorithm != null && _accountHoldingsLastException != null)
             {
                 if (!CheckContractConversionError(_accountHoldingsLastException))
                 {
@@ -900,6 +900,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                             Disconnect();
 
+                            if (_algorithm == null && _accountHoldingsLastException != null)
+                            {
+                                // if an exception was thrown during account download, do not retry but exit immediately
+                                attempt = maxAttempts;
+                                throw new Exception(_accountHoldingsLastException.Message, _accountHoldingsLastException);
+                            }
+
                             if (attempt++ < maxAttempts)
                             {
                                 Thread.Sleep(1000);
@@ -916,6 +923,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             Log.Trace($"InteractiveBrokersBrokerage.Connect(): DownloadAccount failed, attempt {attempt}");
 
                             Disconnect();
+
+                            if (_algorithm == null && _accountHoldingsLastException != null)
+                            {
+                                // if an exception was thrown during account download, do not retry but exit immediately
+                                attempt = maxAttempts;
+                                throw new Exception(_accountHoldingsLastException.Message, _accountHoldingsLastException);
+                            }
 
                             if (attempt++ < maxAttempts)
                             {
