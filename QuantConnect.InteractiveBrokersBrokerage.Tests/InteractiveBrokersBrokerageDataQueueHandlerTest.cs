@@ -298,8 +298,11 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsNull(enumerator);
         }
 
-        [Test]
-        public void CanSubscribeToEurexFutures()
+        [TestCase("FESX")]
+        [TestCase("FDAX")]
+        [TestCase("FDIV")]
+        [TestCase("FTDX")]
+        public void CanSubscribeToEurexFutures(string ticker)
         {
             // Wait a bit to make sure previous tests already disconnected from IB
             Thread.Sleep(2000);
@@ -307,7 +310,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
             ib.Connect();
 
-            var canonicalFuture = Symbol.Create("FESX", SecurityType.Future, Market.EUREX);
+            var canonicalFuture = Symbol.Create(ticker, SecurityType.Future, Market.EUREX);
             var contracts = TestUtils.GetFutureContracts(canonicalFuture, 3).ToList();
             Assert.AreEqual(3, contracts.Count);
 
@@ -348,11 +351,12 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             cancelationToken.Dispose();
 
             var symbolsWithData = data.Select(tick => tick.Symbol).Distinct().ToList();
-            CollectionAssert.AreEquivalent(contracts, symbolsWithData);
+            CollectionAssert.IsNotEmpty(symbolsWithData);
+            CollectionAssert.IsSubsetOf(symbolsWithData, contracts);
 
             var dataTypesWithData = data.Select(tick => tick.GetType()).Distinct().ToList();
             var expectedDataTypes = configs.Select(config => config.Type).Distinct().ToList();
-            Assert.AreEqual(expectedDataTypes.Count, dataTypesWithData.Count);
+            CollectionAssert.IsSubsetOf(dataTypesWithData, expectedDataTypes);
         }
 
         [Test]

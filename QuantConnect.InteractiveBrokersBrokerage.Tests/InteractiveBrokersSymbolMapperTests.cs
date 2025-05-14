@@ -214,6 +214,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             new("6B", "GBP", SecurityType.Future),
             new("AW", "AIGCI", SecurityType.Future),
             new("FESX", "ESTX50", SecurityType.Future),
+            new("FDAX", "DAX", SecurityType.Future),
             new("SX5E", "ESTX50", SecurityType.Index),
         };
 

@@ -19,7 +19,10 @@
     "ETHUSDRR": "ETH",
     "DA": "DC",
     "BQX": "BIO",
-    "ESTX50": "FESX"
+    "ESTX50": "FESX",
+    "DAX": "FDAX",
+    "DDAX": "FDIV",
+    "TDX": "FTDX"
   },
   "Index": {
     "ESTX50": "SX5E",

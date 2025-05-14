@@ -915,6 +915,124 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             brokerage.Message -= onMessage;
         }
 
+        [Test]
+        public void ShouldSkipTickOnlyOnceWithinSkipWindow()
+        {
+            InteractiveBrokersBrokerage._nextNdxMarketOpenSkipTime = default;
+
+            var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
+
+            var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+
+            // Tick before market open on 2025-05-06 - should not skip
+            var firstLocalDateTime = DateTime.Parse("2025-05-06T09:29:30");
+            var firstResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, firstLocalDateTime);
+            Assert.IsFalse(firstResult, "Expected no skip on first tick before market open");
+
+            // First tick after market open on 2025-05-06 - should skip
+            var secondLocalDateTime = DateTime.Parse("2025-05-06T09:30:17");
+            var secondResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, secondLocalDateTime);
+            Assert.IsTrue(secondResult, "Expected skip after market open");
+
+            // Tick before market open on 2025-05-07 - should not skip
+            var thirdLocalDateTime = DateTime.Parse("2025-05-07T09:29:28");
+            var thirdResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, thirdLocalDateTime);
+            Assert.IsFalse(thirdResult, "Expected no skip before market open on next day");
+
+            // First tick after market open on 2025-05-07 - should skip
+            var fourthLocalDateTime = DateTime.Parse("2025-05-07T09:30:02");
+            var fourthResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, fourthLocalDateTime);
+            Assert.IsTrue(fourthResult, "Expected skip on next day after market open");
+        }
+
+        [TestCase("2025-05-06T13:29:59", false, Description = "Tick just before market open")]
+        [TestCase("2025-05-06T13:30:00", true, Description = "Tick at exact market open time")]
+        [TestCase("2025-05-06T13:30:15", true, Description = "Tick 15 seconds after market open")]
+        [TestCase("2025-05-06T13:30:30", false, Description = "Tick 30 seconds after market open")]
+        [TestCase("2025-05-06T13:31:00", false, Description = "Tick 1 minute after market open � outside skip window")]
+        [TestCase("2025-05-06T13:32:00", false, Description = "Tick well after skip window")]
+        [TestCase("2025-05-06T17:31:00", false, Description = "Tick at 1:31 PM EST � unrelated time")]
+        [TestCase("2025-05-06T21:31:00", false, Description = "Tick at market close")]
+        public void ShouldSkipTickMarketClosed(string utcTimeString, bool expectedResult)
+        {
+            InteractiveBrokersBrokerage._nextNdxMarketOpenSkipTime = default;
+
+            var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
+
+            var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+
+            var DateTimeUtcNow = DateTime.Parse(utcTimeString).ConvertFromUtc(ndxSecurityExchangeHours.TimeZone);
+
+            var result = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, DateTimeUtcNow);
+
+            Assert.AreEqual(expectedResult, result);
+        }
+
+        [Test]
+        public void ShouldSkipTickOnlyOnce()
+        {
+            InteractiveBrokersBrokerage._nextNdxMarketOpenSkipTime = default;
+
+            var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
+
+            var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+
+            // Tick before market open on 2025-05-06 - should not skip
+            var firstLocalDateTime = DateTime.Parse("2025-05-06T09:30:00");
+            var firstResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, firstLocalDateTime);
+            Assert.IsTrue(firstResult, "Expected no skip on first tick before market open");
+
+            // First tick after market open on 2025-05-06 - should skip
+            var secondLocalDateTime = DateTime.Parse("2025-05-06T09:30:17");
+            var secondResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, secondLocalDateTime);
+            Assert.IsFalse(secondResult, "Expected skip after market open");
+        }
+
+        [Test]
+        public void ShouldSkipTickOnlyOnceFromFridayToMonday()
+        {
+            InteractiveBrokersBrokerage._nextNdxMarketOpenSkipTime = default;
+
+            var symbol = Symbol.Create("NDX", SecurityType.Index, Market.USA);
+
+            var ndxSecurityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+
+            var fridayPreMarketDateTime = DateTime.Parse("2025-05-09T09:25:00");
+            var fridayPreMarketResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, fridayPreMarketDateTime);
+
+            Assert.IsFalse(fridayPreMarketResult);
+
+            var fridayMarketOpenDateTimeFirstTick = DateTime.Parse("2025-05-09T09:30:01");
+            var fridayMarketOpenFirstTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, fridayMarketOpenDateTimeFirstTick);
+
+            Assert.IsTrue(fridayMarketOpenFirstTickResult);
+
+            var fridayMarketOpenDateTimeSecondTick = DateTime.Parse("2025-05-09T09:30:01");
+            var fridayMarketOpenSecondTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, fridayMarketOpenDateTimeSecondTick);
+
+            Assert.IsFalse(fridayMarketOpenSecondTickResult);
+
+            var sundayDateTime = DateTime.Parse("2025-05-11T09:30:01");
+            var sundayResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, sundayDateTime);
+
+            Assert.IsFalse(sundayResult);
+
+            var mondayPreMarketDateTime = DateTime.Parse("2025-05-12T09:25:00");
+            var mondayPreMarketResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, mondayPreMarketDateTime);
+
+            Assert.IsFalse(mondayPreMarketResult);
+
+            var mondayMarketOpenDateTimeFirstTick = DateTime.Parse("2025-05-12T09:30:01");
+            var mondayMarketOpenFirstTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, mondayMarketOpenDateTimeFirstTick);
+
+            Assert.IsTrue(mondayMarketOpenFirstTickResult);
+
+            var mondayMarketOpenDateTimeSecondTick = DateTime.Parse("2025-05-12T09:30:01");
+            var mondayMarketOpenSecondTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, mondayMarketOpenDateTimeFirstTick);
+
+            Assert.IsFalse(mondayMarketOpenSecondTickResult);
+        }
+
         private List<BaseData> GetHistory(
             Symbol symbol,
             Resolution resolution,

@@ -55,6 +55,9 @@ using Newtonsoft.Json.Linq;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Securities.Forex;
 using QuantConnect.Lean.Engine.Results;
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("QuantConnect.Tests.Brokerages.InteractiveBrokers")]
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
 {
@@ -237,6 +240,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyOpenInterestWarning;
         private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
+
+        /// <summary>
+        /// Represents the next local market open time after which the first 'lastPrice' tick for the NDX index should be skipped.
+        /// This is used to ensure only the initial tick after market open is ignored each trading day.
+        /// </summary>
+        internal static DateTime _nextNdxMarketOpenSkipTime = default;
+
+        /// <summary>
+        /// Stores the exchange hours for the NDX security, used to determine market open/close times and related calculations.
+        /// </summary>
+        private static SecurityExchangeHours _ndxSecurityExchangeHours;
 
         /// <summary>
         /// Returns true if we're currently connected to the broker
@@ -2000,7 +2014,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void HandleUpdateAccountValue(object sender, IB.UpdateAccountValueEventArgs e)
         {
-            //Log.Trace($"HandleUpdateAccountValue(): Key:{e.Key} Value:{e.Value} Currency:{e.Currency} AccountName:{e.AccountName}");
+            if (Log.DebuggingEnabled)
+            {
+                Log.Trace($"HandleUpdateAccountValue(): Key:{e.Key} Value:{e.Value} Currency:{e.Currency} AccountName:{e.AccountName}");
+            }
 
             try
             {
@@ -3936,6 +3953,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case IBApi.TickType.LAST:
                 case IBApi.TickType.DELAYED_LAST:
 
+                    if (symbol.SecurityType == SecurityType.Index && symbol.Value.Equals("NDX", StringComparison.InvariantCultureIgnoreCase))
+                    {
+                        _ndxSecurityExchangeHours ??= MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+                        if (ShouldSkipTick(_ndxSecurityExchangeHours, GetRealTimeTickTime(symbol)))
+                        {
+                            // Clear the last trade tick to prevent using outdated data from the previous day.
+                            entry.LastTradeTick = null;
+                            return;
+                        }
+                    }
+
                     if (entry.LastTradeTick == null)
                     {
                         entry.LastTradeTick = new Tick
@@ -5070,6 +5098,44 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _maxSubscribedSymbolsReached = false;
         private readonly ConcurrentDictionary<Symbol, int> _subscribedSymbols = new ConcurrentDictionary<Symbol, int>();
         private readonly ConcurrentDictionary<int, SubscriptionEntry> _subscribedTickers = new ConcurrentDictionary<int, SubscriptionEntry>();
+
+        /// <summary>
+        /// Determines whether the current tick for the NDX index should be skipped,
+        /// based on whether the symbol's local time has reached or passed the next scheduled market open.
+        /// This is used to avoid processing unreliable ticks during the first 30 seconds of market open.
+        /// If the condition is met, the next skip time is updated to the following market open.
+        /// </summary>
+        /// <param name="exchangeHours">The exchange hours used to determine market open times.</param>
+        /// <param name="symbolTickTime">The local time of the tick to evaluate.</param>
+        /// <returns>
+        /// <c>true</c> if the tick should be skipped (i.e., it's within the first 30 seconds after market open); otherwise, <c>false</c>.
+        /// </returns>
+        internal static bool ShouldSkipTick(SecurityExchangeHours exchangeHours, DateTime symbolTickTime)
+        {
+            // Subtracting 30 seconds here is intentional:
+            // When the market opens (e.g., 9:30 AM EST), the first tick received for NDX via the IB API
+            // often contains the *previous day's close* as the price. This stale tick appears at or just after open.
+            //
+            // The *second* tick that arrives - still within the first few seconds - contains the correct
+            // open price and is the one displayed in IB TWS's open bar.
+            //
+            // By subtracting 30 seconds, we ensure we look *just before* the current tick time,
+            // so `GetNextMarketOpen()` gives us today's 9:30 AM open (not tomorrow's).
+            // This allows us to create a small "skip window" right after market open,
+            // avoiding use of inaccurate initial pricing.
+            if (_nextNdxMarketOpenSkipTime == default)
+            {
+                _nextNdxMarketOpenSkipTime = exchangeHours.GetNextMarketOpen(symbolTickTime.AddSeconds(-30), false);
+            }
+
+            if (symbolTickTime >= _nextNdxMarketOpenSkipTime)
+            {
+                _nextNdxMarketOpenSkipTime = exchangeHours.GetNextMarketOpen(symbolTickTime, false);
+                return true;
+            }
+
+            return false;
+        }
 
         private class SubscriptionEntry
         {
