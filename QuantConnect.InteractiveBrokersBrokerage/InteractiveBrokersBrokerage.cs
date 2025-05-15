@@ -1907,8 +1907,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 if (!_unsupportedSymbols.Add(requestInfo.AssociatedSymbol))
                                 {
                                     return;
-                }
-            }
+                                }
+                            }
                         }
 
                         brokerageMessageType = BrokerageMessageType.Warning;
@@ -2792,10 +2792,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         if (!CheckContractConversionError(error))
                         {
                             throw new Exception($"Failed to convert order {ibOrder.OrderId} for leg {i} of combo order {contract.ComboLegs.Count}", error);
-                }
+                        }
                         // if we fail to convert one leg, we fail the whole order
                         return new List<Order>();
-            }
+                    }
 
                     result.Add(leanOrder);
                 }
@@ -2809,7 +2809,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     if (!CheckContractConversionError(error))
                     {
                         throw new Exception($"Failed to convert order {ibOrder.OrderId}", error);
-            }
+                    }
                     return new List<Order>();
                 }
 
