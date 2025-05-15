@@ -2786,8 +2786,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
 
                     if (!TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
-                        comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState,
-                        out var leanOrder, out var error))
+                            comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState,
+                            out var leanOrder, out var error))
                     {
                         if (!CheckContractConversionError(error))
                         {
@@ -2803,7 +2803,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else
             {
                 if (!TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                    ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState,
+                        ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState,
                         out var leanOrder, out var error))
                 {
                     if (!CheckContractConversionError(error))
