@@ -237,6 +237,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
 
+        // Symbols that IB doesn't support ("No security definition has been found for the request")
+        // We keep track of them to avoid flooding the logs with the same error/warning
+        private readonly HashSet<Symbol> _unsupportedSymbols = new();
+
         /// <summary>
         /// Represents the next local market open time after which the first 'lastPrice' tick for the NDX index should be skipped.
         /// This is used to ensure only the initial tick after market open is ignored each trading day.
@@ -1893,6 +1897,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         return;
                     }
+                    else if (_algorithm != null && _algorithm.Settings.IgnoreUnknownAssetTypes)
+                    {
+                        // Let's make it a one time warning, we don't want to flood the logs with this message
+                        if (requestInfo?.AssociatedSymbol != null)
+                        {
+                            lock (_unsupportedSymbols)
+                            {
+                                if (!_unsupportedSymbols.Add(requestInfo.AssociatedSymbol))
+                                {
+                                    return;
+                }
+            }
+                        }
+
+                        brokerageMessageType = BrokerageMessageType.Warning;
+                    }
                 }
             }
 
@@ -2523,7 +2543,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
                 }
 
-                if (e.Position != 0)
+                if (e.Position != 0 && (_algorithm == null || !_algorithm.Settings.IgnoreUnknownAssetTypes))
                 {
                     // Force a runtime error only with a nonzero position for an unsupported security type,
                     // because after the user has manually closed the position and restarted the algorithm,
@@ -2764,17 +2784,71 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         legLimitPrice = ibOrder.OrderComboLegs[i].Price;
                     }
-                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
-                        comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState));
+
+                    if (!TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
+                        comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState,
+                        out var leanOrder, out var error))
+                    {
+                        if (!CheckContractConversionError(error))
+                        {
+                            throw new Exception($"Failed to convert order {ibOrder.OrderId} for leg {i} of combo order {contract.ComboLegs.Count}", error);
+                }
+                        // if we fail to convert one leg, we fail the whole order
+                        return new List<Order>();
+            }
+
+                    result.Add(leanOrder);
                 }
             }
             else
             {
-                result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                    ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState));
+                if (!TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
+                    ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState,
+                        out var leanOrder, out var error))
+                {
+                    if (!CheckContractConversionError(error))
+                    {
+                        throw new Exception($"Failed to convert order {ibOrder.OrderId}", error);
+            }
+                    return new List<Order>();
+                }
+
+                result.Add(leanOrder);
             }
 
             return result;
+        }
+
+        private bool CheckContractConversionError(Exception exception)
+        {
+            var notSupportedException = exception as NotSupportedException;
+            notSupportedException ??= exception.InnerException as NotSupportedException;
+            if (notSupportedException != null && _algorithm.Settings.IgnoreUnknownAssetTypes)
+            {
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "ConvertOrders", notSupportedException.Message));
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
+            double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager, OrderState orderState,
+            out Order leanOrder, out Exception error)
+        {
+            try
+            {
+                leanOrder = ConvertOrder(timeInForce, goodTillDate, ibOrderId, auxPrice, orderType, quantity,
+                    limitPrice, trailingStopPrice, trailingPercentage, contract, groupOrderManager, orderState);
+                error = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                leanOrder = null;
+                error = ex;
+                return false;
+            }
         }
 
         private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
