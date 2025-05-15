@@ -1908,7 +1908,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         return;
                     }
-                    else if (_algorithm.Settings.IgnoreUnknownAssetTypes)
+                    else if (_algorithm != null && _algorithm.Settings.IgnoreUnknownAssetTypes)
                     {
                         // Let's make it a one time warning, we don't want to flood the logs with this message
                         if (requestInfo?.AssociatedSymbol != null)
