@@ -237,10 +237,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
 
-        // Symbols that IB doesn't support ("No security definition has been found for the request")
-        // We keep track of them to avoid flooding the logs with the same error/warning
-        private readonly HashSet<Symbol> _unsupportedSymbols = new();
-
         /// <summary>
         /// Represents the next local market open time after which the first 'lastPrice' tick for the NDX index should be skipped.
         /// This is used to ensure only the initial tick after market open is ignored each trading day.
@@ -649,17 +645,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns>The current holdings from the account</returns>
         public override List<Holding> GetAccountHoldings()
         {
-            if (_algorithm != null && _accountHoldingsLastException != null)
-            {
-                if (!CheckContractConversionError(_accountHoldingsLastException))
-                {
-                    // if an exception was thrown during account download, exit immediately
-                    throw new Exception(_accountHoldingsLastException.Message, _accountHoldingsLastException);
-                }
-
-                _accountHoldingsLastException = null;
-            }
-
             if (!IsConnected)
             {
                 Log.Trace("InteractiveBrokersBrokerage.GetAccountHoldings(): not connected, connecting now");
@@ -900,7 +885,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                             Disconnect();
 
-                            if (_algorithm == null && _accountHoldingsLastException != null)
+                            if (_accountHoldingsLastException != null)
                             {
                                 // if an exception was thrown during account download, do not retry but exit immediately
                                 attempt = maxAttempts;
@@ -924,7 +909,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                             Disconnect();
 
-                            if (_algorithm == null && _accountHoldingsLastException != null)
+                            if (_accountHoldingsLastException != null)
                             {
                                 // if an exception was thrown during account download, do not retry but exit immediately
                                 attempt = maxAttempts;
@@ -1151,7 +1136,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _cancellationTokenSource.Token.WaitHandle.WaitOne(TimeSpan.FromMinutes(30));
             }
 
-            return result;
+            return result && _accountHoldingsLastException == null;
         }
 
         /// <summary>
@@ -1907,22 +1892,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     else if (requestInfo.RequestType == RequestType.SoftContractDetails)
                     {
                         return;
-                    }
-                    else if (_algorithm != null && _algorithm.Settings.IgnoreUnknownAssetTypes)
-                    {
-                        // Let's make it a one time warning, we don't want to flood the logs with this message
-                        if (requestInfo?.AssociatedSymbol != null)
-                        {
-                            lock (_unsupportedSymbols)
-                            {
-                                if (!_unsupportedSymbols.Add(requestInfo.AssociatedSymbol))
-                                {
-                                    return;
-                                }
-                            }
-                        }
-
-                        brokerageMessageType = BrokerageMessageType.Warning;
                     }
                 }
             }
@@ -2768,71 +2737,44 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var quantitySign = ConvertOrderDirection(ibOrder.Action) == OrderDirection.Sell ? -1 : 1;
             var quantity = Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign;
 
-            try
+            if (contract.SecType == IB.SecurityType.Bag)
             {
-                if (contract.SecType == IB.SecurityType.Bag)
+                // this is a combo order
+                var group = new GroupOrderManager(_algorithm.Transactions.GetIncrementGroupOrderManagerId(), contract.ComboLegs.Count, quantity);
+
+                var orderType = OrderType.ComboMarket;
+                if (ibOrder.LmtPrice != double.MaxValue)
                 {
-                    // this is a combo order
-                    var group = new GroupOrderManager(_algorithm.Transactions.GetIncrementGroupOrderManagerId(), contract.ComboLegs.Count, quantity);
-
-                    var orderType = OrderType.ComboMarket;
-                    if (ibOrder.LmtPrice != double.MaxValue)
-                    {
-                        orderType = OrderType.ComboLimit;
-                    }
-                    else if (!ibOrder.OrderComboLegs.IsNullOrEmpty() && ibOrder.OrderComboLegs.Any(p => p.Price != double.MaxValue))
-                    {
-                        orderType = OrderType.ComboLegLimit;
-                    }
-
-                    for (var i = 0; i < contract.ComboLegs.Count; i++)
-                    {
-                        var comboLeg = contract.ComboLegs[i];
-                        var comboLegContract = new Contract { ConId = comboLeg.ConId };
-                        var contractDetails = GetContractDetails(comboLegContract, string.Empty);
-                        var quantitySignLeg = ConvertOrderDirection(comboLeg.Action) == OrderDirection.Sell ? -1 : 1;
-
-                        var legLimitPrice = ibOrder.LmtPrice;
-                        if (ibOrder.OrderComboLegs.Count == contract.ComboLegs.Count)
-                        {
-                            legLimitPrice = ibOrder.OrderComboLegs[i].Price;
-                        }
-
-                        result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
-                            comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState));
-                    }
+                    orderType = OrderType.ComboLimit;
                 }
-                else
+                else if (!ibOrder.OrderComboLegs.IsNullOrEmpty() && ibOrder.OrderComboLegs.Any(p => p.Price != double.MaxValue))
                 {
-                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                        ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState));
+                    orderType = OrderType.ComboLegLimit;
+                }
+
+                for (var i = 0; i < contract.ComboLegs.Count; i++)
+                {
+                    var comboLeg = contract.ComboLegs[i];
+                    var comboLegContract = new Contract { ConId = comboLeg.ConId };
+                    var contractDetails = GetContractDetails(comboLegContract, string.Empty);
+                    var quantitySignLeg = ConvertOrderDirection(comboLeg.Action) == OrderDirection.Sell ? -1 : 1;
+
+                    var legLimitPrice = ibOrder.LmtPrice;
+                    if (ibOrder.OrderComboLegs.Count == contract.ComboLegs.Count)
+                    {
+                        legLimitPrice = ibOrder.OrderComboLegs[i].Price;
+                    }
+                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
+                        comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState));
                 }
             }
-            catch (Exception ex)
+            else
             {
-                if (CheckContractConversionError(ex))
-                {
-                    // Return empty so the algorithm is not terminated
-                    return new List<Order>();
-                }
-
-                throw;
+                result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
+                    ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState));
             }
 
             return result;
-        }
-
-        private bool CheckContractConversionError(Exception exception)
-        {
-            var notSupportedException = exception as NotSupportedException;
-            notSupportedException ??= exception.InnerException as NotSupportedException;
-            if (notSupportedException != null && _algorithm.Settings.IgnoreUnknownAssetTypes)
-            {
-                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "ConvertOrders", notSupportedException.Message));
-                return true;
-            }
-
-            return false;
         }
 
         private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
@@ -3837,16 +3779,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     if (CanSubscribe(symbol))
                     {
-                        lock (_unsupportedSymbols)
-                        {
-                            // We tried to subscribe to this symbol but IB rejected it ("No security definition has been found for the request"),
-                            // no need to unsubscribe.
-                            if (_unsupportedSymbols.Contains(symbol))
-                            {
-                                continue;
-                            }
-                        }
-
                         lock (_sync)
                         {
                             Log.Trace($"InteractiveBrokersBrokerage.Unsubscribe(): Unsubscribe Request: {symbol.Value}. SubscribedSymbols.Count: {_subscribedSymbols.Count}");
