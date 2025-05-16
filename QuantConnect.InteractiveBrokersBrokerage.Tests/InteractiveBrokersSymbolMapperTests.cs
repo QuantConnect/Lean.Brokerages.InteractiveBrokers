@@ -216,6 +216,11 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             new("FESX", "ESTX50", SecurityType.Future),
             new("FDAX", "DAX", SecurityType.Future),
             new("SX5E", "ESTX50", SecurityType.Index),
+            new("IBV", "IBAA", SecurityType.Index),
+            new("FINNIFTY", "NSEFIN", SecurityType.Index),
+            new("MIDCPNIFTY", "MIDCAPSEL", SecurityType.Index),
+            new("BANKNIFTY", "BANKNIFTY", SecurityType.Index),
+            new("NIFTY", "NIFTY50", SecurityType.Index),
         };
 
         [TestCaseSource(nameof(LeanIbSymbolMappingTestCases))]

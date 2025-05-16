@@ -302,6 +302,11 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [TestCase("FDAX")]
         [TestCase("FDIV")]
         [TestCase("FTDX")]
+        [TestCase("NIFTY")]
+        [TestCase("BANKNIFTY")]
+        [TestCase("MIDCPNIFTY")]
+        [TestCase("FINNIFTY")]
+        [TestCase("IBV")]
         public void CanSubscribeToEurexFutures(string ticker)
         {
             // Wait a bit to make sure previous tests already disconnected from IB
