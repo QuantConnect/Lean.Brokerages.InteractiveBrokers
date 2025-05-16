@@ -47,6 +47,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                     { Market.ICE, "NYBOT" },
                     { Market.CFE, "CFE" },
                     { Market.NYSELIFFE, "NYSELIFFE" }
+                    { Market.INDIA, "NSE" }
                 };
 
                 var tickersByMarket = new Dictionary<string, string[]>
@@ -142,7 +143,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                             "NQ",
                             "MicroNQ",
                             "RTY",
-                            "M2K"
+                            "M2K",
+                            "IBVQ5"
                         }
                     },
                     {
@@ -274,6 +276,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                             "ZG",
                             "ZI"
                         }
+                    },
+                      {
+                        Market.INDIA,
+                        new[]
+                        {
+                            "NIFTY",
+                        }
                     }
                 };
 
@@ -321,7 +330,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                         new[]
                         {
                             "AJY",
-                            "ANE"
+                            "ANE",
+                            "IBV"
                         }
 
                     },
@@ -340,6 +350,16 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                             "FDAX",
                             "FDIV",
                             "FTDX"
+                        }
+                    },
+                    {
+                        Market.INDIA,
+                        new[]
+                        {
+                            "NIFTY",
+                            "BANKNIFTY",
+                            "MIDCPNIFTY",
+                            "FINNIFTY"
                         }
                     },
                 };
