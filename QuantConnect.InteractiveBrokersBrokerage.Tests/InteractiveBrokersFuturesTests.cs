@@ -135,7 +135,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                             "GF",
                             //"GNF",
                             "HE",
-                            //"IBV",
+                            "IBV",
                             "J7",
                             //"LBS",
                             "LE",
@@ -331,7 +331,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                         {
                             "AJY",
                             "ANE",
-                            "IBV"
                         }
 
                     },
