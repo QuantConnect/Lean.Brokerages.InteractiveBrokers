@@ -22,7 +22,12 @@
     "ESTX50": "FESX",
     "DAX": "FDAX",
     "DDAX": "FDIV",
-    "TDX": "FTDX"
+    "TDX": "FTDX",
+    "NIFTY50": "NIFTY",
+    "BANKNIFTY": "BANKNIFTY",
+    "MIDCAPSEL": "MIDCPNIFTY",
+    "NSEFIN": "FINNIFTY",
+    "IBAA": "IBV"
   },
   "Index": {
     "ESTX50": "SX5E",
