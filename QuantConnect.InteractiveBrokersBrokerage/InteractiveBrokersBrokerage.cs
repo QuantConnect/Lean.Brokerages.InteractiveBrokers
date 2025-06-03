@@ -56,6 +56,7 @@ using QuantConnect.Data.Auxiliary;
 using QuantConnect.Securities.Forex;
 using QuantConnect.Lean.Engine.Results;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 
 [assembly: InternalsVisibleTo("QuantConnect.Tests.Brokerages.InteractiveBrokers")]
 
@@ -1897,7 +1898,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         return;
                     }
-                    else if (_algorithm != null && _algorithm.Settings.IgnoreUnknownAssetTypes)
+                    else if (_algorithm != null && _algorithm.Settings.IgnoreUnknownAssetHoldings)
                     {
                         // Let's make it a one time warning, we don't want to flood the logs with this message
                         if (requestInfo?.AssociatedSymbol != null)
@@ -2543,14 +2544,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
                 }
 
-                if (e.Position != 0 && (_algorithm == null || !_algorithm.Settings.IgnoreUnknownAssetTypes))
+                if (e.Position != 0)
                 {
                     // Force a runtime error only with a nonzero position for an unsupported security type,
                     // because after the user has manually closed the position and restarted the algorithm,
                     // he'll have a zero position but a nonzero realized PNL, so this event handler will be called again.
 
-                    _accountHoldingsLastException = exception;
-                    _accountHoldingsResetEvent.Set();
+                    if (_algorithm == null || !_algorithm.Settings.IgnoreUnknownAssetHoldings)
+                    {
+                        _accountHoldingsLastException = exception;
+                        _accountHoldingsResetEvent.Set();
+                    }
+                    else
+                    {
+                        CheckContractConversionError(ExceptionDispatchInfo.Capture(exception), rethrow: false);
+                    }
                 }
             }
         }
@@ -2787,12 +2795,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (!TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
                             comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState,
-                            out var leanOrder, out var error))
+                            out var leanOrder))
                     {
-                        if (!CheckContractConversionError(error))
-                        {
-                            throw new Exception($"Failed to convert order {ibOrder.OrderId} for leg {i} of combo order {contract.ComboLegs.Count}", error);
-                        }
                         // if we fail to convert one leg, we fail the whole order
                         return new List<Order>();
                     }
@@ -2804,12 +2808,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 if (!TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
                         ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState,
-                        out var leanOrder, out var error))
+                        out var leanOrder))
                 {
-                    if (!CheckContractConversionError(error))
-                    {
-                        throw new Exception($"Failed to convert order {ibOrder.OrderId}", error);
-                    }
                     return new List<Order>();
                 }
 
@@ -2819,34 +2819,36 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return result;
         }
 
-        private bool CheckContractConversionError(Exception exception)
+        private void CheckContractConversionError(ExceptionDispatchInfo dispatchInfo, bool rethrow = true)
         {
+            var exception = dispatchInfo.SourceException;
             var notSupportedException = exception as NotSupportedException;
             notSupportedException ??= exception.InnerException as NotSupportedException;
-            if (notSupportedException != null && _algorithm.Settings.IgnoreUnknownAssetTypes)
+            if (notSupportedException != null && _algorithm.Settings.IgnoreUnknownAssetHoldings)
             {
                 OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "ConvertOrders", notSupportedException.Message));
-                return true;
-            }
 
-            return false;
+            }
+            else if (rethrow)
+            {
+                dispatchInfo.Throw();
+            }
         }
 
         private bool TryConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
             double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager, OrderState orderState,
-            out Order leanOrder, out Exception error)
+            out Order leanOrder)
         {
             try
             {
                 leanOrder = ConvertOrder(timeInForce, goodTillDate, ibOrderId, auxPrice, orderType, quantity,
                     limitPrice, trailingStopPrice, trailingPercentage, contract, groupOrderManager, orderState);
-                error = null;
                 return true;
             }
             catch (Exception ex)
             {
                 leanOrder = null;
-                error = ex;
+                CheckContractConversionError(ExceptionDispatchInfo.Capture(ex));
                 return false;
             }
         }
