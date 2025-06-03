@@ -240,7 +240,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         // Symbols that IB doesn't support ("No security definition has been found for the request")
         // We keep track of them to avoid flooding the logs with the same error/warning
-        private readonly HashSet<Symbol> _unsupportedSymbols = new();
+        private readonly HashSet<string> _unsupportedAssets = new();
 
         /// <summary>
         /// Represents the next local market open time after which the first 'lastPrice' tick for the NDX index should be skipped.
@@ -1903,9 +1903,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         // Let's make it a one time warning, we don't want to flood the logs with this message
                         if (requestInfo?.AssociatedSymbol != null)
                         {
-                            lock (_unsupportedSymbols)
+                            lock (_unsupportedAssets)
                             {
-                                if (!_unsupportedSymbols.Add(requestInfo.AssociatedSymbol))
+                                if (!_unsupportedAssets.Add($"{requestInfo.AssociatedSymbol.Value}-{requestInfo.AssociatedSymbol.SecurityType}"))
                                 {
                                     return;
                                 }
@@ -2557,7 +2557,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
                     else
                     {
-                        CheckContractConversionError(ExceptionDispatchInfo.Capture(exception), rethrow: false);
+                        CheckContractConversionError(exception, e.Contract, rethrow: false);
                     }
                 }
             }
@@ -2804,34 +2804,32 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     result.Add(leanOrder);
                 }
             }
-            else
+            else if (TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
+                ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState, out var leanOrder))
             {
-                if (!TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                        ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState,
-                        out var leanOrder))
-                {
-                    return new List<Order>();
-                }
-
                 result.Add(leanOrder);
             }
 
             return result;
         }
 
-        private void CheckContractConversionError(ExceptionDispatchInfo dispatchInfo, bool rethrow = true)
+        private void CheckContractConversionError(Exception exception, Contract contract, bool rethrow = true)
         {
-            var exception = dispatchInfo.SourceException;
             var notSupportedException = exception as NotSupportedException;
             notSupportedException ??= exception.InnerException as NotSupportedException;
             if (notSupportedException != null && _algorithm.Settings.IgnoreUnknownAssetHoldings)
             {
-                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "ConvertOrders", notSupportedException.Message));
-
+                lock (_unsupportedAssets)
+                {
+                    if (contract == null || _unsupportedAssets.Add($"{contract.Symbol}-{contract.SecType}"))
+                    {
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "ConvertOrders", notSupportedException.Message));
+                    }
+                }
             }
             else if (rethrow)
             {
-                dispatchInfo.Throw();
+                throw exception;
             }
         }
 
@@ -2848,7 +2846,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             catch (Exception ex)
             {
                 leanOrder = null;
-                CheckContractConversionError(ExceptionDispatchInfo.Capture(ex));
+                CheckContractConversionError(ex, contract);
                 return false;
             }
         }
