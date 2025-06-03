@@ -30,8 +30,8 @@
   </ItemGroup>
 
   <ItemGroup>
-		<ProjectReference Include="..\..\Lean\Brokerages\QuantConnect.Brokerages.csproj" />
-		<ProjectReference Include="..\..\Lean\Engine\QuantConnect.Lean.Engine.csproj" />
+	  <PackageReference Include="QuantConnect.Brokerages" Version="2.5.*" />
+	  <PackageReference Include="QuantConnect.Lean.Engine" Version="2.5.*" />
 	  <PackageReference Include="QuantConnect.IBAutomater" Version="2.0.85">
 		  <!--
 		  Content files of dependencies are excluded by default.
