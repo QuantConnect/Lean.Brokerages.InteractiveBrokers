@@ -56,7 +56,6 @@ using QuantConnect.Data.Auxiliary;
 using QuantConnect.Securities.Forex;
 using QuantConnect.Lean.Engine.Results;
 using System.Runtime.CompilerServices;
-using System.Runtime.ExceptionServices;
 
 [assembly: InternalsVisibleTo("QuantConnect.Tests.Brokerages.InteractiveBrokers")]
 
