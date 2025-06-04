@@ -237,6 +237,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
 
+        // Symbols that IB doesn't support ("No security definition has been found for the request")
+        // We keep track of them to avoid flooding the logs with the same error/warning
+        private readonly HashSet<string> _unsupportedAssets = new();
+
         /// <summary>
         /// Represents the next local market open time after which the first 'lastPrice' tick for the NDX index should be skipped.
         /// This is used to ensure only the initial tick after market open is ignored each trading day.
@@ -1893,6 +1897,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         return;
                     }
+                    else if (_algorithm != null && _algorithm.Settings.IgnoreUnknownAssetHoldings)
+                    {
+                        // Let's make it a one time warning, we don't want to flood the logs with this message
+                        if (requestInfo?.AssociatedSymbol != null)
+                        {
+                            lock (_unsupportedAssets)
+                            {
+                                if (!_unsupportedAssets.Add($"{requestInfo.AssociatedSymbol.Value}-{requestInfo.AssociatedSymbol.SecurityType}"))
+                                {
+                                    return;
+                                }
+                            }
+                        }
+
+                        brokerageMessageType = BrokerageMessageType.Warning;
+                    }
                 }
             }
 
@@ -2529,8 +2549,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     // because after the user has manually closed the position and restarted the algorithm,
                     // he'll have a zero position but a nonzero realized PNL, so this event handler will be called again.
 
-                    _accountHoldingsLastException = exception;
-                    _accountHoldingsResetEvent.Set();
+                    if (_algorithm == null || !_algorithm.Settings.IgnoreUnknownAssetHoldings)
+                    {
+                        _accountHoldingsLastException = exception;
+                        _accountHoldingsResetEvent.Set();
+                    }
+                    else
+                    {
+                        CheckContractConversionError(exception, e.Contract, rethrow: false);
+                    }
                 }
             }
         }
@@ -2764,17 +2791,63 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         legLimitPrice = ibOrder.OrderComboLegs[i].Price;
                     }
-                    result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
-                        comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState));
+
+                    if (!TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
+                            comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState,
+                            out var leanOrder))
+                    {
+                        // if we fail to convert one leg, we fail the whole order
+                        return new List<Order>();
+                    }
+
+                    result.Add(leanOrder);
                 }
             }
-            else
+            else if (TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
+                ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState, out var leanOrder))
             {
-                result.Add(ConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                    ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState));
+                result.Add(leanOrder);
             }
 
             return result;
+        }
+
+        private void CheckContractConversionError(Exception exception, Contract contract, bool rethrow = true)
+        {
+            var notSupportedException = exception as NotSupportedException;
+            notSupportedException ??= exception.InnerException as NotSupportedException;
+            if (notSupportedException != null && _algorithm.Settings.IgnoreUnknownAssetHoldings)
+            {
+                lock (_unsupportedAssets)
+                {
+                    if (contract == null || _unsupportedAssets.Add($"{contract.Symbol}-{contract.SecType}"))
+                    {
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "ConvertOrders", notSupportedException.Message));
+                    }
+                }
+            }
+            else if (rethrow)
+            {
+                throw exception;
+            }
+        }
+
+        private bool TryConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
+            double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager, OrderState orderState,
+            out Order leanOrder)
+        {
+            try
+            {
+                leanOrder = ConvertOrder(timeInForce, goodTillDate, ibOrderId, auxPrice, orderType, quantity,
+                    limitPrice, trailingStopPrice, trailingPercentage, contract, groupOrderManager, orderState);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                leanOrder = null;
+                CheckContractConversionError(ex, contract);
+                return false;
+            }
         }
 
         private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
