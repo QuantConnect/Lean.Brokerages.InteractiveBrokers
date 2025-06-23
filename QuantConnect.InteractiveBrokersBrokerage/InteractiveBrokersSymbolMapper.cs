@@ -218,7 +218,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ? rootSymbol
                 : brokerageRootSymbol;
 
-            if (securityType == SecurityType.Equity || securityType == SecurityType.Option)
+            if (securityType == SecurityType.Equity || securityType == SecurityType.Option || securityType == SecurityType.Cfd)
             {
                 ticker = ticker.Replace(" ", ".");
             }
@@ -290,7 +290,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var mapFile = _mapFileProvider.Get(AuxiliaryDataKey.Create(symbol)).ResolveMapFile(symbol);
                 ticker = mapFile.GetMappedSymbol(DateTime.UtcNow, symbol.Value).Replace(".", " ");
             }
-
+            else if (symbol.SecurityType == SecurityType.Cfd)
+            {
+                ticker = ticker.Replace(".", " ");
+            }
             return ticker;
         }
 
