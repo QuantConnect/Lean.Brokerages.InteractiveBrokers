@@ -2706,13 +2706,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             else if (comboLimitOrder != null)
             {
-                AddGuaranteedTag(ibOrder, false);
+                AddGuaranteedTag(ibOrder, orders.All(x => x.SecurityType == SecurityType.Equity));
                 var baseContract = CreateContract(order.Symbol, includeExpired: false);
                 ibOrder.LmtPrice = NormalizePriceToBrokerage(comboLimitOrder.GroupOrderManager.LimitPrice, baseContract, order.Symbol);
             }
             else if (comboMarketOrder != null)
             {
-                AddGuaranteedTag(ibOrder, false);
+                AddGuaranteedTag(ibOrder, orders.All(x => x.SecurityType == SecurityType.Equity));
             }
 
             // add financial advisor properties

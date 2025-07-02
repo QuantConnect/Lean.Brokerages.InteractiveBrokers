@@ -82,6 +82,50 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Config.Set("ib-user-name", originalUserName);
         }
 
+        [TestCase(OrderType.ComboMarket, 0, OrderDirection.Buy, OrderDirection.Buy, OrderDirection.Buy, true, SecurityType.Option)]
+        [TestCase(OrderType.ComboLimit, 10, OrderDirection.Buy, OrderDirection.Buy, OrderDirection.Buy, false, SecurityType.Option)]
+
+        [TestCase(OrderType.ComboLimit, 25, OrderDirection.Buy, OrderDirection.Buy, OrderDirection.Buy, false, SecurityType.Equity)]
+        [TestCase(OrderType.ComboMarket, 0, OrderDirection.Buy, OrderDirection.Buy, OrderDirection.Buy, false, SecurityType.Equity)]
+        [TestCase(OrderType.ComboMarket, 0, OrderDirection.Sell, OrderDirection.Buy, OrderDirection.Buy, false, SecurityType.Equity)]
+        public void ComboStockOrder(OrderType orderType, decimal comboLimitPrice, OrderDirection comboDirection, OrderDirection callDirection, OrderDirection secondCallDirection, bool addUnderlying, SecurityType securityType)
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
+            brokerage.Connect();
+
+            var orders = CreateOrders(orderType, comboLimitPrice, comboDirection, callDirection, secondCallDirection, addUnderlying, securityType);
+            var events = new List<OrderEvent>();
+            using var manualResetEvent = new ManualResetEvent(false);
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                events.AddRange(orderEvents);
+                foreach (var order in orders)
+                {
+                    foreach (var orderEvent in orderEvents)
+                    {
+                        if (orderEvent.OrderId == order.Id)
+                        {
+                            // update the order like the BTH would do
+                            order.Status = orderEvent.Status;
+                        }
+                    }
+
+                    if (orders.All(o => o.Status.IsClosed()) || orderType == OrderType.ComboLimit && orders.All(o => o.Status == OrderStatus.Submitted))
+                    {
+                        manualResetEvent.Set();
+                    }
+                }
+            };
+            foreach (var order in orders)
+            {
+                orderProvider.Add(order);
+                Assert.IsTrue(brokerage.PlaceOrder(order));
+            }
+            Assert.IsTrue(manualResetEvent.WaitOne(TimeSpan.FromSeconds(60)));
+        }
+
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0, OrderDirection.Buy, OrderDirection.Sell)]
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0, OrderDirection.Sell, OrderDirection.Sell)]
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0, OrderDirection.Sell, OrderDirection.Buy)]
@@ -1272,6 +1316,66 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 limitPrice, 0, DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
             securityTransactionManager.SetOrderId(request);
             return Order.CreateOrder(request);
+        }
+
+        private List<Order> CreateOrders(OrderType orderType, decimal comboLimitPrice, OrderDirection comboDirection, OrderDirection callDirection, OrderDirection secondCallDirection, bool addUnderlying, SecurityType securityType)
+        {
+            var algo = new AlgorithmStub();
+            var group = new GroupOrderManager(1, legCount: 2, quantity: comboDirection == OrderDirection.Buy ? 2 : -2);
+
+            var symbols = GetSymbols(securityType);
+            var comboOrderCall = BuildOrder(orderType, symbols[1], callDirection == OrderDirection.Buy ? 1 : -1, comboLimitPrice, group, 0, null, algo.Transactions);
+            var orders = new List<Order> { comboOrderCall };
+
+            if (!addUnderlying)
+            {
+                var comboOrderPut = BuildOrder(orderType, symbols[2], secondCallDirection == OrderDirection.Buy ? 1 : -1, comboLimitPrice, group,
+                    0, null, algo.Transactions);
+                orders.Add(comboOrderPut);
+            }
+            else
+            {
+                orders.Add(BuildOrder(orderType, symbols[0], -100, comboLimitPrice, group, 0, null, algo.Transactions));
+            }
+            return orders;
+        }
+
+        private Symbol[] GetSymbols(SecurityType securityType)
+        {
+            if (securityType == SecurityType.Equity)
+            {
+                return [Symbols.SPY, Symbols.IBM, Symbols.AAPL];
+            }
+            else if (securityType == SecurityType.Option)
+            {
+                var underlying = Symbols.SPY;
+                var optionsExpiration = new DateTime(2025, 12, 19);
+                var symbol1 = Symbol.CreateOption(underlying, underlying.ID.Market, OptionStyle.American, OptionRight.Call, 430, optionsExpiration);
+                var symbol2 = Symbol.CreateOption(underlying, underlying.ID.Market, OptionStyle.American, OptionRight.Call, 435, optionsExpiration);
+                return [underlying, symbol1, symbol2];
+            }
+            else if (securityType == SecurityType.IndexOption)
+            {
+                var underlying = Symbols.SPX;
+                var optionsExpiration = new DateTime(2025, 7, 18);
+                var symbol1 = Symbol.CreateOption(underlying, "SPXW", underlying.ID.Market, OptionStyle.European, OptionRight.Call, 5505m, optionsExpiration);
+                var symbol2 = Symbol.CreateOption(underlying, underlying.ID.Market, OptionStyle.European, OptionRight.Call, 5500m, optionsExpiration);
+                return [underlying, symbol1, symbol2];
+            }
+            else if (securityType == SecurityType.FutureOption)
+            {
+                var underlying = Symbol.CreateFuture("ES", Market.CME, new DateTime(2025, 12, 19));
+                var symbol1 = Symbol.CreateOption(underlying, Market.CME, OptionStyle.American, OptionRight.Call, 6000m, new DateTime(2025, 12, 19));
+                var symbol2 = Symbol.CreateOption(underlying, Market.CME, OptionStyle.American, OptionRight.Call, 6100m, new DateTime(2025, 12, 19));
+                return [underlying, symbol1, symbol2];
+            }
+            else if (securityType == SecurityType.Future)
+            {
+                var underlying = Symbol.CreateFuture("ES", Market.CME, new DateTime(2025, 9, 19));
+                var underlying2 = Symbol.CreateFuture("ES", Market.CME, new DateTime(2025, 12, 19));
+                return [null, underlying2, underlying];
+            }
+            throw new NotImplementedException();
         }
     }
 }
