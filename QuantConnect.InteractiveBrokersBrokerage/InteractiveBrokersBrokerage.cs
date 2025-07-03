@@ -2794,56 +2794,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            // add financial advisor properties
-            if (IsFinancialAdvisor)
-            {
-                ibOrder.FaGroup ??= _financialAdvisorsGroupFilter ??= string.Empty;
-
-                // https://interactivebrokers.github.io/tws-api/financial_advisor.html#gsc.tab=0
-
-                if (orderProperties != null)
-                {
-                    if (!_sentFAOrderPropertiesWarning &&
-                        (!string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.Account)
-                        || !string.IsNullOrWhiteSpace(orderProperties.FaProfile) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)
-                        || !string.IsNullOrWhiteSpace(orderProperties.Account) && !string.IsNullOrWhiteSpace(orderProperties.FaGroup)))
-                    {
-                        // warning these are mutually exclusive
-                        _sentFAOrderPropertiesWarning = true;
-                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "PlaceOrder",
-                            "Order properties 'FaProfile', 'FaGroup' & 'Account' are mutually exclusive"));
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(orderProperties.Account))
-                    {
-                        // order for a single managed account
-                        ibOrder.Account = orderProperties.Account;
-                    }
-                    else if (!string.IsNullOrWhiteSpace(orderProperties.FaGroup) || !string.IsNullOrWhiteSpace(orderProperties.FaProfile))
-                    {
-                        // order for an account group
-                        ibOrder.FaGroup = orderProperties.FaGroup;
-                        if (string.IsNullOrWhiteSpace(ibOrder.FaGroup))
-                        {
-                            // we were given a profile
-                            ibOrder.FaGroup = orderProperties.FaProfile;
-                        }
-
-                        ibOrder.FaMethod = orderProperties.FaMethod;
-
-                        if (ibOrder.FaMethod == "PctChange")
-                        {
-                            ibOrder.FaPercentage = orderProperties.FaPercentage.ToStringInvariant();
-                            ibOrder.TotalQuantity = 0;
-                        }
-                    }
-                    // IB docs say "Use an empty string if not applicable."  https://www.interactivebrokers.com/campus/ibkr-api-page/twsapi-ref/#order-ref
-                    ibOrder.FaMethod ??= string.Empty;
-                    ibOrder.FaGroup ??= string.Empty;
-                    ibOrder.Account ??= string.Empty;
-                }
-            }
-
             // not yet supported
             //ibOrder.ParentId =
             //ibOrder.OcaGroup =
