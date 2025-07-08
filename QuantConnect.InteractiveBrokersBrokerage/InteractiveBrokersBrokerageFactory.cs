@@ -81,7 +81,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var password = Read<string>(job.BrokerageData, "ib-password", errors);
             var tradingMode = Read<string>(job.BrokerageData, "ib-trading-mode", errors);
             var agentDescription = Read<string>(job.BrokerageData, "ib-agent-description", errors);
-            var financialAdvisorsGroupFilter = Read<string>(job.BrokerageData, "ib-financial-advisors-group-filter", errors);
+            if (job.BrokerageData.TryGetValue("ib-financial-advisors-group-filter", out var financialAdvisorsGroupFilter) && string.IsNullOrEmpty(financialAdvisorsGroupFilter))
+            {
+                // Use master account when FA group filter is empty
+                financialAdvisorsGroupFilter = default;
+            }
 
             var loadExistingHoldings = true;
             if (job.BrokerageData.ContainsKey("load-existing-holdings"))
