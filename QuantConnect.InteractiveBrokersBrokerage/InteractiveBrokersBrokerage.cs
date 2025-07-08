@@ -909,10 +909,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (IsFinancialAdvisor)
                     {
-                        // If no FA group filter is set, use the current (master) account.
-                        // The master account has access to all available sub-accounts for trading.
-                        var faGroupFilter = string.IsNullOrEmpty(_financialAdvisorsGroupFilter) ? GetAccountName() : _financialAdvisorsGroupFilter;
-                        if (!DownloadFinancialAdvisorAccount(faGroupFilter))
+                        if (!DownloadFinancialAdvisorAccount())
                         {
                             Log.Trace("InteractiveBrokersBrokerage.Connect(): DownloadFinancialAdvisorAccount failed.");
 
@@ -1084,20 +1081,23 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// Downloads account and position data for the specified financial advisor group.
         /// This is typically called after a successful connection to ensure all relevant data is available before proceeding.
         /// </summary>
-        /// <param name="faGroupFilter">
-        /// The financial advisor group identifier to request data for.
-        /// If empty, the method will request data for the default account.
-        /// </param>
         /// <returns><c>true</c> if both account and position data were received within the timeout period; otherwise, <c>false</c>.</returns>
-        private bool DownloadFinancialAdvisorAccount(string faGroupFilter)
+        private bool DownloadFinancialAdvisorAccount()
         {
-            using var accountDataReceived = new AutoResetEvent(false);
-            using var positionDataReceived = new ManualResetEvent(false);
-
-            void OnAccountUpdateMulti(object _, IB.UpdateAccountValueEventArgs args)
+            if (string.IsNullOrEmpty(_financialAdvisorsGroupFilter))
             {
-                accountDataReceived.Set();
+                // Only one account can be subscribed at a time.
+                // With Financial Advisory (FA) account structures there is an alternative way of
+                // specifying the account code such that information is returned for 'All' sub accounts.
+                // This is done by appending the letter 'A' to the end of the account number
+                // https://interactivebrokers.github.io/tws-api/account_updates.html#gsc.tab=0
+
+                // subscribe to the FA account
+                return DownloadAccount();
             }
+
+            using var accountDataReceived = new AutoResetEvent(false);
+            using var positionDataReceived = new AutoResetEvent(false);
 
             void OnAccountUpdateMultiEnd(object _, IB.AccountUpdateMultiEndEventArgs args)
             {
@@ -1111,27 +1111,32 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 positionDataReceived.Set();
             }
 
-            _client.AccountUpdateMulti += OnAccountUpdateMulti;
             _client.AccountUpdateMultiEnd += OnAccountUpdateMultiEnd;
             _client.PositionMultiEnd += OnPositionMultiEnd;
 
             try
             {
-                _client.RequestAccountUpdatesMulti(GetNextId(), faGroupFilter);
-                _client.RequestPositionsMulti(GetNextId(), faGroupFilter);
+                _client.RequestAccountUpdatesMulti(GetNextId(), _financialAdvisorsGroupFilter);
 
-                // Wait for first account update and its completion
-                var accountUpdateSuccess = accountDataReceived.WaitOne(TimeSpan.FromMilliseconds(2500))
-                                           && accountDataReceived.WaitOne(TimeSpan.FromMilliseconds(2500));
+                if (!accountDataReceived.WaitOne(TimeSpan.FromSeconds(10)))
+                {
+                    Log.Error($"InteractiveBrokersBrokerage.DownloadFinancialAdvisorAccount(): Timed out while waiting for account updates for FA group: {_financialAdvisorsGroupFilter}");
+                    return false;
+                }
+
+                _client.RequestPositionsMulti(GetNextId(), _financialAdvisorsGroupFilter);
 
                 // Wait for position update to finish
-                var positionUpdateSuccess = positionDataReceived.WaitOne(TimeSpan.FromSeconds(10));
+                if (!positionDataReceived.WaitOne(TimeSpan.FromSeconds(20)))
+                {
+                    Log.Error($"InteractiveBrokersBrokerage.DownloadFinancialAdvisorAccount(): Timed out while waiting for position updates for FA group: {_financialAdvisorsGroupFilter}");
+                    return false;
+                }
 
-                return accountUpdateSuccess && positionUpdateSuccess;
+                return true;
             }
             finally
             {
-                _client.AccountUpdateMulti -= OnAccountUpdateMulti;
                 _client.AccountUpdateMultiEnd -= OnAccountUpdateMultiEnd;
                 _client.PositionMultiEnd -= OnPositionMultiEnd;
             }
@@ -1223,15 +1228,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 if (_client != null && _client.ClientSocket != null && _client.Connected)
                 {
-                    if (IsFinancialAdvisor)
-                    {
-                        _client.CancelAccountUpdatesMulti(GetNextId());
-                        _client.CancelPositionsMulti(GetNextId());
-                    }
-                    else
+                    if (string.IsNullOrEmpty(_financialAdvisorsGroupFilter))
                     {
                         // unsubscribe from account updates
                         _client.ClientSocket.reqAccountUpdates(subscribe: false, GetAccountName());
+                    }
+                    else
+                    {
+                        _client.CancelAccountUpdatesMulti(GetNextId());
+                        _client.CancelPositionsMulti(GetNextId());
                     }
                 }
             }
@@ -1331,7 +1336,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _loadExistingHoldings = loadExistingHoldings;
             _algorithm = algorithm;
             _orderProvider = orderProvider;
-            _financialAdvisorsGroupFilter = financialAdvisorsGroupFilter;
+
+            if (!string.IsNullOrEmpty(financialAdvisorsGroupFilter))
+            {
+                Log.Trace($"InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): Using Financial Advisor group filter: '{financialAdvisorsGroupFilter}'");
+                _financialAdvisorsGroupFilter = financialAdvisorsGroupFilter;
+            }
 
             _mapFileProvider = Composer.Instance.GetPart<IMapFileProvider>();
             if (_mapFileProvider == null)
@@ -2637,11 +2647,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     var holding = CreateHolding(e);
 
-                    _accountData.AccountHoldings.AddOrUpdate(holding.Symbol.Value, holding, (k, holding) =>
+                    lock (_accountData.AccountHoldings)
                     {
-                        _accountData.AccountHoldings[holding.Symbol.Value].Quantity += e.Position;
-                        return _accountData.AccountHoldings[holding.Symbol.Value];
-                    });
+                        if (_accountData.AccountHoldings.TryGetValue(holding.Symbol.Value, out var existingHolding))
+                        {
+                            // Accumulate position - FA group requests return positions from multiple accounts in the group
+                            existingHolding.Quantity += e.Position;
+                        }
+                        else
+                        {
+                            _accountData.AccountHoldings[holding.Symbol.Value] = holding;
+                        }
+                    }
                 }
             }
             catch (Exception exception)
@@ -2820,7 +2837,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (IsFinancialAdvisor)
             {
                 // https://interactivebrokers.github.io/tws-api/financial_advisor.html#gsc.tab=0
-                ibOrder.FaGroup ??= _financialAdvisorsGroupFilter ??= string.Empty;
+                if (!string.IsNullOrEmpty(_financialAdvisorsGroupFilter))
+                {
+                    ibOrder.FaGroup = _financialAdvisorsGroupFilter;
+                }
 
                 if (orderProperties != null)
                 {
