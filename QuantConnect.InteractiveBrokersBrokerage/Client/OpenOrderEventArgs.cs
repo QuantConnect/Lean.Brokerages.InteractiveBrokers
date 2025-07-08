@@ -59,7 +59,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// </summary>
         public override string ToString()
         {
-            return $"OrderId: {OrderId}, Contract: {Contract}, OrderStatus: {OrderState.Status}";
+            var faGroupInfo = string.IsNullOrEmpty(Order.FaGroup) ? string.Empty : $", FA Group: {Order.FaGroup}";
+            return $"OrderId: {OrderId}, Contract: {Contract}, OrderStatus: {OrderState.Status}{faGroupInfo}";
         }
     }
 }
