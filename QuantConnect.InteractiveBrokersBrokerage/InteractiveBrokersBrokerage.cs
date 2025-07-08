@@ -560,6 +560,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (IsFaGroupFlitterSet(args.Order.FaGroup))
                     {
+                        if (_skippedOrdersByFaGroup.TryAdd(args.OrderId, args.Order.FaGroup))
+                        {
+                            Log.Trace($"InteractiveBrokersBrokerage.GetOpenOrders(): Skipping order {args.OrderId} from FA group '{args.Order.FaGroup}' — does not match active filter: '{_financialAdvisorsGroupFilter}'");
+                        }
                         return;
                     }
 
@@ -2162,16 +2166,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                // Skip processing orders that are not part of the specified FA group filter
-                if (_skippedOrdersByFaGroup.TryGetValue(update.OrderId, out _))
+                if (TryGetLeanOrder(update.OrderId, nameof(HandleOrderStatusUpdates), out var orders))
                 {
-                    return;
-                }
-
-                var orders = _orderProvider.GetOrdersByBrokerageId(update.OrderId);
-                if (orders == null || orders.Count == 0)
-                {
-                    Log.Error("InteractiveBrokersBrokerage.HandleOrderStatusUpdates(): Unable to locate order with BrokerageID " + update.OrderId);
                     return;
                 }
 
@@ -2274,17 +2270,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                // Skip processing orders that are not part of the specified FA group filter
-                if (IsFaGroupFlitterSet(e.Order.FaGroup))
+                if (TryGetLeanOrder(e.Order.OrderId, nameof(HandleOpenOrder), out var orders))
                 {
-                    _skippedOrdersByFaGroup[e.OrderId] = e.Order.FaGroup;
-                    return;
-                }
-
-                var orders = _orderProvider.GetOrdersByBrokerageId(e.Order.OrderId);
-                if (orders == null || orders.Count == 0)
-                {
-                    Log.Error("InteractiveBrokersBrokerage.HandleOpenOrder(): Unable to locate order with BrokerageID " + e.Order.OrderId);
                     return;
                 }
 
@@ -2329,6 +2316,35 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     Log.Error("InteractiveBrokersBrokerage.HandleOpenOrder(): Not connected; _client is null");
                 }
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Attempts to retrieve Lean orders associated with the given brokerage order ID.
+        /// Skips processing if the order was previously filtered by FA group,
+        /// or if no corresponding Lean order can be found.
+        /// </summary>
+        /// <param name="brokerageOrderId">The brokerage-specific order ID.</param>
+        /// <param name="caller">The name of the calling method, used for logging purposes.</param>
+        /// <param name="leanOrders">The list of Lean orders associated with the brokerage ID, if found.</param>
+        /// <returns><c>true</c> if the order is valid and found; otherwise, <c>false</c>.</returns>
+        private bool TryGetLeanOrder(int brokerageOrderId, string caller, out List<Order> leanOrders)
+        {
+            leanOrders = default;
+
+            // Ignore orders previously skipped due to FA group filtering
+            if (_skippedOrdersByFaGroup.TryGetValue(brokerageOrderId, out _))
+            {
+                return false;
+            }
+
+            leanOrders = _orderProvider.GetOrdersByBrokerageId(brokerageOrderId);
+            if (leanOrders == null || leanOrders.Count == 0)
+            {
+                Log.Error($"InteractiveBrokersBrokerage.{caller}(): Unable to locate order with BrokerageID {brokerageOrderId}");
                 return false;
             }
 
