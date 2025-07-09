@@ -107,6 +107,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
                 _orders.Clear();
             }
+            catch (Exception ex)
+            {
+                Log.Error(ex.Message);
+            }
             finally
             {
                 _interactiveBrokersBrokerage?.Dispose();
@@ -705,6 +709,70 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var uniqueBalances = new HashSet<decimal> { balanceMasterAccount, balanceTestGroup1, balanceTestGroup2 };
             Assert.AreEqual(3, uniqueBalances.Count, "Expected all three balances to be distinct for different FA group filters");
+        }
+
+        [Test, Explicit("Requires IB master account with configured FA groups: TestGroup1 and TestGroup2")]
+        public void PlaceMarketOrderWithDifferentFAGroupFilter()
+        {
+            var masterAccount = Config.Get("ib-account");
+            Assert.IsTrue(InteractiveBrokersBrokerage.IsMasterAccount(masterAccount), $"Expected master account '{masterAccount}' to be recognized as a master account, but it was not.");
+
+            // Should Disconnect and dispose to prevent action of [SetUp] method
+            _interactiveBrokersBrokerage.Dispose();
+            Assert.IsFalse(_interactiveBrokersBrokerage.IsConnected, "Brokerage should be disconnected after Dispose");
+
+            // Execute test for two FA groups
+            var holdingsGroup1 = ExecuteMarketOrderForGroup("TestGroup1", Symbols.AAPL, 10);
+            var holdingsGroup2 = ExecuteMarketOrderForGroup("TestGroup2", Symbols.NFLX, -10);
+
+            // Validate holdings are isolated between FA groups
+            Assert.IsTrue(holdingsGroup1.Any(h => h.Symbol == Symbols.AAPL), "Expected holdings in TestGroup1 for AAPL.");
+            Assert.IsTrue(holdingsGroup2.Any(h => h.Symbol == Symbols.NFLX), "Expected holdings in TestGroup2 for NFLX.");
+
+            Assert.IsFalse(holdingsGroup1.Any(h => h.Symbol == Symbols.NFLX), "TestGroup1 should not hold NFLX.");
+            Assert.IsFalse(holdingsGroup2.Any(h => h.Symbol == Symbols.AAPL), "TestGroup2 should not hold AAPL.");
+        }
+
+        private List<Holding> ExecuteMarketOrderForGroup(string faGroup, Symbol symbol, int quantity)
+        {
+            Config.Set("ib-financial-advisors-group-filter", faGroup);
+            _interactiveBrokersBrokerage = CreateBrokerage();
+
+            var orderFilledEvent = new AutoResetEvent(false);
+            void OnOrdersStatusChanged(object _, List<OrderEvent> events)
+            {
+                var orderEventStatus = events[0].Status;
+                if (orderEventStatus == OrderStatus.Filled)
+                {
+                    orderFilledEvent.Set();
+                }
+            }
+
+            _interactiveBrokersBrokerage.OrdersStatusChanged += OnOrdersStatusChanged;
+
+            var order = new MarketOrder(symbol, quantity, DateTime.UtcNow);
+            _orders.Add(order);
+
+            Assert.IsTrue(_interactiveBrokersBrokerage.PlaceOrder(order), $"Failed to place {quantity} order for {symbol}");
+
+            if (!orderFilledEvent.WaitOne(TimeSpan.FromSeconds(20)))
+            {
+                Assert.Fail($"Order for {symbol} in {faGroup} was not filled in time.");
+            }
+
+            // Wait a little more to allow positions to settle
+            orderFilledEvent.WaitOne(TimeSpan.FromSeconds(2));
+
+            var holdings = _interactiveBrokersBrokerage.GetAccountHoldings();
+
+            // Place closing order to clean up
+            var closingOrder = new MarketOrder(symbol, -quantity, DateTime.UtcNow);
+            Assert.IsTrue(_interactiveBrokersBrokerage.PlaceOrder(closingOrder), $"Failed to close {symbol} position for {faGroup}");
+
+            _interactiveBrokersBrokerage.OrdersStatusChanged -= OnOrdersStatusChanged;
+            _interactiveBrokersBrokerage.Dispose();
+
+            return holdings;
         }
 
 
