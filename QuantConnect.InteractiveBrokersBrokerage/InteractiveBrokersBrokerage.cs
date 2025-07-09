@@ -558,12 +558,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         lastOrderId = args.OrderId;
                     }
 
-                    if (IsFaGroupFlitterSet(args.Order.FaGroup))
+                    if (TrySkipOrderByFaGroup(args.OrderId, args.Order.FaGroup))
                     {
-                        if (_skippedOrdersByFaGroup.TryAdd(args.OrderId, args.Order.FaGroup))
-                        {
-                            Log.Trace($"InteractiveBrokersBrokerage.GetOpenOrders(): Skipping order {args.OrderId} from FA group '{args.Order.FaGroup}' � does not match active filter: '{_financialAdvisorsGroupFilter}'");
-                        }
                         return;
                     }
 
@@ -2166,7 +2162,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                if (TryGetLeanOrder(update.OrderId, nameof(HandleOrderStatusUpdates), out var orders))
+                if (!TryGetLeanOrder(update.OrderId, nameof(HandleOrderStatusUpdates), out var orders))
                 {
                     return;
                 }
@@ -2270,7 +2266,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                if (TryGetLeanOrder(e.Order.OrderId, nameof(HandleOpenOrder), out var orders))
+                if (!TryGetLeanOrder(e.Order.OrderId, nameof(HandleOpenOrder), out var orders, e.Order.FaGroup))
                 {
                     return;
                 }
@@ -2330,13 +2326,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="brokerageOrderId">The brokerage-specific order ID.</param>
         /// <param name="caller">The name of the calling method, used for logging purposes.</param>
         /// <param name="leanOrders">The list of Lean orders associated with the brokerage ID, if found.</param>
+        /// <param name="faGroup">Optional FA group associated with the order.</param>
         /// <returns><c>true</c> if the order is valid and found; otherwise, <c>false</c>.</returns>
-        private bool TryGetLeanOrder(int brokerageOrderId, string caller, out List<Order> leanOrders)
+        private bool TryGetLeanOrder(int brokerageOrderId, string caller, out List<Order> leanOrders, string faGroup = default)
         {
             leanOrders = default;
 
             // Ignore orders previously skipped due to FA group filtering
-            if (_skippedOrdersByFaGroup.TryGetValue(brokerageOrderId, out _))
+            if (_skippedOrdersByFaGroup.TryGetValue(brokerageOrderId, out _) || TrySkipOrderByFaGroup(brokerageOrderId, faGroup))
             {
                 return false;
             }
@@ -2349,6 +2346,27 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Determines whether the order should be skipped based on FA group filtering,
+        /// and logs the reason if applicable.
+        /// </summary>
+        /// <param name="orderId">The brokerage order ID.</param>
+        /// <param name="faGroup">The FA group of the order.</param>
+        /// <returns><c>true</c> if the order was skipped; otherwise, <c>false</c>.</returns>
+        private bool TrySkipOrderByFaGroup(int orderId, string faGroup)
+        {
+            if (!string.IsNullOrEmpty(faGroup) && IsFaGroupFlitterSet(faGroup))
+            {
+                if (_skippedOrdersByFaGroup.TryAdd(orderId, faGroup))
+                {
+                    Log.Trace($"InteractiveBrokersBrokerage.TrySkipOrderByFaGroup(): Skipping order {orderId} from FA group '{faGroup}' - does not match active filter: '{_financialAdvisorsGroupFilter}'");
+                }
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
