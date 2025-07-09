@@ -562,7 +562,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         if (_skippedOrdersByFaGroup.TryAdd(args.OrderId, args.Order.FaGroup))
                         {
-                            Log.Trace($"InteractiveBrokersBrokerage.GetOpenOrders(): Skipping order {args.OrderId} from FA group '{args.Order.FaGroup}' — does not match active filter: '{_financialAdvisorsGroupFilter}'");
+                            Log.Trace($"InteractiveBrokersBrokerage.GetOpenOrders(): Skipping order {args.OrderId} from FA group '{args.Order.FaGroup}' ï¿½ does not match active filter: '{_financialAdvisorsGroupFilter}'");
                         }
                         return;
                     }
@@ -816,9 +816,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             _stateManager.IsConnecting = true;
 
-            // we're going to receive fresh values for all account data, so we clear all
-            _accountData.Clear();
-
             var attempt = 1;
             const int maxAttempts = 7;
 
@@ -834,6 +831,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 try
                 {
                     Log.Trace("InteractiveBrokersBrokerage.Connect(): Attempting to connect ({0}/{1}) ...", attempt, maxAttempts);
+
+                    // we're going to receive fresh values for all account data, so we clear all
+                    _accountData.Clear();
 
                     // if message processing thread is still running, wait until it terminates
                     Disconnect();
