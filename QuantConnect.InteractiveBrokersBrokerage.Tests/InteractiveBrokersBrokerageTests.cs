@@ -16,6 +16,7 @@
 using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
+using QuantConnect.Configuration;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
 using QuantConnect.Lean.Engine.DataFeeds;
@@ -45,32 +46,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         {
             Log.LogHandler = new NUnitLogHandler();
 
-            // grabs account info from configuration
-            var securityProvider = new SecurityProvider();
-            securityProvider[Symbols.USDJPY] = new Security(
-                SecurityExchangeHours.AlwaysOpen(TimeZones.NewYork),
-                new SubscriptionDataConfig(
-                    typeof(TradeBar),
-                    Symbols.USDJPY,
-                    Resolution.Minute,
-                    TimeZones.NewYork,
-                    TimeZones.NewYork,
-                    false,
-                    false,
-                    false
-                ),
-                new Cash(Currencies.USD, 0, 1m),
-                SymbolProperties.GetDefault(Currencies.USD),
-                ErrorCurrencyConverter.Instance,
-                RegisteredSecurityDataTypesProvider.Null,
-                new SecurityCache()
-            );
-
-            _interactiveBrokersBrokerage = new InteractiveBrokersBrokerage(
-                new QCAlgorithm(),
-                new OrderProvider(_orders),
-                securityProvider);
-            _interactiveBrokersBrokerage.Connect();
+            _interactiveBrokersBrokerage = CreateBrokerage();
         }
 
         [TearDown]
@@ -696,6 +672,40 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(ib.IsConnected);
         }
 
+        [Test, Explicit("Requires an IB master account with configured advisor groups: TestGroup1 and TestGroup2")]
+        public void GetBalanceWithDifferentFAGroupFilter()
+        {
+            var masterAccount = Config.Get("ib-account");
+            Assert.IsTrue(InteractiveBrokersBrokerage.IsMasterAccount(masterAccount), $"Expected master account '{masterAccount}' to be recognized as a master account, but it was not.");
+
+            decimal GetUsdBalance() => _interactiveBrokersBrokerage.GetCashBalance().First(b => b.Currency == Currencies.USD).Amount;
+
+            // Act - Master account balance
+            var balanceMasterAccount = GetUsdBalance();
+
+            Assert.Greater(balanceMasterAccount, 0m, "Master account balance should be greater than zero");
+
+            _interactiveBrokersBrokerage.Dispose();
+            Assert.IsFalse(_interactiveBrokersBrokerage.IsConnected, "Brokerage should be disconnected after Dispose");
+
+            // Act - TestGroup1 balance
+            Config.Set("ib-financial-advisors-group-filter", "TestGroup1");
+            _interactiveBrokersBrokerage = CreateBrokerage();
+            var balanceTestGroup1 = GetUsdBalance();
+
+            _interactiveBrokersBrokerage.Dispose();
+            Assert.IsFalse(_interactiveBrokersBrokerage.IsConnected, "Brokerage should be disconnected after Dispose");
+
+            // Act - TestGroup2 balance
+            Config.Set("ib-financial-advisors-group-filter", "TestGroup2");
+            _interactiveBrokersBrokerage = CreateBrokerage();
+            var balanceTestGroup2 = GetUsdBalance();
+
+            var uniqueBalances = new HashSet<decimal> { balanceMasterAccount, balanceTestGroup1, balanceTestGroup2 };
+            Assert.AreEqual(3, uniqueBalances.Count, "Expected all three balances to be distinct for different FA group filters");
+        }
+
+
         [Explicit("Ignore a test")]
         public void DoesNotLoopEndlesslyIfGetCashBalanceAlwaysThrows()
         {
@@ -765,6 +775,40 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.Pass("The order was successfully filled!");
             return null;
+        }
+
+        private InteractiveBrokersBrokerage CreateBrokerage()
+        {
+            // grabs account info from configuration
+            var securityProvider = new SecurityProvider();
+            securityProvider[Symbols.USDJPY] = new Security(
+                SecurityExchangeHours.AlwaysOpen(TimeZones.NewYork),
+                new SubscriptionDataConfig(
+                    typeof(TradeBar),
+                    Symbols.USDJPY,
+                    Resolution.Minute,
+                    TimeZones.NewYork,
+                    TimeZones.NewYork,
+                    false,
+                    false,
+                    false
+                ),
+                new Cash(Currencies.USD, 0, 1m),
+                SymbolProperties.GetDefault(Currencies.USD),
+                ErrorCurrencyConverter.Instance,
+                RegisteredSecurityDataTypesProvider.Null,
+                new SecurityCache()
+            );
+
+            var interactiveBrokersBrokerage = new InteractiveBrokersBrokerage(
+                new QCAlgorithm(),
+                new OrderProvider(_orders),
+                securityProvider);
+            interactiveBrokersBrokerage.Connect();
+
+            Assert.IsTrue(interactiveBrokersBrokerage.IsConnected);
+
+            return interactiveBrokersBrokerage;
         }
     }
 }
