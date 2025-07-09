@@ -701,6 +701,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             _interactiveBrokersBrokerage = CreateBrokerage();
             var balanceTestGroup2 = GetUsdBalance();
 
+            Log.Trace($"Account Balances (USD): Master={balanceMasterAccount}, TestGroup1={balanceTestGroup1}, TestGroup2={balanceTestGroup2}");
+
             var uniqueBalances = new HashSet<decimal> { balanceMasterAccount, balanceTestGroup1, balanceTestGroup2 };
             Assert.AreEqual(3, uniqueBalances.Count, "Expected all three balances to be distinct for different FA group filters");
         }
