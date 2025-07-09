@@ -2685,7 +2685,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         if (_accountData.AccountHoldings.TryGetValue(holding.Symbol.Value, out var existingHolding))
                         {
-                            var averageCalculation = (holding.AveragePrice * holding.Quantity) + (existingHolding.AveragePrice * existingHolding.Quantity);
+                            var averageCalculation = (holding.AveragePrice * Math.Abs(holding.Quantity)) + (existingHolding.AveragePrice * Math.Abs(existingHolding.Quantity));
 
                             // Accumulate position - FA group requests return positions from multiple accounts in the group
                             existingHolding.Quantity += holding.Quantity;
@@ -2693,7 +2693,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             // once we sum the quantities up we get the new average price
                             if (existingHolding.Quantity != 0)
                             {
-                                existingHolding.AveragePrice = averageCalculation / existingHolding.Quantity;
+                                existingHolding.AveragePrice = averageCalculation / Math.Abs(existingHolding.Quantity);
                             }
                         }
                         else
