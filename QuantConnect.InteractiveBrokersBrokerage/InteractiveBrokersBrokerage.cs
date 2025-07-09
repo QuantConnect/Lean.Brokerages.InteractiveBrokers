@@ -2357,7 +2357,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns><c>true</c> if the order was skipped; otherwise, <c>false</c>.</returns>
         private bool TrySkipOrderByFaGroup(int orderId, string faGroup)
         {
-            if (!string.IsNullOrEmpty(faGroup) && IsFaGroupFlitterSet(faGroup))
+            if (IsFaGroupFlitterSet(faGroup))
             {
                 if (_skippedOrdersByFaGroup.TryAdd(orderId, faGroup))
                 {
@@ -2685,8 +2685,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         if (_accountData.AccountHoldings.TryGetValue(holding.Symbol.Value, out var existingHolding))
                         {
+                            var averageCalculation = (holding.AveragePrice * holding.Quantity) + (existingHolding.AveragePrice * existingHolding.Quantity);
+
                             // Accumulate position - FA group requests return positions from multiple accounts in the group
-                            existingHolding.Quantity += e.Position;
+                            existingHolding.Quantity += holding.Quantity;
+
+                            // once we sum the quantities up we get the new average price
+                            if (existingHolding.Quantity != 0)
+                            {
+                                existingHolding.AveragePrice = averageCalculation / existingHolding.Quantity;
+                            }
                         }
                         else
                         {
@@ -5353,7 +5361,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns><c>true</c> if the group is allowed; otherwise, <c>false</c>.</returns>
         private static bool IsFaGroupFlitterSet(string groupName)
         {
-            return !string.IsNullOrEmpty(_financialAdvisorsGroupFilter) && !groupName.Equals(_financialAdvisorsGroupFilter, StringComparison.InvariantCultureIgnoreCase);
+            return !string.IsNullOrEmpty(_financialAdvisorsGroupFilter)
+                && !string.IsNullOrEmpty(groupName)
+                && !groupName.Equals(_financialAdvisorsGroupFilter, StringComparison.InvariantCultureIgnoreCase);
         }
 
         private class SubscriptionEntry
