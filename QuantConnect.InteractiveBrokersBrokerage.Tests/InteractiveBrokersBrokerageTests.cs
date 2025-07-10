@@ -16,6 +16,7 @@
 using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
+using QuantConnect.Configuration;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
 using QuantConnect.Lean.Engine.DataFeeds;
@@ -45,32 +46,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         {
             Log.LogHandler = new NUnitLogHandler();
 
-            // grabs account info from configuration
-            var securityProvider = new SecurityProvider();
-            securityProvider[Symbols.USDJPY] = new Security(
-                SecurityExchangeHours.AlwaysOpen(TimeZones.NewYork),
-                new SubscriptionDataConfig(
-                    typeof(TradeBar),
-                    Symbols.USDJPY,
-                    Resolution.Minute,
-                    TimeZones.NewYork,
-                    TimeZones.NewYork,
-                    false,
-                    false,
-                    false
-                ),
-                new Cash(Currencies.USD, 0, 1m),
-                SymbolProperties.GetDefault(Currencies.USD),
-                ErrorCurrencyConverter.Instance,
-                RegisteredSecurityDataTypesProvider.Null,
-                new SecurityCache()
-            );
-
-            _interactiveBrokersBrokerage = new InteractiveBrokersBrokerage(
-                new QCAlgorithm(),
-                new OrderProvider(_orders),
-                securityProvider);
-            _interactiveBrokersBrokerage.Connect();
+            _interactiveBrokersBrokerage = CreateBrokerage();
         }
 
         [TearDown]
@@ -130,6 +106,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 //Assert.AreEqual(0, holdingsCount, "Failed to verify that there are zero account holdings.");
 
                 _orders.Clear();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex.Message);
             }
             finally
             {
@@ -696,6 +676,137 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(ib.IsConnected);
         }
 
+        [Test, Explicit("Requires an IB master account with configured advisor groups: TestGroup1 and TestGroup2")]
+        public void GetBalanceWithDifferentFAGroupFilter()
+        {
+            var masterAccount = Config.Get("ib-account");
+            Assert.IsTrue(InteractiveBrokersBrokerage.IsMasterAccount(masterAccount), $"Expected master account '{masterAccount}' to be recognized as a master account, but it was not.");
+
+            decimal GetUsdBalance() => _interactiveBrokersBrokerage.GetCashBalance().First(b => b.Currency == Currencies.USD).Amount;
+
+            // Act - Master account balance
+            var balanceMasterAccount = GetUsdBalance();
+
+            Assert.Greater(balanceMasterAccount, 0m, "Master account balance should be greater than zero");
+
+            _interactiveBrokersBrokerage.Dispose();
+            Assert.IsFalse(_interactiveBrokersBrokerage.IsConnected, "Brokerage should be disconnected after Dispose");
+
+            // Act - TestGroup1 balance
+            Config.Set("ib-financial-advisors-group-filter", "TestGroup1");
+            _interactiveBrokersBrokerage = CreateBrokerage();
+            var balanceTestGroup1 = GetUsdBalance();
+
+            _interactiveBrokersBrokerage.Dispose();
+            Assert.IsFalse(_interactiveBrokersBrokerage.IsConnected, "Brokerage should be disconnected after Dispose");
+
+            // Act - TestGroup2 balance
+            Config.Set("ib-financial-advisors-group-filter", "TestGroup2");
+            _interactiveBrokersBrokerage = CreateBrokerage();
+            var balanceTestGroup2 = GetUsdBalance();
+
+            Log.Trace($"Account Balances (USD): Master={balanceMasterAccount}, TestGroup1={balanceTestGroup1}, TestGroup2={balanceTestGroup2}");
+
+            var uniqueBalances = new HashSet<decimal> { balanceMasterAccount, balanceTestGroup1, balanceTestGroup2 };
+            Assert.AreEqual(3, uniqueBalances.Count, "Expected all three balances to be distinct for different FA group filters");
+        }
+
+        [Test, Explicit("Requires IB master account with configured FA groups: TestGroup1 and TestGroup2")]
+        public void PlaceMarketOrderWithDifferentFAGroupFilter()
+        {
+            var masterAccount = Config.Get("ib-account");
+            Assert.IsTrue(InteractiveBrokersBrokerage.IsMasterAccount(masterAccount), $"Expected master account '{masterAccount}' to be recognized as a master account, but it was not.");
+
+            // Should Disconnect and dispose to prevent action of [SetUp] method
+            _interactiveBrokersBrokerage.Dispose();
+            Assert.IsFalse(_interactiveBrokersBrokerage.IsConnected, "Brokerage should be disconnected after Dispose");
+
+            // Execute test for two FA groups
+            var holdingsGroup1 = ExecuteMarketOrderForGroup("TestGroup1", Symbols.AAPL, 10);
+            var holdingsGroup2 = ExecuteMarketOrderForGroup("TestGroup2", Symbols.NFLX, -10);
+
+            // Validate holdings are isolated between FA groups
+            Assert.IsTrue(holdingsGroup1.Any(h => h.Symbol == Symbols.AAPL), "Expected holdings in TestGroup1 for AAPL.");
+            Assert.IsTrue(holdingsGroup2.Any(h => h.Symbol == Symbols.NFLX), "Expected holdings in TestGroup2 for NFLX.");
+
+            Assert.IsFalse(holdingsGroup1.Any(h => h.Symbol == Symbols.NFLX), "TestGroup1 should not hold NFLX.");
+            Assert.IsFalse(holdingsGroup2.Any(h => h.Symbol == Symbols.AAPL), "TestGroup2 should not hold AAPL.");
+        }
+
+        [TestCase(-500, 623.794, 100, 622.181, -400, 624.19725)]
+        [TestCase(100, 210.101, -200, 210.044, -100, 209.987)]
+        public void MergeHoldingMergesOppositeSignedAAPLPositions(decimal holdingPositionQuantity, decimal holdingAvgPrice, decimal incomePositionQuantity, decimal incomeAvgPrice, decimal expectedNewPositionQuantity, decimal expectedAvgPrice)
+        {
+            var aapl = Symbols.AAPL;
+
+            var holdings = new Dictionary<string, Holding>
+            {
+                ["AAPL"] = new Holding
+                {
+                    Symbol = aapl,
+                    Quantity = holdingPositionQuantity,
+                    AveragePrice = holdingAvgPrice
+                }
+            };
+
+            var incoming = new Holding
+            {
+                Symbol = aapl,
+                Quantity = incomePositionQuantity,
+                AveragePrice = incomeAvgPrice
+            };
+
+            InteractiveBrokersBrokerage.MergeHolding(holdings, incoming);
+
+            var merged = holdings["AAPL"];
+
+            Assert.AreEqual(expectedNewPositionQuantity, merged.Quantity);
+            Assert.AreEqual(expectedAvgPrice, merged.AveragePrice);
+        }
+
+        private List<Holding> ExecuteMarketOrderForGroup(string faGroup, Symbol symbol, int quantity)
+        {
+            Config.Set("ib-financial-advisors-group-filter", faGroup);
+            _interactiveBrokersBrokerage = CreateBrokerage();
+
+            var orderFilledEvent = new AutoResetEvent(false);
+            void OnOrdersStatusChanged(object _, List<OrderEvent> events)
+            {
+                var orderEventStatus = events[0].Status;
+                if (orderEventStatus == OrderStatus.Filled)
+                {
+                    orderFilledEvent.Set();
+                }
+            }
+
+            _interactiveBrokersBrokerage.OrdersStatusChanged += OnOrdersStatusChanged;
+
+            var order = new MarketOrder(symbol, quantity, DateTime.UtcNow);
+            _orders.Add(order);
+
+            Assert.IsTrue(_interactiveBrokersBrokerage.PlaceOrder(order), $"Failed to place {quantity} order for {symbol}");
+
+            if (!orderFilledEvent.WaitOne(TimeSpan.FromSeconds(20)))
+            {
+                Assert.Fail($"Order for {symbol} in {faGroup} was not filled in time.");
+            }
+
+            // Wait a little more to allow positions to settle
+            orderFilledEvent.WaitOne(TimeSpan.FromSeconds(2));
+
+            var holdings = _interactiveBrokersBrokerage.GetAccountHoldings();
+
+            // Place closing order to clean up
+            var closingOrder = new MarketOrder(symbol, -quantity, DateTime.UtcNow);
+            Assert.IsTrue(_interactiveBrokersBrokerage.PlaceOrder(closingOrder), $"Failed to close {symbol} position for {faGroup}");
+
+            _interactiveBrokersBrokerage.OrdersStatusChanged -= OnOrdersStatusChanged;
+            _interactiveBrokersBrokerage.Dispose();
+
+            return holdings;
+        }
+
+
         [Explicit("Ignore a test")]
         public void DoesNotLoopEndlesslyIfGetCashBalanceAlwaysThrows()
         {
@@ -765,6 +876,40 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.Pass("The order was successfully filled!");
             return null;
+        }
+
+        private InteractiveBrokersBrokerage CreateBrokerage()
+        {
+            // grabs account info from configuration
+            var securityProvider = new SecurityProvider();
+            securityProvider[Symbols.USDJPY] = new Security(
+                SecurityExchangeHours.AlwaysOpen(TimeZones.NewYork),
+                new SubscriptionDataConfig(
+                    typeof(TradeBar),
+                    Symbols.USDJPY,
+                    Resolution.Minute,
+                    TimeZones.NewYork,
+                    TimeZones.NewYork,
+                    false,
+                    false,
+                    false
+                ),
+                new Cash(Currencies.USD, 0, 1m),
+                SymbolProperties.GetDefault(Currencies.USD),
+                ErrorCurrencyConverter.Instance,
+                RegisteredSecurityDataTypesProvider.Null,
+                new SecurityCache()
+            );
+
+            var interactiveBrokersBrokerage = new InteractiveBrokersBrokerage(
+                new QCAlgorithm(),
+                new OrderProvider(_orders),
+                securityProvider);
+            interactiveBrokersBrokerage.Connect();
+
+            Assert.IsTrue(interactiveBrokersBrokerage.IsConnected);
+
+            return interactiveBrokersBrokerage;
         }
     }
 }

@@ -1,4 +1,17 @@
 {
   "data-folder": "../../../../Lean/Data/",
-  "data-directory": "../../../../Lean/Data/"
+  "data-directory": "../../../../Lean/Data/",
+  "ib-user-name": "",
+  "ib-account": "",
+  "ib-password": "",
+  "ib-weekly-restart-utc-time": "",
+  "ib-trading-mode": "",
+  "ib-agent-description": "",
+  "ib-tws-dir": "",
+  "ib-version": "",
+  "ib-financial-advisors-group-filter": "",
+  
+  "job-user-id": "",
+  "api-access-token": "",
+  "job-organization-id": ""
 }

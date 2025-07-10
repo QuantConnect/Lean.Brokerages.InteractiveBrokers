@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -16,7 +16,6 @@
 using System;
 using System.Collections.Generic;
 using QuantConnect.Configuration;
-using QuantConnect.Data;
 using QuantConnect.Interfaces;
 using QuantConnect.Packets;
 using QuantConnect.Securities;
@@ -51,7 +50,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             { "ib-password", Config.Get("ib-password") },
             { "ib-trading-mode", Config.Get("ib-trading-mode") },
             { "ib-agent-description", Config.Get("ib-agent-description") },
-            { "ib-weekly-restart-utc-time", Config.Get("ib-weekly-restart-utc-time") }
+            { "ib-weekly-restart-utc-time", Config.Get("ib-weekly-restart-utc-time") },
+            { "ib-financial-advisors-group-filter", Config.Get("ib-financial-advisors-group-filter") }
         };
 
         /// <summary>
@@ -81,6 +81,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var password = Read<string>(job.BrokerageData, "ib-password", errors);
             var tradingMode = Read<string>(job.BrokerageData, "ib-trading-mode", errors);
             var agentDescription = Read<string>(job.BrokerageData, "ib-agent-description", errors);
+            job.BrokerageData.TryGetValue("ib-financial-advisors-group-filter", out var financialAdvisorsGroupFilter);
 
             var loadExistingHoldings = true;
             if (job.BrokerageData.ContainsKey("load-existing-holdings"))
@@ -120,7 +121,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 tradingMode,
                 agentDescription,
                 loadExistingHoldings,
-                weeklyRestartUtcTime);
+                weeklyRestartUtcTime,
+                financialAdvisorsGroupFilter);
             Composer.Instance.AddPart<IDataQueueHandler>(ib);
 
             return ib;
