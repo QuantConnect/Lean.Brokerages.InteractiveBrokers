@@ -1415,7 +1415,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             _client.UpdateAccountValue += HandleUpdateAccountValue;
             _client.AccountSummary += HandleAccountSummary;
-            _client.AccountUpdateMulti += HandleUpdateAccountValue;
             _client.ManagedAccounts += HandleManagedAccounts;
             _client.FamilyCodes += HandleFamilyCodes;
             _client.Error += HandleError;
@@ -1423,6 +1422,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _client.TickSize += HandleTickSize;
             _client.CurrentTimeUtc += HandleBrokerTime;
             _client.ReRouteMarketDataRequest += HandleMarketDataReRoute;
+            if (!string.IsNullOrEmpty(financialAdvisorsGroupFilter))
+            {
+                _client.AccountUpdateMulti += HandleUpdateAccountValue;
+            }
 
             // we need to wait until we receive the next valid id from the server
             _client.NextValidId += (sender, e) =>
@@ -2333,7 +2336,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             leanOrders = default;
 
             // Ignore orders previously skipped due to FA group filtering
-            if (_skippedOrdersByFaGroup.TryGetValue(brokerageOrderId, out _) || TrySkipOrderByFaGroup(brokerageOrderId, faGroup))
+            if (_skippedOrdersByFaGroup.ContainsKey(brokerageOrderId) || TrySkipOrderByFaGroup(brokerageOrderId, faGroup))
             {
                 return false;
             }
