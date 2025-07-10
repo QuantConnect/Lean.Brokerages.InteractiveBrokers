@@ -2680,27 +2680,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (_loadExistingHoldings)
                 {
                     var holding = CreateHolding(e);
-
-                    lock (_accountData.AccountHoldings)
-                    {
-                        if (_accountData.AccountHoldings.TryGetValue(holding.Symbol.Value, out var existingHolding))
-                        {
-                            var averageCalculation = (holding.AveragePrice * Math.Abs(holding.Quantity)) + (existingHolding.AveragePrice * Math.Abs(existingHolding.Quantity));
-
-                            // Accumulate position - FA group requests return positions from multiple accounts in the group
-                            existingHolding.Quantity += holding.Quantity;
-
-                            // once we sum the quantities up we get the new average price
-                            if (existingHolding.Quantity != 0)
-                            {
-                                existingHolding.AveragePrice = averageCalculation / Math.Abs(existingHolding.Quantity);
-                            }
-                        }
-                        else
-                        {
-                            _accountData.AccountHoldings[holding.Symbol.Value] = holding;
-                        }
-                    }
+                    MergeHolding(_accountData.AccountHoldings, holding);
                 }
             }
             catch (Exception exception)
@@ -2730,6 +2710,44 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         CheckContractConversionError(exception, e.Contract, rethrow: false);
                     }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Merges a holding into the current holdings dictionary. 
+        /// If the symbol already exists, quantities are summed and a new weighted average price is calculated.
+        /// If it's a new symbol, the holding is added directly.
+        /// </summary>
+        /// <param name="holdings">The dictionary of current holdings, keyed by <see cref="Symbol.Value"/>.</param>
+        /// <param name="incoming">The incoming holding to merge, typically from an account or FA group update.</param>
+        /// <remarks>
+        /// This method is used when multiple updates for the same symbol can be received,
+        /// such as when FA (Financial Advisor) group accounts return positions for multiple sub-accounts.
+        /// </remarks>
+        internal static void MergeHolding(IDictionary<string, Holding> holdings, Holding incoming)
+        {
+            var key = incoming.Symbol.Value;
+
+            lock (holdings)
+            {
+                if (holdings.TryGetValue(key, out var existing))
+                {
+                    // Merge with existing holding: add quantities and recalculate average price
+                    // This happens when holdings are reported separately (e.g., across FA group accounts)
+                    var totalCost = (existing.AveragePrice * existing.Quantity) + (incoming.AveragePrice * incoming.Quantity);
+
+                    existing.Quantity += incoming.Quantity;
+
+                    // Avoid division by zero when position is fully closed
+                    if (existing.Quantity != 0)
+                    {
+                        existing.AveragePrice = totalCost / existing.Quantity;
+                    }
+                }
+                else
+                {
+                    holdings[key] = incoming;
                 }
             }
         }
