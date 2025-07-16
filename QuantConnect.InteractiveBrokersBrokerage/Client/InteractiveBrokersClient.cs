@@ -170,6 +170,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// </summary>
         public event EventHandler<RerouteMarketDataRequestEventArgs> ReRouteMarketDataDepthRequest;
 
+        /// <summary>
+        /// Occurs when an account value update is received as part of a Financial Advisor (FA) group request.
+        /// </summary>
+        public event EventHandler<UpdateAccountValueEventArgs> AccountUpdateMulti;
+
+        /// <summary>
+        /// Occurs when all account updates for a Financial Advisor (FA) group request have been received.
+        /// </summary>
+        public event EventHandler<AccountUpdateMultiEndEventArgs> AccountUpdateMultiEnd;
+
+        /// <summary>
+        /// Occurs when all position updates for a Financial Advisor (FA) group request have been received.
+        /// </summary>
+        public event EventHandler PositionMultiEnd;
+
         #endregion
 
         /// <summary>
@@ -186,8 +201,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         }
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="InteractiveBrokersClient"/> class
+        /// Initializes a new instance of the <see cref="InteractiveBrokersClient"/> class 
+        /// using the specified EReader signal and financial advisors group name.
         /// </summary>
+        /// <param name="signal">The signal mechanism used for coordinating socket read events.</param>
         public InteractiveBrokersClient(EReaderSignal signal)
         {
             ClientSocket = new EClientSocket(this, signal);
@@ -296,6 +313,96 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         public override void accountSummary(int reqId, string account, string tag, string value, string currency)
         {
             OnAccountSummary(new AccountSummaryEventArgs(reqId, account, tag, value, currency));
+        }
+
+        /// <summary>
+        /// Sends a request to receive account value updates for a specific financial advisor (FA) group or all accessible accounts.
+        /// </summary>
+        /// <param name="requestId">A unique identifier to associate with the request.</param>
+        /// <param name="financialAdvisorsGroupFilter">
+        /// The FA group name to filter accounts. Pass an empty string to request updates for all accessible accounts.
+        /// </param>
+        public void RequestAccountUpdatesMulti(int requestId, string financialAdvisorsGroupFilter)
+        {
+            ClientSocket.reqAccountUpdatesMulti(requestId, financialAdvisorsGroupFilter, modelCode: string.Empty, ledgerAndNLV: true);
+        }
+
+
+        /// <summary>
+        /// Sends a request to receive position data for a specific financial advisor (FA) group or all accessible accounts.
+        /// </summary>
+        /// <param name="requestId">A unique identifier to associate with the request.</param>
+        /// <param name="financialAdvisorsGroupFilter">
+        /// The FA group name to filter accounts. Pass an empty string to request positions for all accessible accounts.
+        /// </param>
+        public void RequestPositionsMulti(int requestId, string financialAdvisorsGroupFilter)
+        {
+            ClientSocket.reqPositionsMulti(requestId, financialAdvisorsGroupFilter, modelCode: string.Empty);
+        }
+
+        /// <summary>
+        /// Cancels a previously sent positions multi request.
+        /// </summary>
+        /// <param name="requestId">The request identifier that was used to start the position request.</param>
+        public void CancelPositionsMulti(int requestId)
+        {
+            ClientSocket.cancelPositionsMulti(requestId);
+        }
+
+        /// <summary>
+        /// Cancels a previously sent account updates multi request.
+        /// </summary>
+        /// <param name="requestId">The request identifier that was used to start the account update request.</param>
+        public void CancelAccountUpdatesMulti(int requestId)
+        {
+            ClientSocket.cancelAccountUpdatesMulti(requestId);
+        }
+
+        /// <summary>
+        /// Handles an incoming account update for a financial advisor (FA) group request.
+        /// </summary>
+        /// <param name="requestId">The identifier of the originating request.</param>
+        /// <param name="account">The account number receiving the update.</param>
+        /// <param name="modelCode">The model code used in the request.</param>
+        /// <param name="key">The parameter name (e.g., NetLiquidation, AvailableFunds).</param>
+        /// <param name="value">The parameter value.</param>
+        /// <param name="currency">The currency in which the parameter value is denominated.</param>
+        public override void accountUpdateMulti(int requestId, string account, string modelCode, string key, string value, string currency)
+        {
+            OnAccountUpdateMulti(new UpdateAccountValueEventArgs(key, value, currency, account));
+        }
+
+        /// <summary>
+        /// Indicates all the account updates have been transmitted.
+        /// </summary>
+        /// <param name="requestId">The request id</param>
+        public override void accountUpdateMultiEnd(int requestId)
+        {
+            OnAccountUpdateMultiEnd(new AccountUpdateMultiEndEventArgs(requestId));
+        }
+
+        /// <summary>
+        /// Handles an incoming position update for a financial advisor (FA) group request.
+        /// </summary>
+        /// <param name="requestId">The identifier of the originating position request.</param>
+        /// <param name="account">The account receiving the position update.</param>
+        /// <param name="modelCode">The model code used in the request.</param>
+        /// <param name="contract">The contract for which the position is reported.</param>
+        /// <param name="position">The quantity of the position held.</param>
+        /// <param name="averageCost">The average cost of the position.</param>
+        public override void positionMulti(int requestId, string account, string modelCode, Contract contract, decimal position, double averageCost)
+        {
+            var positionValue = Convert.ToInt32(position);
+            OnUpdatePortfolio(new UpdatePortfolioEventArgs(contract, positionValue, 0, 0, averageCost, 0, 0, account));
+        }
+
+        /// <summary>
+        /// Handles the event signaling that all position data for a financial advisor (FA) group request has been received.
+        /// </summary>
+        /// <param name="requestId">The identifier of the originating position request.</param>
+        public override void positionMultiEnd(int requestId)
+        {
+            OnPositionMultiEnd(requestId);
         }
 
         /// <summary>
@@ -773,6 +880,30 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
             ReRouteMarketDataDepthRequest?.Invoke(this, args);
         }
 
+        /// <summary>
+        /// AccountUpdateMulti event invocator
+        /// </summary>
+        protected void OnAccountUpdateMulti(UpdateAccountValueEventArgs e)
+        {
+            AccountUpdateMulti?.Invoke(this, e);
+        }
+
+        /// <summary>
+        /// AccountUpdateMultiEnd event invocator
+        /// </summary>
+        protected void OnAccountUpdateMultiEnd(AccountUpdateMultiEndEventArgs e)
+        {
+            AccountUpdateMultiEnd?.Invoke(this, e);
+        }
+
+        /// <summary>
+        /// PositionMultiEnd event invocator
+        /// </summary>
+        /// <param name="_"></param>
+        protected void OnPositionMultiEnd(int _)
+        {
+            PositionMultiEnd?.Invoke(this, EventArgs.Empty);
+        }
         #endregion
     }
 }

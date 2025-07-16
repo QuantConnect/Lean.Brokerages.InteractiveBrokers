@@ -1,4 +1,7 @@
-{
+{	
+	"name" : "Interactive Brokers",
+	"logo-url" : "https://cdn.quantconnect.com/i/tu/brokerage-interactivebrokers.svg",
+	"min-deposit" : "100 USD",
 	"description": "Interactive Brokers is a fully featured, multi-asset, and low-cost brokerage fully supported on the QuantConnect platform. Interactive supports users in most countries and can open accounts as little as $100.",
 	
 	"platforms-features":[

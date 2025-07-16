@@ -242,5 +242,40 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.AreEqual(expectedLeanSymbol, resultLeanSymbol);
         }
+
+        [TestCase(SecurityType.Equity)]
+        [TestCase(SecurityType.Option)]
+        public void KeepsEquityDotsFromBrokerageSymbol(SecurityType securityType)
+        {
+            var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
+            var brokerageSymbol = "AGLE.CNT";
+
+            var leanRootSymbol = mapper.GetLeanRootSymbol(brokerageSymbol, securityType);
+            Assert.AreEqual(brokerageSymbol, leanRootSymbol);
+
+            var leanSymbol = securityType == SecurityType.Equity
+                ? mapper.GetLeanSymbol(brokerageSymbol, securityType, Market.USA)
+                : mapper.GetLeanSymbol(brokerageSymbol, securityType, Market.USA, new DateTime(2024, 09, 20), 10.0m, OptionRight.Call);
+            var expectedLeanSymbol = securityType == SecurityType.Equity
+                ? Symbol.Create(brokerageSymbol, securityType, Market.USA)
+                : Symbol.CreateOption(brokerageSymbol, Market.USA, OptionStyle.American, OptionRight.Call, 10.0m, new DateTime(2024, 09, 20));
+
+            Assert.AreEqual(expectedLeanSymbol, leanSymbol);
+            if (securityType == SecurityType.Equity)
+            {
+                Assert.AreEqual(brokerageSymbol, leanSymbol.Value);
+            }
+            else
+            {
+                Assert.AreEqual(brokerageSymbol, leanSymbol.Value.Split(' ')[0]);
+                Assert.AreEqual(brokerageSymbol, leanSymbol.Underlying.Value);
+            }
+
+            var mappedBrokerageSymbol = mapper.GetBrokerageSymbol(leanSymbol);
+            Assert.AreEqual(brokerageSymbol, mappedBrokerageSymbol);
+
+            var mappedBrokerageRootSymbol = mapper.GetBrokerageRootSymbol(leanRootSymbol, securityType);
+            Assert.AreEqual(brokerageSymbol, mappedBrokerageRootSymbol);
+        }
     }
 }

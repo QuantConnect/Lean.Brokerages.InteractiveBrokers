@@ -43,6 +43,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // We fix this: We map those tickers back to their original names using the map below
         private readonly Dictionary<SecurityType, Dictionary<string, string>> _ibNameMap = new Dictionary<SecurityType, Dictionary<string, string>>();
 
+        // lean uses dots for ticker suffixes, which are mapped to spaces because IB uses spaces for suffixes.
+        // There are also a few cases where IB uses dots in equity tickers for other purposes (e.g. AGLE.CNT).
+        // In those cases we make sure we don't replace dots with spaces when converting from Lean to IB symbols.
+        private static HashSet<string> _ibEquityTickersWithDot = new();
+
         /// <summary>
         /// Constructs InteractiveBrokersSymbolMapper. Default parameters are used.
         /// </summary>
@@ -214,11 +219,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns></returns>
         public string GetLeanRootSymbol(string brokerageRootSymbol, SecurityType securityType)
         {
+            var isEquityOrOption = securityType == SecurityType.Equity || securityType == SecurityType.Option;
+            if (isEquityOrOption && brokerageRootSymbol.Contains('.'))
+            {
+                _ibEquityTickersWithDot.Add(brokerageRootSymbol);
+            }
+
             var ticker = _ibNameMap.TryGetValue(securityType, out var symbolMap) && symbolMap.TryGetValue(brokerageRootSymbol, out var rootSymbol)
                 ? rootSymbol
                 : brokerageRootSymbol;
 
-            if (securityType == SecurityType.Equity || securityType == SecurityType.Option)
+            if (isEquityOrOption || securityType == SecurityType.Cfd)
             {
                 ticker = ticker.Replace(" ", ".");
             }
@@ -288,9 +299,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (symbol.ID.SecurityType == SecurityType.Equity)
             {
                 var mapFile = _mapFileProvider.Get(AuxiliaryDataKey.Create(symbol)).ResolveMapFile(symbol);
-                ticker = mapFile.GetMappedSymbol(DateTime.UtcNow, symbol.Value).Replace(".", " ");
-            }
+                ticker = mapFile.GetMappedSymbol(DateTime.UtcNow, symbol.Value);
 
+                if (!_ibEquityTickersWithDot.Contains(ticker))
+                {
+                    ticker = ticker.Replace(".", " ");
+                }
+            }
+            else if (symbol.SecurityType == SecurityType.Cfd)
+            {
+                ticker = ticker.Replace(".", " ");
+            }
             return ticker;
         }
 
