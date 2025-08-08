@@ -229,7 +229,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// This collection is used to reduce the number of <see cref="_client.ClientSocket.reqContractDetails(requestId, contract);"/> requests
         /// for option chains, since all options in the same chain share the same trading class.
         /// </remarks>
-        private readonly ConcurrentDictionary<Symbol, string> _tradingClassByCanonicalSymbol = [];
+        internal readonly ConcurrentDictionary<Symbol, string> _tradingClassByCanonicalSymbol = [];
 
         // when unsubscribing symbols immediately after subscribing IB returns an error (Can't find EId with tickerId:nnn),
         // so we track subscription times to ensure symbols are not unsubscribed before a minimum time span has elapsed
@@ -1629,7 +1629,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return details.Contract.PrimaryExch;
         }
 
-        private string GetTradingClass(Contract contract, Symbol symbol)
+        internal string GetTradingClass(Contract contract, Symbol symbol)
         {
             var canonicalSymbol = symbol.HasCanonical() ? symbol.Canonical : null;
             if (canonicalSymbol is not null && _tradingClassByCanonicalSymbol.TryGetValue(canonicalSymbol, out var tradingClass))
