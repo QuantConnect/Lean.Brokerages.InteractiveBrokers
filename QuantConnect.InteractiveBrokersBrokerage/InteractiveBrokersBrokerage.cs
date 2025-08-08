@@ -226,7 +226,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// Thread-safe cache that maps canonical <see cref="Symbol"/> instances to their associated trading class.
         /// </summary>
         /// <remarks>
-        /// This collection is used to reduce the number of <c>reqContractDetails</c> requests
+        /// This collection is used to reduce the number of <see cref="_client.ClientSocket.reqContractDetails(requestId, contract);"/> requests
         /// for option chains, since all options in the same chain share the same trading class.
         /// </remarks>
         private readonly ConcurrentDictionary<Symbol, string> _tradingClassByCanonicalSymbol = [];
@@ -4635,9 +4635,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // preparing the data for IB request
             var contract = CreateContract(request.Symbol, includeExpired: true);
-            var contractDetails = GetContractDetails(contract, request.Symbol.Value);
             if (contract.SecType == IB.SecurityType.ContractForDifference)
             {
+                var contractDetails = GetContractDetails(contract, request.Symbol.Value);
                 // IB does not have data for equity and forex CFDs, we need to use the underlying security
                 var underlyingSecurityType = contractDetails.UnderSecType switch
                 {
