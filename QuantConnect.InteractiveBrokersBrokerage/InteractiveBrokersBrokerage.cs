@@ -222,6 +222,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // additional IB request information, will be matched with errors in the handler, for better error reporting
         private readonly ConcurrentDictionary<int, RequestInformation> _requestInformation = new();
 
+        /// <summary>
+        /// Thread-safe cache that maps canonical <see cref="Symbol"/> instances to their associated trading class.
+        /// </summary>
+        /// <remarks>
+        /// This collection is used to reduce the number of <see cref="_client.ClientSocket.reqContractDetails(requestId, contract);"/> requests
+        /// for option chains, since all options in the same chain share the same trading class.
+        /// </remarks>
+        internal readonly ConcurrentDictionary<Symbol, string> _tradingClassByCanonicalSymbol = [];
+
         // when unsubscribing symbols immediately after subscribing IB returns an error (Can't find EId with tickerId:nnn),
         // so we track subscription times to ensure symbols are not unsubscribed before a minimum time span has elapsed
         private readonly Dictionary<int, DateTime> _subscriptionTimes = new Dictionary<int, DateTime>();
@@ -1620,10 +1629,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return details.Contract.PrimaryExch;
         }
 
-        private string GetTradingClass(Contract contract, Symbol symbol)
+        internal string GetTradingClass(Contract contract, Symbol symbol)
         {
-            ContractDetails details;
-            if (_contractDetails.TryGetValue(GetUniqueKey(contract), out details))
+            var canonicalSymbol = symbol.HasCanonical() ? symbol.Canonical : null;
+            if (canonicalSymbol is not null && _tradingClassByCanonicalSymbol.TryGetValue(canonicalSymbol, out var tradingClass))
+            {
+                return tradingClass;
+            }
+
+            if (_contractDetails.TryGetValue(GetUniqueKey(contract), out var details))
             {
                 return details.Contract.TradingClass;
             }
@@ -1642,6 +1656,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 // we were unable to find the contract details
                 return null;
+            }
+
+            if (canonicalSymbol is not null)
+            {
+                _tradingClassByCanonicalSymbol[canonicalSymbol] = details.Contract.TradingClass;
             }
 
             return details.Contract.TradingClass;
@@ -4616,9 +4635,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // preparing the data for IB request
             var contract = CreateContract(request.Symbol, includeExpired: true);
-            var contractDetails = GetContractDetails(contract, request.Symbol.Value);
             if (contract.SecType == IB.SecurityType.ContractForDifference)
             {
+                var contractDetails = GetContractDetails(contract, request.Symbol.Value);
                 // IB does not have data for equity and forex CFDs, we need to use the underlying security
                 var underlyingSecurityType = contractDetails.UnderSecType switch
                 {

@@ -41,6 +41,8 @@ using QuantConnect.Tests.Engine;
 using QuantConnect.Tests.Engine.DataFeeds;
 using QuantConnect.Util;
 using Order = QuantConnect.Orders.Order;
+using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
+using QuantConnect.Securities.IndexOption;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
@@ -49,6 +51,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
     public class InteractiveBrokersBrokerageAdditionalTests
     {
         private readonly List<Order> _orders = new List<Order>();
+
+        private readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
+
+        private InteractiveBrokersSymbolMapper _symbolMapper = new InteractiveBrokersSymbolMapper(Composer.Instance.GetPart<IMapFileProvider>());
 
         [SetUp]
         public void Setup()
@@ -1075,6 +1081,95 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var mondayMarketOpenSecondTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, mondayMarketOpenDateTimeFirstTick);
 
             Assert.IsFalse(mondayMarketOpenSecondTickResult);
+        }
+
+        [Test]
+        public void GetTradingClassReturnsTradingClassFromCache()
+        {
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+            ib.Connect();
+
+            var future = Symbol.CreateFuture(Futures.Indices.SP500EMini, Market.CME, new DateTime(2025, 09, 19));
+            var index = Symbol.Create("SPX", SecurityType.Index, Market.USA);
+            var symbols = new Symbol[]
+            {
+                future,
+                Symbol.CreateOption(future, future.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Put, 6725m, future.ID.Date),
+                Symbol.CreateOption(future, future.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Call, 6725m, future.ID.Date),
+                Symbol.CreateOption(future, future.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Put, 6750m, future.ID.Date),
+                Symbol.CreateOption(future, future.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Call, 6750m, future.ID.Date),
+
+                Symbol.CreateOption(index, index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6300m, new(2025,08,15)),
+                Symbol.CreateOption(index, index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6350m, new(2025,08,15)),
+                Symbol.CreateOption(index, index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Put, 6395m, new(2025,08,15)),
+
+                Symbol.CreateOption(index, "SPXW", index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6355m, new(2025,08,15)),
+                Symbol.CreateOption(index, "SPXW", index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Put, 6320m, new(2025,08,15)),
+                Symbol.CreateOption(index, "SPXW", index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Put, 6310m, new(2025,08,15)),
+            };
+
+            var stopwatch = Stopwatch.StartNew();
+            foreach (var symbol in symbols)
+            {
+                var contract = CreateContract(symbol);
+                var tradingClass = ib.GetTradingClass(contract, symbol);
+
+                Assert.IsFalse(string.IsNullOrEmpty(tradingClass), $"Trading class should not be null or empty for symbol {symbol}");
+
+                if (symbol.HasCanonical())
+                {
+                    Assert.IsTrue(ib._tradingClassByCanonicalSymbol.ContainsKey(symbol.Canonical), $"Cache should contain canonical for symbol {symbol}");
+                }
+                else
+                {
+                    Assert.IsFalse(ib._tradingClassByCanonicalSymbol.ContainsKey(symbol.Canonical));
+                }
+            }
+            stopwatch.Stop();
+            Log.Trace($"Test.GetTradingClassReturnsTradingClassFromCache: performance test elapsed time: {stopwatch.ElapsedMilliseconds} ms");
+
+            ib.Disconnect();
+        }
+
+        private Contract CreateContract(Symbol symbol)
+        {
+            var securityType = InteractiveBrokersBrokerage.ConvertSecurityType(symbol.SecurityType);
+            var ibSymbol = _symbolMapper.GetBrokerageSymbol(symbol);
+
+            var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(
+                symbol.ID.Market,
+                symbol,
+                symbol.SecurityType,
+                Currencies.USD);
+
+            var contract = new Contract
+            {
+                Symbol = ibSymbol,
+                Exchange = InteractiveBrokersBrokerage.GetSymbolExchange(symbol.SecurityType, symbol.ID.Market),
+                SecType = securityType,
+                Currency = symbolProperties.QuoteCurrency
+            };
+
+            if (symbol.ID.SecurityType.IsOption())
+            {
+                // Subtract a day from Index Options, since their last trading date
+                // is on the day before the expiry.
+                var lastTradeDate = symbol.ID.Date;
+                if (symbol.SecurityType == SecurityType.IndexOption)
+                {
+                    lastTradeDate = IndexOptionSymbol.GetLastTradingDate(symbol.ID.Symbol, symbol.ID.Date);
+                }
+                contract.LastTradeDateOrContractMonth = lastTradeDate.ToStringInvariant(DateFormat.EightCharacter);
+
+                contract.Right = symbol.ID.OptionRight == OptionRight.Call ? IB.RightType.Call : IB.RightType.Put;
+
+                contract.Strike = Convert.ToDouble(symbol.ID.StrikePrice);
+
+                contract.Symbol = ibSymbol;
+                contract.Multiplier = symbolProperties.ContractMultiplier.ToStringInvariant();
+            }
+
+            return contract;
         }
 
         private List<BaseData> GetHistory(
