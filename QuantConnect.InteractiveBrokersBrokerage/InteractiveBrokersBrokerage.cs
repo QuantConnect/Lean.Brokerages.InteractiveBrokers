@@ -1631,7 +1631,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private string GetTradingClass(Contract contract, Symbol symbol)
         {
-            var canonicalSymbol = symbol.IsCanonical() ? symbol : symbol.SecurityType.IsOption() ? symbol.Canonical : null;
+            var canonicalSymbol = symbol.HasCanonical() ? symbol.Canonical : null;
             if (canonicalSymbol is not null && _tradingClassByCanonicalSymbol.TryGetValue(canonicalSymbol, out var tradingClass))
             {
                 return tradingClass;
