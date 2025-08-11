@@ -40,7 +40,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// This collection is used to reduce the number of <see cref="_client.ClientSocket.reqContractDetails(requestId, contract);"/> requests
         /// for option chains, since all options in the same chain share the same trading class.
         /// </remarks>
-        private readonly ConcurrentDictionary<Symbol, ContractSpecification> _tradingClassByCanonicalSymbol = [];
+        internal readonly ConcurrentDictionary<Symbol, ContractSpecification> _tradingClassByCanonicalSymbol = [];
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ContractSpecificationService"/> class.

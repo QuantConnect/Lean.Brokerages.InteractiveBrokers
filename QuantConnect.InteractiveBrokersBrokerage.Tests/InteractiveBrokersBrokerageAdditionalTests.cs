@@ -1112,17 +1112,20 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             foreach (var symbol in symbols)
             {
                 var contract = CreateContract(symbol);
-                var tradingClass = ib.GetTradingClass(contract, symbol);
+                var tradingClass = ib._contractSpecificationService.GetTradingClass(contract, symbol);
 
                 Assert.IsFalse(string.IsNullOrEmpty(tradingClass), $"Trading class should not be null or empty for symbol {symbol}");
 
                 if (symbol.HasCanonical())
                 {
-                    Assert.IsTrue(ib._tradingClassByCanonicalSymbol.ContainsKey(symbol.Canonical), $"Cache should contain canonical for symbol {symbol}");
+                    Assert.IsTrue(ib._contractSpecificationService._tradingClassByCanonicalSymbol.TryGetValue(symbol.Canonical, out var contractSpecification),
+                        $"Cache should contain canonical for symbol {symbol}");
+                    Assert.IsNotEmpty(contractSpecification.TradingClass);
+                    Assert.Greater(contractSpecification.MinTick, 0m);
                 }
                 else
                 {
-                    Assert.IsFalse(ib._tradingClassByCanonicalSymbol.ContainsKey(symbol.Canonical));
+                    Assert.IsFalse(ib._contractSpecificationService._tradingClassByCanonicalSymbol.ContainsKey(symbol.Canonical));
                 }
             }
             stopwatch.Stop();

@@ -226,7 +226,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// Provides cached access to Interactive Brokers contract specifications,
         /// including trading class and minimum tick size, to reduce duplicate <c>reqContractDetails</c> requests.
         /// </summary>
-        private IB.ContractSpecificationService _contractSpecificationService;
+        internal IB.ContractSpecificationService _contractSpecificationService;
 
         // when unsubscribing symbols immediately after subscribing IB returns an error (Can't find EId with tickerId:nnn),
         // so we track subscription times to ensure symbols are not unsubscribed before a minimum time span has elapsed
