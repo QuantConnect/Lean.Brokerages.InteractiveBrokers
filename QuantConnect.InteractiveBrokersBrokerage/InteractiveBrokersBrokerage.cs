@@ -1646,6 +1646,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="contract">The target contract</param>
         /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
+        /// <param name="failIfNotFound">
+        /// If <c>true</c>, the request is treated as a required lookup and will be logged as a <see cref="RequestType.ContractDetails"/> request.
+        /// If <c>false</c>, the request is treated as a soft lookup (<see cref="RequestType.SoftContractDetails"/>) that does not cause a failure if no details are found.
+        /// </param>
         private ContractDetails GetContractDetailsImpl(Contract contract, string ticker, bool failIfNotFound = true)
         {
             const int timeout = 60; // sec

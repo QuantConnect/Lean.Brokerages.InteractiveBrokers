@@ -58,8 +58,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// </summary>
         /// <param name="contract">The IB contract to retrieve data for.</param>
         /// <param name="symbol">The associated Lean symbol.</param>
+        /// <param name="failIfNotFound">
+        /// If <c>true</c>, the request is treated as a required lookup and will be logged as a <see cref="InteractiveBrokersBrokerage.RequestType.ContractDetails"/> request.
+        /// If <c>false</c>, the request is treated as a soft lookup (<see cref="InteractiveBrokersBrokerage.RequestType.SoftContractDetails"/>) that does not cause a failure if no details are found.
+        /// </param>
         /// <returns>The trading class string, or <c>null</c> if the data could not be retrieved.</returns>
-        public string GetTradingClass(Contract contract, Symbol symbol) => GetOrAddSpecification(contract, symbol)?.TradingClass;
+        public string GetTradingClass(Contract contract, Symbol symbol, bool failIfNotFound = true) => GetOrAddSpecification(contract, symbol, failIfNotFound)?.TradingClass;
 
         /// <summary>
         /// Gets the minimum price increment (tick size) for the specified contract and symbol,
@@ -67,10 +71,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// </summary>
         /// <param name="contract">The IB contract to retrieve data for.</param>
         /// <param name="symbol">The associated Lean symbol.</param>
+        /// <param name="failIfNotFound">
+        /// If <c>true</c>, the request is treated as a required lookup and will be logged as a <see cref="InteractiveBrokersBrokerage.RequestType.ContractDetails"/> request.
+        /// If <c>false</c>, the request is treated as a soft lookup (<see cref="InteractiveBrokersBrokerage.RequestType.SoftContractDetails"/>) that does not cause a failure if no details are found.
+        /// </param>
         /// <returns>
         /// The minimum tick size, or <c>0</c> if the data could not be retrieved.
         /// </returns>
-        public decimal GetMinTick(Contract contract, Symbol symbol) => GetOrAddSpecification(contract, symbol)?.MinTick ?? 0m;
+        public decimal GetMinTick(Contract contract, Symbol symbol, bool failIfNotFound = true) => GetOrAddSpecification(contract, symbol, failIfNotFound)?.MinTick ?? 0m;
 
         /// <summary>
         /// Gets the <see cref="ContractSpecification"/> for the given contract and symbol,
@@ -78,11 +86,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// </summary>
         /// <param name="contract">The IB contract to retrieve data for.</param>
         /// <param name="symbol">The associated Lean symbol.</param>
+        /// <param name="failIfNotFound">
+        /// If <c>true</c>, the request is treated as a required lookup and will be logged as a <see cref="InteractiveBrokersBrokerage.RequestType.ContractDetails"/> request.
+        /// If <c>false</c>, the request is treated as a soft lookup (<see cref="InteractiveBrokersBrokerage.RequestType.SoftContractDetails"/>) that does not cause a failure if no details are found.
+        /// </param>
         /// <returns>
         /// The <see cref="ContractSpecification"/> containing the trading class and minimum tick size,
         /// or <c>null</c> if the data could not be retrieved.
         /// </returns>
-        private ContractSpecification GetOrAddSpecification(Contract contract, Symbol symbol)
+        private ContractSpecification GetOrAddSpecification(Contract contract, Symbol symbol, bool failIfNotFound)
         {
             var canonicalSymbol = symbol.HasCanonical() ? symbol.Canonical : null;
             if (canonicalSymbol is not null && _tradingClassByCanonicalSymbol.TryGetValue(canonicalSymbol, out var cached))
@@ -99,7 +111,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
                 contract.TradingClass = symbol.ID.Symbol;
             }
 
-            var details = _getContractDetails(contract, symbol.Value, true);
+            var details = _getContractDetails(contract, symbol.Value, failIfNotFound);
             if (details == null)
             {
                 return null; // Unable to find contract details
