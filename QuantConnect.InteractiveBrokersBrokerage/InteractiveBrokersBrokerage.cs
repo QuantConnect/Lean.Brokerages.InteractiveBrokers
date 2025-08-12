@@ -207,6 +207,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
 
+        /// <summary>
+        /// Service for retrieving primary exchange information for equity contracts.
+        /// </summary>
+        internal IB.EquityPrimaryExchangeService _equityPrimaryExchangeService;
+
         // exchange time zones by symbol
         private readonly Dictionary<Symbol, DateTimeZone> _symbolExchangeTimeZones = new Dictionary<Symbol, DateTimeZone>();
 
@@ -1374,6 +1379,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             _symbolMapper = new InteractiveBrokersSymbolMapper(_mapFileProvider);
             _contractSpecificationService = new(GetContractDetails);
+            _equityPrimaryExchangeService = new(_mapFileProvider, GetContractDetails);
 
             _subscriptionManager = new EventBasedDataQueueHandlerSubscriptionManager();
             _subscriptionManager.SubscribeImpl += (s, t) => Subscribe(s);
@@ -1613,18 +1619,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public static string GetContractDescription(Contract contract)
         {
             return $"{contract} {contract.PrimaryExch ?? string.Empty} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right}";
-        }
-
-        private string GetPrimaryExchange(Contract contract, Symbol symbol)
-        {
-            var details = GetContractDetails(contract, symbol.Value);
-            if (details == null)
-            {
-                // we were unable to find the contract details
-                return null;
-            }
-
-            return details.Contract.PrimaryExch;
         }
 
         /// <summary>
@@ -3198,7 +3192,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             else if (symbol.ID.SecurityType == SecurityType.Equity)
             {
-                contract.PrimaryExch = GetPrimaryExchange(contract, symbol);
+                contract.PrimaryExch = _equityPrimaryExchangeService.GetPrimaryExchange(contract, symbol);
             }
             // Indexes requires that the exchange be specified exactly
             else if (symbol.ID.SecurityType == SecurityType.Index)

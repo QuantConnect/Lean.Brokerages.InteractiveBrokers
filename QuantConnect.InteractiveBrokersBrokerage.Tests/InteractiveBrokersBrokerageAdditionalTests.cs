@@ -1175,6 +1175,29 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             return contract;
         }
 
+        [Test]
+        public void GetEquityPrimaryExchange()
+        {
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+            ib.Connect();
+
+            var symbols = new List<(Symbol, string)>
+            {
+                (Symbol.Create("AAPL", SecurityType.Equity, Market.USA), "NASDAQ"),
+                (Symbol.Create("ABCB", SecurityType.Equity, Market.USA), "NASDAQ")
+            };
+
+            foreach (var (symbol, expectedPrimaryExchange) in symbols)
+            {
+                var contract = CreateContract(symbol);
+
+                var primaryExchange = ib._equityPrimaryExchangeService.GetPrimaryExchange(contract, symbol);
+
+                Assert.IsNotNull(primaryExchange);
+                Assert.AreEqual(expectedPrimaryExchange, primaryExchange);
+            }
+        }
+
         private List<BaseData> GetHistory(
             Symbol symbol,
             Resolution resolution,
