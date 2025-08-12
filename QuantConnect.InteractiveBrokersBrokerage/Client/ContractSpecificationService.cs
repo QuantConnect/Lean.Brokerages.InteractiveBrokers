@@ -99,7 +99,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
                 contract.TradingClass = symbol.ID.Symbol;
             }
 
-            var details = _getContractDetails(contract, symbol.Value, false);
+            var details = _getContractDetails(contract, symbol.Value, true);
             if (details == null)
             {
                 return null; // Unable to find contract details
