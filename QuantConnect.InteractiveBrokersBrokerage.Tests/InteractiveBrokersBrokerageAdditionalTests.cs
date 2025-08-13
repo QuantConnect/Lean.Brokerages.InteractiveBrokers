@@ -1198,7 +1198,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
                 var contract = CreateContract(symbol);
 
-                var leanPrimaryExchange = ib._equityPrimaryExchangeService.GetPrimaryExchange(contract, symbol);
+                var leanPrimaryExchange = ib.GetPrimaryExchange(contract, symbol);
 
                 var ibPrimaryExchange = ib.GetContractDetails(contract, symbol.Value)?.Contract.PrimaryExch;
 

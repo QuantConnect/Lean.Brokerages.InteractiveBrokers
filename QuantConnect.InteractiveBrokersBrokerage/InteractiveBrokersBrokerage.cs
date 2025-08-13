@@ -208,9 +208,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
 
         /// <summary>
-        /// Service for retrieving primary exchange information for equity contracts.
+        /// Provides primary exchange data based on LEAN map files.
         /// </summary>
-        internal IB.EquityPrimaryExchangeService _equityPrimaryExchangeService;
+        private MapFilePrimaryExchangeProvider _exchangeProvider;
 
         // exchange time zones by symbol
         private readonly Dictionary<Symbol, DateTimeZone> _symbolExchangeTimeZones = new Dictionary<Symbol, DateTimeZone>();
@@ -1379,7 +1379,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             _symbolMapper = new InteractiveBrokersSymbolMapper(_mapFileProvider);
             _contractSpecificationService = new(GetContractDetails);
-            _equityPrimaryExchangeService = new(_mapFileProvider, GetContractDetails);
+            _exchangeProvider = new MapFilePrimaryExchangeProvider(_mapFileProvider);
 
             _subscriptionManager = new EventBasedDataQueueHandlerSubscriptionManager();
             _subscriptionManager.SubscribeImpl += (s, t) => Subscribe(s);
@@ -1619,6 +1619,24 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public static string GetContractDescription(Contract contract)
         {
             return $"{contract} {contract.PrimaryExch ?? string.Empty} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right}";
+        }
+
+        internal string GetPrimaryExchange(Contract contract, Symbol symbol)
+        {
+            var primaryExchange = _exchangeProvider.GetPrimaryExchange(symbol.ID)?.Name;
+
+            if (primaryExchange is null)
+            {
+                primaryExchange = GetContractDetails(contract, symbol.Value)?.Contract.PrimaryExch;
+                if (primaryExchange is null)
+                {
+                    return null;
+                }
+
+                return primaryExchange;
+            }
+
+            return primaryExchange;
         }
 
         /// <summary>
@@ -3192,7 +3210,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             else if (symbol.ID.SecurityType == SecurityType.Equity)
             {
-                contract.PrimaryExch = _equityPrimaryExchangeService.GetPrimaryExchange(contract, symbol);
+                contract.PrimaryExch = GetPrimaryExchange(contract, symbol);
             }
             // Indexes requires that the exchange be specified exactly
             else if (symbol.ID.SecurityType == SecurityType.Index)
