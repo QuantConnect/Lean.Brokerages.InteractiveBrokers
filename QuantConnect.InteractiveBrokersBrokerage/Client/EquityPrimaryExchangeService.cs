@@ -33,11 +33,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         private readonly MapFilePrimaryExchangeProvider _exchangeProvider;
 
         /// <summary>
-        /// Caches previously retrieved primary exchange values for symbols to avoid repeated lookups.
-        /// </summary>
-        private readonly Dictionary<Symbol, string> _primaryExchangeBySymbol = [];
-
-        /// <summary>
         /// Delegate used to request Interactive Brokers contract details for a given contract.
         /// </summary>
         /// <param name="contract">The Interactive Brokers contract to retrieve details for.</param>
@@ -85,8 +80,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
                 {
                     return null;
                 }
-
-                _primaryExchangeBySymbol[symbol] = primaryExchange;
 
                 return primaryExchange;
             }
