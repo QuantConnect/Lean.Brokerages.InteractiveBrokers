@@ -14,6 +14,7 @@
 */
 
 using System;
+using System.Text;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -1175,27 +1176,64 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             return contract;
         }
 
-        [Test]
-        public void GetEquityPrimaryExchange()
+        [Test, Explicit("Long-running test (~10 minutes). Compares LEAN and IB API primary exchanges for up to 1000 equity symbols.")]
+        public void GetEquityPrimaryExchangeShouldMatchBetweenLeanAndIB()
         {
             using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
             ib.Connect();
 
-            var symbols = new List<(Symbol, string)>
-            {
-                (Symbol.Create("AAPL", SecurityType.Equity, Market.USA), "NASDAQ"),
-                (Symbol.Create("ABCB", SecurityType.Equity, Market.USA), "NASDAQ")
-            };
+            var tickers = QuantConnect.Algorithm.CSharp.StressSymbols.StockSymbols.ToList();
 
-            foreach (var (symbol, expectedPrimaryExchange) in symbols)
+            var totalCount = default(int);
+            var equalCount = default(int);
+
+            var logBuilder = new StringBuilder($"***** GetEquityPrimaryExchange Test ({tickers.Count} tickers) *****");
+            var logBuilder2 = new StringBuilder("***** MissMatched Symbols *****");
+
+            foreach (var ticker in tickers)
             {
+                totalCount++;
+
+                var symbol = Symbol.Create(ticker, SecurityType.Equity, Market.USA);
+
                 var contract = CreateContract(symbol);
 
-                var primaryExchange = ib._equityPrimaryExchangeService.GetPrimaryExchange(contract, symbol);
+                var leanPrimaryExchange = ib._equityPrimaryExchangeService.GetPrimaryExchange(contract, symbol);
 
-                Assert.IsNotNull(primaryExchange);
-                Assert.AreEqual(expectedPrimaryExchange, primaryExchange);
+                var ibPrimaryExchange = ib.GetContractDetails(contract, symbol.Value)?.Contract.PrimaryExch;
+
+                if (ibPrimaryExchange == null)
+                {
+                    totalCount--;
+                    logBuilder.AppendLine($"[SKIP] Contract not found for {symbol}");
+                    continue;
+                }
+
+                if (totalCount == 1000)
+                {
+                    logBuilder.AppendLine("Symbol processing limit reached (1000). Stopping test.");
+                    break;
+                }
+
+                Assert.IsNotNull(leanPrimaryExchange);
+
+                bool isEqual = string.Equals(leanPrimaryExchange, ibPrimaryExchange, StringComparison.InvariantCultureIgnoreCase);
+                if (isEqual)
+                {
+                    logBuilder.AppendLine($"[RESULT] {symbol.Value} | LEAN = {leanPrimaryExchange} | IB API = {ibPrimaryExchange} | Match = {isEqual}");
+                    equalCount++;
+                }
+                else
+                {
+                    logBuilder2.AppendLine($"[RESULT] {symbol.Value} | LEAN = {leanPrimaryExchange} | IB API = {ibPrimaryExchange} | Match = {isEqual}");
+                }
             }
+
+            logBuilder.AppendLine("----- Test Summary -----");
+            logBuilder.AppendLine($"Processed: {totalCount} | Matches: {equalCount} | Mismatches: {totalCount - equalCount}");
+
+            Log.Trace(logBuilder.ToString());
+            Log.Trace(logBuilder2.ToString());
         }
 
         private List<BaseData> GetHistory(

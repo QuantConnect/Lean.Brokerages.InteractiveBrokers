@@ -1626,7 +1626,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="contract">The target contract</param>
         /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
-        private ContractDetails GetContractDetails(Contract contract, string ticker, bool failIfNotFound = true)
+        internal ContractDetails GetContractDetails(Contract contract, string ticker, bool failIfNotFound = true)
         {
             if (contract.SecType != null && _contractDetails.TryGetValue(GetUniqueKey(contract), out var details))
             {
