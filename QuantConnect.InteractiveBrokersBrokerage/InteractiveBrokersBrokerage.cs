@@ -1625,15 +1625,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             var primaryExchange = _exchangeProvider.GetPrimaryExchange(symbol.ID)?.Name;
 
-            if (primaryExchange is null)
+            if (string.IsNullOrEmpty(primaryExchange))
             {
-                primaryExchange = GetContractDetails(contract, symbol.Value)?.Contract.PrimaryExch;
-                if (primaryExchange is null)
-                {
-                    return null;
-                }
-
-                return primaryExchange;
+                return GetContractDetails(contract, symbol.Value)?.Contract.PrimaryExch;
             }
 
             return primaryExchange;
