@@ -223,13 +223,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly ConcurrentDictionary<int, RequestInformation> _requestInformation = new();
 
         /// <summary>
-        /// Thread-safe cache that maps canonical <see cref="Symbol"/> instances to their associated trading class.
+        /// Provides cached access to Interactive Brokers contract specifications,
+        /// including trading class and minimum tick size, to reduce duplicate <c>reqContractDetails</c> requests.
         /// </summary>
-        /// <remarks>
-        /// This collection is used to reduce the number of <see cref="_client.ClientSocket.reqContractDetails(requestId, contract);"/> requests
-        /// for option chains, since all options in the same chain share the same trading class.
-        /// </remarks>
-        internal readonly ConcurrentDictionary<Symbol, string> _tradingClassByCanonicalSymbol = [];
+        internal IB.ContractSpecificationService _contractSpecificationService;
 
         // when unsubscribing symbols immediately after subscribing IB returns an error (Can't find EId with tickerId:nnn),
         // so we track subscription times to ensure symbols are not unsubscribed before a minimum time span has elapsed
@@ -1376,6 +1373,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _agentDescription = agentDescription;
 
             _symbolMapper = new InteractiveBrokersSymbolMapper(_mapFileProvider);
+            _contractSpecificationService = new(GetContractDetails);
 
             _subscriptionManager = new EventBasedDataQueueHandlerSubscriptionManager();
             _subscriptionManager.SubscribeImpl += (s, t) => Subscribe(s);
@@ -1629,55 +1627,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return details.Contract.PrimaryExch;
         }
 
-        internal string GetTradingClass(Contract contract, Symbol symbol)
-        {
-            var canonicalSymbol = symbol.HasCanonical() ? symbol.Canonical : null;
-            if (canonicalSymbol is not null && _tradingClassByCanonicalSymbol.TryGetValue(canonicalSymbol, out var tradingClass))
-            {
-                return tradingClass;
-            }
-
-            if (_contractDetails.TryGetValue(GetUniqueKey(contract), out var details))
-            {
-                return details.Contract.TradingClass;
-            }
-
-            if (symbol.SecurityType == SecurityType.FutureOption || symbol.SecurityType == SecurityType.IndexOption)
-            {
-                // Futures options and Index Options trading class is the same as the FOP ticker.
-                // This is required in order to resolve the contract details successfully.
-                // We let this method complete even though we assign twice so that the
-                // contract details are added to the cache and won't require another lookup.
-                contract.TradingClass = symbol.ID.Symbol;
-            }
-
-            details = GetContractDetailsImpl(contract, symbol.Value);
-            if (details == null)
-            {
-                // we were unable to find the contract details
-                return null;
-            }
-
-            if (canonicalSymbol is not null)
-            {
-                _tradingClassByCanonicalSymbol[canonicalSymbol] = details.Contract.TradingClass;
-            }
-
-            return details.Contract.TradingClass;
-        }
-
-        private decimal GetMinTick(Contract contract, string ticker)
-        {
-            var details = GetContractDetails(contract, ticker);
-            if (details == null)
-            {
-                // we were unable to find the contract details
-                return 0;
-            }
-
-            return (decimal)details.MinTick;
-        }
-
         /// <summary>
         /// Will return and cache the IB contract details for the requested contract
         /// </summary>
@@ -1697,6 +1646,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="contract">The target contract</param>
         /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
+        /// <param name="failIfNotFound">
+        /// If <c>true</c>, the request is treated as a required lookup and will be logged as a <see cref="RequestType.ContractDetails"/> request.
+        /// If <c>false</c>, the request is treated as a soft lookup (<see cref="RequestType.SoftContractDetails"/>) that does not cause a failure if no details are found.
+        /// </param>
         private ContractDetails GetContractDetailsImpl(Contract contract, string ticker, bool failIfNotFound = true)
         {
             const int timeout = 60; // sec
@@ -1804,12 +1757,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="price">Price to be normalized</param>
         /// <param name="contract">Contract of the symbol</param>
         /// <param name="symbol">The symbol from which we need to get the PriceMagnifier attribute to normalize the price</param>
-        /// <param name="minTick">The minimum allowed price variation</param>
         /// <returns>The price normalized to be brokerage expected unit</returns>
-        public double NormalizePriceToBrokerage(decimal price, Contract contract, Symbol symbol, decimal? minTick = null)
+        public double NormalizePriceToBrokerage(decimal price, Contract contract, Symbol symbol)
         {
             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType, Currencies.USD);
-            var roundedPrice = RoundPrice(price, minTick ?? GetMinTick(contract, symbol.Value));
+            var roundedPrice = RoundPrice(price, _contractSpecificationService.GetMinTick(contract, symbol));
             roundedPrice *= symbolProperties.PriceMagnifier;
             return Convert.ToDouble(roundedPrice);
         }
@@ -2894,15 +2846,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             else if (stopLimitOrder != null)
             {
-                var minTick = GetMinTick(contract, order.Symbol.Value);
-                ibOrder.LmtPrice = NormalizePriceToBrokerage(stopLimitOrder.LimitPrice, contract, order.Symbol, minTick);
-                ibOrder.AuxPrice = NormalizePriceToBrokerage(stopLimitOrder.StopPrice, contract, order.Symbol, minTick);
+                ibOrder.LmtPrice = NormalizePriceToBrokerage(stopLimitOrder.LimitPrice, contract, order.Symbol);
+                ibOrder.AuxPrice = NormalizePriceToBrokerage(stopLimitOrder.StopPrice, contract, order.Symbol);
             }
             else if (limitIfTouchedOrder != null)
             {
-                var minTick = GetMinTick(contract, order.Symbol.Value);
-                ibOrder.LmtPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.LimitPrice, contract, order.Symbol, minTick);
-                ibOrder.AuxPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.TriggerPrice, contract, order.Symbol, minTick);
+                ibOrder.LmtPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.LimitPrice, contract, order.Symbol);
+                ibOrder.AuxPrice = NormalizePriceToBrokerage(limitIfTouchedOrder.TriggerPrice, contract, order.Symbol);
             }
             else if (comboLimitOrder != null)
             {
@@ -3295,7 +3245,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     .ContractMultiplier
                     .ToStringInvariant();
 
-                contract.TradingClass = GetTradingClass(contract, symbol);
+                contract.TradingClass = _contractSpecificationService.GetTradingClass(contract, symbol);
                 contract.IncludeExpired = includeExpired;
             }
             else if (symbol.ID.SecurityType == SecurityType.Future)
