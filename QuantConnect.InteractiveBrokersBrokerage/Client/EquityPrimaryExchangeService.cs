@@ -76,7 +76,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// </returns>
         public string GetPrimaryExchange(Contract contract, Symbol symbol, bool failIfNotFound = true)
         {
-            var primaryExchange = _exchangeProvider.GetPrimaryExchange(symbol.ID).Name;
+            var primaryExchange = _exchangeProvider.GetPrimaryExchange(symbol.ID)?.Name;
 
             if (primaryExchange is null)
             {
