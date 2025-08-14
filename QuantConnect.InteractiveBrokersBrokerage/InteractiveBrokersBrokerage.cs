@@ -207,6 +207,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
 
+        /// <summary>
+        /// Provides primary exchange data based on LEAN map files.
+        /// </summary>
+        private MapFilePrimaryExchangeProvider _exchangeProvider;
+
         // exchange time zones by symbol
         private readonly Dictionary<Symbol, DateTimeZone> _symbolExchangeTimeZones = new Dictionary<Symbol, DateTimeZone>();
 
@@ -1374,6 +1379,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             _symbolMapper = new InteractiveBrokersSymbolMapper(_mapFileProvider);
             _contractSpecificationService = new(GetContractDetails);
+            _exchangeProvider = new MapFilePrimaryExchangeProvider(_mapFileProvider);
 
             _subscriptionManager = new EventBasedDataQueueHandlerSubscriptionManager();
             _subscriptionManager.SubscribeImpl += (s, t) => Subscribe(s);
@@ -1615,16 +1621,29 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return $"{contract} {contract.PrimaryExch ?? string.Empty} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right}";
         }
 
-        private string GetPrimaryExchange(Contract contract, Symbol symbol)
+        /// <summary>
+        /// Retrieves the primary exchange for a given symbol.
+        /// </summary>
+        /// <param name="contract">The IB <see cref="Contract"/> object containing contract details.</param>
+        /// <param name="symbol">The Lean <see cref="Symbol"/> object representing the security.</param>
+        /// <returns>
+        /// The name of the primary exchange as a string.  
+        /// If the market is USA and Lean provides an exchange, that value is returned.  
+        /// Otherwise, falls back to the IB contract's <c>PrimaryExch</c> field.  
+        /// Returns <c>null</c> if no exchange information is available.
+        /// </returns>
+        internal string GetPrimaryExchange(Contract contract, Symbol symbol)
         {
-            var details = GetContractDetails(contract, symbol.Value);
-            if (details == null)
+            if (symbol.ID.Market.Equals(Market.USA, StringComparison.InvariantCultureIgnoreCase))
             {
-                // we were unable to find the contract details
-                return null;
+                var leanExchange = _exchangeProvider.GetPrimaryExchange(symbol.ID)?.Name;
+                if (!string.IsNullOrEmpty(leanExchange))
+                {
+                    return leanExchange;
+                }
             }
 
-            return details.Contract.PrimaryExch;
+            return GetContractDetails(contract, symbol.Value)?.Contract.PrimaryExch;
         }
 
         /// <summary>
@@ -1632,7 +1651,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="contract">The target contract</param>
         /// <param name="ticker">The associated Lean ticker. Just used for logging, can be provided empty</param>
-        private ContractDetails GetContractDetails(Contract contract, string ticker, bool failIfNotFound = true)
+        internal ContractDetails GetContractDetails(Contract contract, string ticker, bool failIfNotFound = true)
         {
             if (contract.SecType != null && _contractDetails.TryGetValue(GetUniqueKey(contract), out var details))
             {
