@@ -694,9 +694,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var utcNow = DateTime.UtcNow;
             var holdings = new List<Holding>();
 
-            foreach (var kvp in _accountData.AccountHoldings)
+            foreach (var kvp in _accountData.AccountHoldings.Values)
             {
-                var holding = ObjectActivator.Clone(kvp.Value);
+                var holding = ObjectActivator.Clone(kvp.Holding);
 
                 if (holding.Quantity != 0)
                 {
@@ -2673,7 +2673,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (_loadExistingHoldings)
                 {
                     var holding = CreateHolding(e);
-                    MergeHolding(_accountData.AccountHoldings, holding);
+                    MergeHolding(_accountData.AccountHoldings, holding, e.AccountName);
                 }
             }
             catch (Exception exception)
@@ -2718,30 +2718,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// This method is used when multiple updates for the same symbol can be received,
         /// such as when FA (Financial Advisor) group accounts return positions for multiple sub-accounts.
         /// </remarks>
-        internal static void MergeHolding(IDictionary<string, Holding> holdings, Holding incoming)
+        internal static void MergeHolding(IDictionary<Symbol, InteractiveBrokersAccountData.MergedHoldings> holdings, Holding incoming, string accountName)
         {
-            var key = incoming.Symbol.Value;
-
             lock (holdings)
             {
-                if (holdings.TryGetValue(key, out var existing))
+                if (!holdings.TryGetValue(incoming.Symbol, out var mergedHoldings))
                 {
-                    // Merge with existing holding: add quantities and recalculate average price
-                    // This happens when holdings are reported separately (e.g., across FA group accounts)
-                    var totalCost = (existing.AveragePrice * existing.Quantity) + (incoming.AveragePrice * incoming.Quantity);
-
-                    existing.Quantity += incoming.Quantity;
-
-                    // Avoid division by zero when position is fully closed
-                    if (existing.Quantity != 0)
-                    {
-                        existing.AveragePrice = totalCost / existing.Quantity;
-                    }
+                    holdings[incoming.Symbol] = mergedHoldings = new InteractiveBrokersAccountData.MergedHoldings();
                 }
-                else
-                {
-                    holdings[key] = incoming;
-                }
+                mergedHoldings.Merge(incoming, accountName);
             }
         }
 
