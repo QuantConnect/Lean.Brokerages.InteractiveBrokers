@@ -1621,16 +1621,29 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return $"{contract} {contract.PrimaryExch ?? string.Empty} {contract.LastTradeDateOrContractMonth.ToStringInvariant()} {contract.Strike.ToStringInvariant()} {contract.Right}";
         }
 
+        /// <summary>
+        /// Retrieves the primary exchange for a given symbol.
+        /// </summary>
+        /// <param name="contract">The IB <see cref="Contract"/> object containing contract details.</param>
+        /// <param name="symbol">The Lean <see cref="Symbol"/> object representing the security.</param>
+        /// <returns>
+        /// The name of the primary exchange as a string.  
+        /// If the market is USA and Lean provides an exchange, that value is returned.  
+        /// Otherwise, falls back to the IB contract's <c>PrimaryExch</c> field.  
+        /// Returns <c>null</c> if no exchange information is available.
+        /// </returns>
         internal string GetPrimaryExchange(Contract contract, Symbol symbol)
         {
-            var primaryExchange = _exchangeProvider.GetPrimaryExchange(symbol.ID)?.Name;
-
-            if (string.IsNullOrEmpty(primaryExchange))
+            if (symbol.ID.Market.Equals(Market.USA, StringComparison.InvariantCultureIgnoreCase))
             {
-                return GetContractDetails(contract, symbol.Value)?.Contract.PrimaryExch;
+                var leanExchange = _exchangeProvider.GetPrimaryExchange(symbol.ID)?.Name;
+                if (!string.IsNullOrEmpty(leanExchange))
+                {
+                    return leanExchange;
+                }
             }
 
-            return primaryExchange;
+            return GetContractDetails(contract, symbol.Value)?.Contract.PrimaryExch;
         }
 
         /// <summary>
