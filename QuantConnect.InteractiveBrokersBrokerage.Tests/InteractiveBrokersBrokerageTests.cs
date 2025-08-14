@@ -19,7 +19,6 @@ using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.Configuration;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
-using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
 using QuantConnect.Securities;
@@ -731,37 +730,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.IsFalse(holdingsGroup1.Any(h => h.Symbol == Symbols.NFLX), "TestGroup1 should not hold NFLX.");
             Assert.IsFalse(holdingsGroup2.Any(h => h.Symbol == Symbols.AAPL), "TestGroup2 should not hold AAPL.");
-        }
-
-        [TestCase(-500, 623.794, 100, 622.181, -400, 624.19725)]
-        [TestCase(100, 210.101, -200, 210.044, -100, 209.987)]
-        public void MergeHoldingMergesOppositeSignedAAPLPositions(decimal holdingPositionQuantity, decimal holdingAvgPrice, decimal incomePositionQuantity, decimal incomeAvgPrice, decimal expectedNewPositionQuantity, decimal expectedAvgPrice)
-        {
-            var aapl = Symbols.AAPL;
-
-            var holdings = new Dictionary<string, Holding>
-            {
-                ["AAPL"] = new Holding
-                {
-                    Symbol = aapl,
-                    Quantity = holdingPositionQuantity,
-                    AveragePrice = holdingAvgPrice
-                }
-            };
-
-            var incoming = new Holding
-            {
-                Symbol = aapl,
-                Quantity = incomePositionQuantity,
-                AveragePrice = incomeAvgPrice
-            };
-
-            InteractiveBrokersBrokerage.MergeHolding(holdings, incoming);
-
-            var merged = holdings["AAPL"];
-
-            Assert.AreEqual(expectedNewPositionQuantity, merged.Quantity);
-            Assert.AreEqual(expectedAvgPrice, merged.AveragePrice);
         }
 
         private List<Holding> ExecuteMarketOrderForGroup(string faGroup, Symbol symbol, int quantity)

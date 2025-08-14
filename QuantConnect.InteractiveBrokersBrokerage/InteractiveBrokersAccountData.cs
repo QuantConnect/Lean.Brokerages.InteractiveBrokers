@@ -13,6 +13,7 @@
  * limitations under the License.
 */
 
+using System.Collections.Generic;
 using System.Collections.Concurrent;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
@@ -35,7 +36,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// The account holdings indexed by symbol
         /// </summary>
-        public ConcurrentDictionary<string, Holding> AccountHoldings { get; } = new ConcurrentDictionary<string, Holding>();
+        public ConcurrentDictionary<Symbol, MergedHoldings> AccountHoldings { get; } = new ();
 
         /// <summary>
         /// Clears this instance of <see cref="InteractiveBrokersAccountData"/>
@@ -45,6 +46,37 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             AccountProperties.Clear();
             CashBalances.Clear();
             AccountHoldings.Clear();
+        }
+
+        public class MergedHoldings
+        {
+            private readonly HashSet<string> _accounts = new();
+            public Holding Holding { get; set; } = new();
+            public void Merge(Holding incoming, string account)
+            {
+                // only merge in holdings of multiple accounts, IB can send the same holdings for the same account multiple times
+                if (_accounts.Add(account))
+                {
+                    if (_accounts.Count == 1)
+                    {
+                        // shortcut
+                        Holding = incoming;
+                        return;
+                    }
+
+                    // Merge with existing holding: add quantities and recalculate average price
+                    // This happens when holdings are reported separately (e.g., across FA group accounts)
+                    var totalCost = (Holding.AveragePrice * Holding.Quantity) + (incoming.AveragePrice * incoming.Quantity);
+
+                    Holding.Quantity += incoming.Quantity;
+
+                    // Avoid division by zero when position is fully closed
+                    if (Holding.Quantity != 0)
+                    {
+                        Holding.AveragePrice = totalCost / Holding.Quantity;
+                    }
+                }
+            }
         }
     }
 }

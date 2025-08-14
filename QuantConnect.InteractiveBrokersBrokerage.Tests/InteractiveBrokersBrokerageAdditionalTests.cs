@@ -44,6 +44,7 @@ using QuantConnect.Util;
 using Order = QuantConnect.Orders.Order;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 using QuantConnect.Securities.IndexOption;
+using static QuantConnect.Brokerages.InteractiveBrokers.InteractiveBrokersAccountData;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
@@ -57,17 +58,51 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
         private InteractiveBrokersSymbolMapper _symbolMapper = new InteractiveBrokersSymbolMapper(Composer.Instance.GetPart<IMapFileProvider>());
 
-        [SetUp]
+        [OneTimeSetUp]
         public void Setup()
         {
             Log.LogHandler = new NUnitLogHandler();
             PythonInitializer.Initialize();
         }
 
-        [TearDown]
+        [OneTimeTearDown]
         public void TearDown()
         {
             PythonInitializer.Shutdown();
+        }
+
+        [TestCase(-500, 623.794, 100, 622.181, -400, 624.19725, "B")]
+        [TestCase(100, 210.101, -200, 210.044, -100, 209.987, "B")]
+        [TestCase(-500, 623.794, -500, 623.794, -500, 623.794, "A")] // double A is ignored
+        public void MergeHoldingMergesOppositeSignedAAPLPositions(decimal holdingPositionQuantity, decimal holdingAvgPrice, decimal incomePositionQuantity,
+            decimal incomeAvgPrice, decimal expectedNewPositionQuantity, decimal expectedAvgPrice, string incomingAccount)
+        {
+            var aapl = Symbols.AAPL;
+
+            var holdings = new Dictionary<Symbol, MergedHoldings>();
+            holdings[aapl] = new();
+
+            holdings[aapl].Merge(new Holding
+            {
+                Symbol = aapl,
+                Quantity = holdingPositionQuantity,
+                AveragePrice = holdingAvgPrice
+            }, "A");
+
+            var incoming = new Holding
+            {
+                Symbol = aapl,
+                Quantity = incomePositionQuantity,
+                AveragePrice = incomeAvgPrice
+            };
+
+            InteractiveBrokersBrokerage.MergeHolding(holdings, incoming, incomingAccount);
+
+            var merged = holdings[aapl];
+
+            Assert.AreEqual(expectedNewPositionQuantity, merged.Holding.Quantity);
+            Assert.AreEqual(expectedAvgPrice, merged.Holding.AveragePrice);
+            Assert.AreEqual(aapl, merged.Holding.Symbol);
         }
 
         [Test]
