@@ -204,7 +204,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public string GetBrokerageRootSymbol(string rootSymbol, SecurityType securityType)
         {
             var brokerageSymbol = rootSymbol;
-            if (_ibNameMap.TryGetValue(securityType, out var symbolMap))
+            if (_ibNameMap.TryGetValue(securityType, out var symbolMap) ||
+                (securityType.IsOption() && _ibNameMap.TryGetValue(Symbol.GetUnderlyingFromOptionType(securityType), out symbolMap)))
             {
                 brokerageSymbol = symbolMap.FirstOrDefault(kv => kv.Value == rootSymbol).Key;
             }
