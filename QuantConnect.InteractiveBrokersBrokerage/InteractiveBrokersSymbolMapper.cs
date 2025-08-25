@@ -166,7 +166,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     case SecurityType.FutureOption:
                         var future = FuturesOptionsUnderlyingMapper.GetUnderlyingFutureFromFutureOption(
-                            GetLeanRootSymbol(ticker, securityType),
+                            ticker,
                             market,
                             expirationDate,
                             DateTime.Now);
@@ -204,7 +204,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public string GetBrokerageRootSymbol(string rootSymbol, SecurityType securityType)
         {
             var brokerageSymbol = rootSymbol;
-            if (_ibNameMap.TryGetValue(securityType, out var symbolMap))
+            if (TryGetSymbolMap(securityType, out var symbolMap))
             {
                 brokerageSymbol = symbolMap.FirstOrDefault(kv => kv.Value == rootSymbol).Key;
             }
@@ -225,7 +225,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _ibEquityTickersWithDot.Add(brokerageRootSymbol);
             }
 
-            var ticker = _ibNameMap.TryGetValue(securityType, out var symbolMap) && symbolMap.TryGetValue(brokerageRootSymbol, out var rootSymbol)
+            var ticker = TryGetSymbolMap(securityType, out var symbolMap) && symbolMap.TryGetValue(brokerageRootSymbol, out var rootSymbol)
                 ? rootSymbol
                 : brokerageRootSymbol;
 
@@ -361,6 +361,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 IncludeExpired = false,
                 Currency = malformedContract.Currency
             };
+        }
+
+        /// <summary>
+        /// Gets the symbol mapper for the given security type.
+        /// If security type is an option type and no map is found for it, it tries to get the map for its underlying security type.
+        /// </summary>
+        private bool TryGetSymbolMap(SecurityType securityType, out Dictionary<string, string> symbolMap)
+        {
+            return _ibNameMap.TryGetValue(securityType, out symbolMap) ||
+                (securityType.IsOption() && _ibNameMap.TryGetValue(Symbol.GetUnderlyingFromOptionType(securityType), out symbolMap));
         }
     }
 }

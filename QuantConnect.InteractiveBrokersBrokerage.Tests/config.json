@@ -10,8 +10,8 @@
   "ib-tws-dir": "",
   "ib-version": "",
   "ib-financial-advisors-group-filter": "",
-  
-  "job-user-id": "",
+
+  "job-user-id": 0,
   "api-access-token": "",
   "job-organization-id": ""
 }

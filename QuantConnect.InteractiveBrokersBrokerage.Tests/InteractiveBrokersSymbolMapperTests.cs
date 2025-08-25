@@ -19,6 +19,7 @@ using NUnit.Framework;
 using QuantConnect.Securities;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
+using System.Collections.Generic;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
@@ -66,26 +67,30 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(OptionRight.Put, symbol.ID.OptionRight);
         }
 
-        [Test]
-        public void ReturnsCorrectBrokerageSymbol()
+        private static IEnumerable<TestCaseData> LeanToIbSymbolMappingTestCases
+        {
+            get
+            {
+                yield return new(Symbol.Create("EURUSD", SecurityType.Forex, Market.FXCM), "EURUSD");
+                yield return new(Symbol.Create("AAPL", SecurityType.Equity, Market.USA), "AAPL");
+
+                var brkbEquitySymbol = Symbol.Create("BRK.B", SecurityType.Equity, Market.USA);
+                yield return new(brkbEquitySymbol, "BRK B");
+                yield return new(Symbol.CreateCanonicalOption(brkbEquitySymbol), "BRK B");
+
+                var audFuture = Symbol.CreateFuture("6A", Market.CME, new DateTime(2055, 12, 15));
+                yield return new(audFuture, "AUD");
+                yield return new(Symbol.CreateOption(audFuture, Market.CME, OptionStyle.European, OptionRight.Call, 0.645m, new DateTime(2025, 12, 05)), "AUD");
+            }
+        }
+
+        [TestCaseSource(nameof(LeanToIbSymbolMappingTestCases))]
+        public void ReturnsCorrectBrokerageSymbol(Symbol leanSymbol, string expectedBrokerageSymbol)
         {
             var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
 
-            var symbol = Symbol.Create("EURUSD", SecurityType.Forex, Market.FXCM);
-            var brokerageSymbol = mapper.GetBrokerageSymbol(symbol);
-            Assert.AreEqual("EURUSD", brokerageSymbol);
-
-            symbol = Symbol.Create("AAPL", SecurityType.Equity, Market.USA);
-            brokerageSymbol = mapper.GetBrokerageSymbol(symbol);
-            Assert.AreEqual("AAPL", brokerageSymbol);
-
-            symbol = Symbol.Create("BRK.B", SecurityType.Equity, Market.USA);
-            brokerageSymbol = mapper.GetBrokerageSymbol(symbol);
-            Assert.AreEqual("BRK B", brokerageSymbol);
-
-            symbol = Symbol.CreateCanonicalOption(symbol);
-            brokerageSymbol = mapper.GetBrokerageSymbol(symbol);
-            Assert.AreEqual("BRK B", brokerageSymbol);
+            var brokerageSymbol = mapper.GetBrokerageSymbol(leanSymbol);
+            Assert.AreEqual(expectedBrokerageSymbol, brokerageSymbol);
         }
 
         [TestCase("AAPL", "AAPL")]
@@ -211,34 +216,67 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
         private static TestCaseData[] LeanIbSymbolMappingTestCases = new TestCaseData[]
         {
-            new("6B", "GBP", SecurityType.Future),
-            new("AW", "AIGCI", SecurityType.Future),
-            new("FESX", "ESTX50", SecurityType.Future),
-            new("FDAX", "DAX", SecurityType.Future),
-            new("SX5E", "ESTX50", SecurityType.Index),
+            new("6B", "GBP", "", SecurityType.Future),
+            new("AW", "AIGCI", "", SecurityType.Future),
+            new("FESX", "ESTX50", "", SecurityType.Future),
+            new("FDAX", "DAX", "", SecurityType.Future),
+            new("SX5E", "ESTX50", "", SecurityType.Index),
+            new("6A", "AUD", "", SecurityType.Future),
+            new("ADU", "AUD", "6A", SecurityType.FutureOption),
         };
 
         [TestCaseSource(nameof(LeanIbSymbolMappingTestCases))]
-        public void MapsLeanToIBSymbolDependingOnSecurityType(string leanTicker, string ibTicker, SecurityType securityType)
+        public void MapsLeanToIBSymbolDependingOnSecurityType(string leanTicker, string ibTicker, string leanUnderlyingTicker, SecurityType securityType)
         {
             var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
 
-            var leanSymbol = Symbol.Create(leanTicker, securityType, Market.InteractiveBrokers);
+            Symbol leanSymbol = null;
+            if (securityType != SecurityType.FutureOption)
+            {
+                leanSymbol = Symbol.Create(leanTicker, securityType, Market.InteractiveBrokers);
+            }
+            else
+            {
+                var underlying = Symbol.Create(leanUnderlyingTicker, SecurityType.Future, Market.InteractiveBrokers);
+                leanSymbol = Symbol.CreateCanonicalOption(underlying);
+            }
+
             var resultIbTicker = mapper.GetBrokerageSymbol(leanSymbol);
 
             Assert.AreEqual(ibTicker, resultIbTicker);
         }
 
         [TestCaseSource(nameof(LeanIbSymbolMappingTestCases))]
-        public void MapsIBToLeanSymbolDependingOnSecurityType(string leanTicker, string ibTicker, SecurityType securityType)
+        public void MapsIBToLeanSymbolDependingOnSecurityType(string leanTicker, string ibTicker, string leanUnderlyingTicker, SecurityType securityType)
         {
             var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
 
             var expiry = new DateTime(2024, 09, 20);
-            var expectedLeanSymbol = securityType == SecurityType.Future
-                ? Symbol.CreateFuture(leanTicker, Market.InteractiveBrokers, expiry)
-                : Symbol.Create(leanTicker, securityType, Market.InteractiveBrokers);
-            var resultLeanSymbol = mapper.GetLeanSymbol(ibTicker, securityType, expectedLeanSymbol.ID.Market, expiry);
+            Symbol expectedLeanSymbol = null;
+            Symbol resultLeanSymbol = null;
+            if (securityType == SecurityType.Future)
+            {
+                expectedLeanSymbol = Symbol.CreateFuture(leanTicker, Market.InteractiveBrokers, expiry);
+            }
+            else if (securityType == SecurityType.FutureOption)
+            {
+                expiry = new DateTime(2025, 12, 15);
+                var fopExpiry = new DateTime(2025, 12, 05);
+                var strike = 0.650m;
+                var underlying = Symbol.CreateFuture(leanUnderlyingTicker, Market.CME, expiry);
+                expectedLeanSymbol = Symbol.CreateOption(underlying, underlying.ID.Market, OptionStyle.American, OptionRight.Call, strike, fopExpiry);
+
+                resultLeanSymbol = mapper.GetLeanSymbol(ibTicker, securityType, expectedLeanSymbol.ID.Market, fopExpiry, strike, OptionRight.Call);
+            }
+            else
+            {
+                expectedLeanSymbol = Symbol.Create(leanTicker, securityType, Market.InteractiveBrokers);
+            }
+
+            if (resultLeanSymbol == null)
+            {
+                resultLeanSymbol = mapper.GetLeanSymbol(ibTicker, securityType, expectedLeanSymbol.ID.Market, expiry);
+            }
 
             Assert.AreEqual(expectedLeanSymbol, resultLeanSymbol);
         }
