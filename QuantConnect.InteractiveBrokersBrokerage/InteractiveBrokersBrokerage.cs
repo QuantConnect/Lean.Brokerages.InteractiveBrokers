@@ -2498,7 +2498,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             var mappedSymbol = MapSymbol(executionDetails.Contract);
             var orders = _orderProvider.GetOrdersByBrokerageId(executionDetails.Execution.OrderId);
-            var order = orders.SingleOrDefault(o => o.Symbol == mappedSymbol);
+            var order = orders.Count == 1
+                ? orders[0]
+                : orders.SingleOrDefault(o => o.Symbol == mappedSymbol);
 
             if (order == null)
             {
