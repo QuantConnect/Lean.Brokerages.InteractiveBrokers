@@ -715,6 +715,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
+            // Prevent holdings calculation every time we receive portfolio updates from IB
+            _loadExistingHoldings = false;
+
             return holdings;
         }
 
@@ -1347,6 +1350,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _loadExistingHoldings = loadExistingHoldings;
             _algorithm = algorithm;
             _orderProvider = orderProvider;
+            ConcurrencyEnabled = true;
 
             if (!string.IsNullOrEmpty(financialAdvisorsGroupFilter))
             {
