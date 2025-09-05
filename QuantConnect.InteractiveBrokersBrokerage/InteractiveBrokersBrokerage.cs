@@ -1518,54 +1518,65 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            int ibOrderId;
-            if (needsNewId)
-            {
-                // the order ids are generated for us by the SecurityTransactionManaer
-                var id = GetNextId();
-                foreach (var newOrder in orders)
-                {
-                    newOrder.BrokerId.Add(id.ToStringInvariant());
-                }
-                ibOrderId = id;
-            }
-            else if (order.BrokerId.Any())
-            {
-                // this is *not* perfect code
-                ibOrderId = Parse.Int(order.BrokerId[0]);
-            }
-            else
-            {
-                throw new ArgumentException("Expected order with populated BrokerId for updating orders.");
-            }
-
-            Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}. BrokerId: {ibOrderId}");
-
-            _requestInformation[ibOrderId] = new RequestInformation
-            {
-                RequestId = ibOrderId,
-                RequestType = RequestType.PlaceOrder,
-                AssociatedSymbol = order.Symbol,
-                Message = $"[Id={ibOrderId}] IBPlaceOrder: {order.Symbol.Value} ({GetContractDescription(contract)} )"
-            };
-
             CheckRateLimiting();
 
-            if (order.Type == OrderType.OptionExercise)
+            int ibOrderId;
+            ManualResetEventSlim orderSubmittedEvent = null;
+
+            // Let's lock here so that getting request id and placing the order is atomic.
+            // If there are multiple threads placing orders at the same time, two threads could
+            // get ids but the one with the higher id could place the order first, making the other
+            // order request to fail, since IB will assume the previous request ID was already used.
+            lock (_nextValidIdLocker)
             {
-                // IB API requires exerciseQuantity to be positive
-                _client.ClientSocket.exerciseOptions(ibOrderId, contract, 1, decimal.ToInt32(order.AbsoluteQuantity), _account, 0,
-                    string.Empty, string.Empty, false);
+                if (needsNewId)
+                {
+                    // the order ids are generated for us by the SecurityTransactionManaer
+                    var id = GetNextId();
+                    foreach (var newOrder in orders)
+                    {
+                        newOrder.BrokerId.Add(id.ToStringInvariant());
+                    }
+                    ibOrderId = id;
+                }
+                else if (order.BrokerId.Any())
+                {
+                    // this is *not* perfect code
+                    ibOrderId = Parse.Int(order.BrokerId[0]);
+                }
+                else
+                {
+                    throw new ArgumentException("Expected order with populated BrokerId for updating orders.");
+                }
+
+                Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}. BrokerId: {ibOrderId}");
+
+                _requestInformation[ibOrderId] = new RequestInformation
+                {
+                    RequestId = ibOrderId,
+                    RequestType = RequestType.PlaceOrder,
+                    AssociatedSymbol = order.Symbol,
+                    Message = $"[Id={ibOrderId}] IBPlaceOrder: {order.Symbol.Value} ({GetContractDescription(contract)} )"
+                };
+
+                if (order.Type == OrderType.OptionExercise)
+                {
+                    // IB API requires exerciseQuantity to be positive
+                    _client.ClientSocket.exerciseOptions(ibOrderId, contract, 1, decimal.ToInt32(order.AbsoluteQuantity), _account, 0,
+                        string.Empty, string.Empty, false);
+                }
+                else
+                {
+                    orderSubmittedEvent = _pendingOrderResponse[ibOrderId] = orderSubmittedEvent = new ManualResetEventSlim(false);
+                    var ibOrder = ConvertOrder(orders, contract, ibOrderId);
+                    _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
+                }
             }
-            else
+
+            if (order.Type != OrderType.OptionExercise)
             {
-                ManualResetEventSlim eventSlim = _pendingOrderResponse[ibOrderId] = eventSlim = new ManualResetEventSlim(false);
-
-                var ibOrder = ConvertOrder(orders, contract, ibOrderId);
-                _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
-
                 var noSubmissionOrderTypes = _noSubmissionOrderTypes.Contains(order.Type);
-                if (!eventSlim.Wait(noSubmissionOrderTypes ? _noSubmissionOrdersResponseTimeout : _responseTimeout))
+                if (!orderSubmittedEvent.Wait(noSubmissionOrderTypes ? _noSubmissionOrdersResponseTimeout : _responseTimeout))
                 {
                     if (noSubmissionOrderTypes)
                     {
@@ -1579,7 +1590,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                         if (_pendingOrderResponse.TryRemove(ibOrderId, out var _))
                         {
-                            eventSlim.DisposeSafely();
+                            orderSubmittedEvent.DisposeSafely();
 
                             var orderEvents = orders.Where(order => order != null).Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
                             {
@@ -1596,7 +1607,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
                 else
                 {
-                    eventSlim.DisposeSafely();
+                    orderSubmittedEvent.DisposeSafely();
                 }
             }
         }
