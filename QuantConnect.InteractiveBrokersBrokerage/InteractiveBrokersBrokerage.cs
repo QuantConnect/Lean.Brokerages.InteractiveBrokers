@@ -2522,7 +2522,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 else
                 {
                     Log.Error($"InteractiveBrokersBrokerage.HandleExecutionDetails(): Unable to locate order with BrokerageID {executionDetails.Execution.OrderId} " +
-                        $"for symbol {mappedSymbol}. Actual securities traded with this order ID are {string.Join(", ", orders.Select(x => x.Symbol))}");
+                        $"for symbol {mappedSymbol.ID}. Actual securities traded with this order ID are {string.Join(", ", orders.Select(x => x.Symbol.ID))}");
                 }
             }
 
