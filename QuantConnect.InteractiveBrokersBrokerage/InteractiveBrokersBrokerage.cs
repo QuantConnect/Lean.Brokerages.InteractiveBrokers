@@ -291,11 +291,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public bool IsFinancialAdvisor => IsMasterAccount(_account);
 
         /// <summary>
-        /// Enables concurrent order requests processing
-        /// </summary>
-        public override bool ConcurrencyEnabled => true;
-
-        /// <summary>
         /// Returns true if the account is a financial advisor master account
         /// </summary>
         /// <param name="account">The account code</param>
@@ -1354,6 +1349,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _loadExistingHoldings = loadExistingHoldings;
             _algorithm = algorithm;
             _orderProvider = orderProvider;
+            ConcurrencyEnabled = true;
 
             if (!string.IsNullOrEmpty(financialAdvisorsGroupFilter))
             {
