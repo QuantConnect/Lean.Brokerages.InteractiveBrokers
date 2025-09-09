@@ -416,10 +416,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             try
             {
-                Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}");
-
                 if (!IsConnected)
                 {
+                    Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}");
                     OnMessage(
                         new BrokerageMessageEvent(
                             BrokerageMessageType.Warning,
@@ -1536,6 +1535,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 throw new ArgumentException("Expected order with populated BrokerId for updating orders.");
             }
 
+            Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}. BrokerId: {ibOrderId}");
+
             _requestInformation[ibOrderId] = new RequestInformation
             {
                 RequestId = ibOrderId,
@@ -1627,9 +1628,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="contract">The IB <see cref="Contract"/> object containing contract details.</param>
         /// <param name="symbol">The Lean <see cref="Symbol"/> object representing the security.</param>
         /// <returns>
-        /// The name of the primary exchange as a string.  
-        /// If the market is USA and Lean provides an exchange, that value is returned.  
-        /// Otherwise, falls back to the IB contract's <c>PrimaryExch</c> field.  
+        /// The name of the primary exchange as a string.
+        /// If the market is USA and Lean provides an exchange, that value is returned.
+        /// Otherwise, falls back to the IB contract's <c>PrimaryExch</c> field.
         /// Returns <c>null</c> if no exchange information is available.
         /// </returns>
         internal string GetPrimaryExchange(Contract contract, Symbol symbol)
@@ -2495,7 +2496,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private Order GetOrder(IB.ExecutionDetailsEventArgs executionDetails)
         {
             var mappedSymbol = MapSymbol(executionDetails.Contract);
-            var order = _orderProvider.GetOrdersByBrokerageId(executionDetails.Execution.OrderId).SingleOrDefault(o => o.Symbol == mappedSymbol);
+            var orders = _orderProvider.GetOrdersByBrokerageId(executionDetails.Execution.OrderId);
+            var order = orders.Count == 1
+                ? orders[0]
+                : orders.SingleOrDefault(o => o.Symbol == mappedSymbol);
+
             if (order == null)
             {
                 if (executionDetails.Execution.Liquidation == 1)
@@ -2510,9 +2515,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     // this event will add the order into the lean engine
                     OnNewBrokerageOrderNotification(new NewBrokerageOrderNotificationEventArgs(order));
                 }
+                else if (orders.Count == 0)
+                {
+                    Log.Error($"InteractiveBrokersBrokerage.HandleExecutionDetails(): Unable to locate order with BrokerageID {executionDetails.Execution.OrderId}");
+                }
                 else
                 {
-                    Log.Error("InteractiveBrokersBrokerage.HandleExecutionDetails(): Unable to locate order with BrokerageID " + executionDetails.Execution.OrderId);
+                    Log.Error($"InteractiveBrokersBrokerage.HandleExecutionDetails(): Unable to locate order with BrokerageID {executionDetails.Execution.OrderId} " +
+                        $"for symbol {mappedSymbol.ID}. Actual securities traded with this order ID are {string.Join(", ", orders.Select(x => x.Symbol.ID))}");
                 }
             }
 
@@ -2708,7 +2718,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
-        /// Merges a holding into the current holdings dictionary. 
+        /// Merges a holding into the current holdings dictionary.
         /// If the symbol already exists, quantities are summed and a new weighted average price is calculated.
         /// If it's a new symbol, the holding is added directly.
         /// </summary>
