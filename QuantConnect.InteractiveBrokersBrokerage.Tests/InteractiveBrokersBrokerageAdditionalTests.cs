@@ -58,11 +58,14 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
         private InteractiveBrokersSymbolMapper _symbolMapper = new InteractiveBrokersSymbolMapper(Composer.Instance.GetPart<IMapFileProvider>());
 
+        private InteractiveBrokersBrokerage _ib;
+
         [OneTimeSetUp]
         public void Setup()
         {
             Log.LogHandler = new NUnitLogHandler();
             PythonInitializer.Initialize();
+            _ib = new InteractiveBrokersBrokerage();
         }
 
         [OneTimeTearDown]
@@ -1117,6 +1120,33 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var mondayMarketOpenSecondTickResult = InteractiveBrokersBrokerage.ShouldSkipTick(ndxSecurityExchangeHours, mondayMarketOpenDateTimeFirstTick);
 
             Assert.IsFalse(mondayMarketOpenSecondTickResult);
+        }
+
+        [TestCase("2025-07-15T15:59:59.900", false, Description = "Summer EDT - Before safe window - no wait")]
+        [TestCase("2025-07-15T16:00:00.000", true, Description = "Summer EDT - Exactly at boundary - should wait")]
+        [TestCase("2025-07-15T16:00:00.400", true, Description = "Summer EDT - Within safe buffer - should wait")]
+        [TestCase("2025-07-15T16:00:01.000", false, Description = "Summer EDT - After safe window - no wait")]
+        [TestCase("2025-01-15T15:59:59.900", false, Description = "Winter EST - Before safe window - no wait")]
+        [TestCase("2025-01-15T16:00:00.000", true, Description = "Winter EST - Exactly at boundary - should wait")]
+        [TestCase("2025-01-15T16:00:00.400", true, Description = "Winter EST - Within safe buffer - should wait")]
+        [TestCase("2025-01-15T16:00:01.000", false, Description = "Winter EST - After safe window - no wait")]
+        public void AvoidMarketOnOpenBoundaryRejection(string nyTimeString, bool expectDelay)
+        {
+            var nyTime = DateTime.Parse(nyTimeString);
+            var orderType = OrderType.MarketOnOpen;
+
+            var sw = Stopwatch.StartNew();
+            _ib.AvoidMarketOnOpenBoundaryRejection(orderType, nyTime);
+            sw.Stop();
+
+            if (expectDelay)
+            {
+                Assert.GreaterOrEqual(sw.ElapsedMilliseconds, 1);
+            }
+            else
+            {
+                Assert.Less(sw.ElapsedMilliseconds, 5);
+            }
         }
 
         [Test]
