@@ -1135,18 +1135,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var nyTime = DateTime.Parse(nyTimeString);
             var orderType = OrderType.MarketOnOpen;
 
-            var sw = Stopwatch.StartNew();
-            _ib.AvoidMarketOnOpenBoundaryRejection(orderType, nyTime);
-            sw.Stop();
-
-            if (expectDelay)
-            {
-                Assert.GreaterOrEqual(sw.ElapsedMilliseconds, 1);
-            }
-            else
-            {
-                Assert.Less(sw.ElapsedMilliseconds, 5);
-            }
+            Assert.AreEqual(expectDelay, _ib.TryAvoidMarketOnOpenBoundaryRejection(orderType, nyTime));
         }
 
         [Test]
