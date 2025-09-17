@@ -270,7 +270,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// This represents 16:00:00 ET.
         /// IB rejects MOO orders submitted exactly at this boundary.
         /// </remarks>
-        private static readonly TimeOnly _marketOpen = new(16, 0, 0, 0);
+        private static readonly TimeOnly _marketOnOpenOrderSafeSubmissionStartTime = new(16, 0, 0, 0);
 
         /// <summary>
         /// The "safe" market open time for submitting MarketOnOpen (MOO) orders.
@@ -280,7 +280,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// with error <c>201 - Order rejected - reason: Exchange is closed.</c>
         /// when submitted exactly at the boundary.
         /// </remarks>
-        private static readonly TimeOnly _safeMarketOpen = new(16, 0, 0, 500);
+        private static readonly TimeOnly _marketOnOpenOrderSafeSubmissionEndTime = new(16, 0, 0, 500);
 
         // Symbols that IB doesn't support ("No security definition has been found for the request")
         // We keep track of them to avoid flooding the logs with the same error/warning
@@ -1677,9 +1677,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var nowTimeOnly = TimeOnly.FromDateTime(nowExchangeTimeZone);
 
-            if (nowTimeOnly.IsBetween(_marketOpen, _safeMarketOpen))
+            if (nowTimeOnly.IsBetween(_marketOnOpenOrderSafeSubmissionStartTime, _marketOnOpenOrderSafeSubmissionEndTime))
             {
-                var delay = _safeMarketOpen - nowTimeOnly;
+                var delay = _marketOnOpenOrderSafeSubmissionEndTime - nowTimeOnly;
                 Task.Delay(delay).Wait();
 
                 if (!_hasWarnedSafeMooExecution)
