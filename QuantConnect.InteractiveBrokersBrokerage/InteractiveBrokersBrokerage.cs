@@ -1643,7 +1643,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         internal bool TryAvoidMarketOnOpenBoundaryRejection(Symbol symbol, OrderType orderType, in DateTime nowExchangeTimeZone, out TimeSpan delay)
         {
             delay = TimeSpan.Zero;
-            if (orderType != OrderType.MarketOnOpen)
+            if (orderType != OrderType.MarketOnOpen || symbol.SecurityType != SecurityType.Equity || symbol.ID.Market != Market.USA)
             {
                 return false;
             }

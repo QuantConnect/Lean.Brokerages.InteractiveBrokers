@@ -1122,20 +1122,30 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(mondayMarketOpenSecondTickResult);
         }
 
-        [TestCase("2025-07-15T15:59:59.900", false, 0, Description = "Summer EDT - Before safe window - no wait")]
-        [TestCase("2025-07-15T16:00:00.000", true, 1000, Description = "Summer EDT - Exactly at boundary - should wait")]
-        [TestCase("2025-07-15T16:00:00.400", true, 600, Description = "Summer EDT - Within safe buffer - should wait")]
-        [TestCase("2025-07-15T16:00:01.000", false, 0, Description = "Summer EDT - After safe window - no wait")]
-        [TestCase("2025-01-15T15:59:59.900", false, 0, Description = "Winter EST - Before safe window - no wait")]
-        [TestCase("2025-01-15T16:00:00.000", true, 1000, Description = "Winter EST - Exactly at boundary - should wait")]
-        [TestCase("2025-01-15T16:00:00.400", true, 600, Description = "Winter EST - Within safe buffer - should wait")]
-        [TestCase("2025-01-15T16:00:01.000", false, 0, Description = "Winter EST - After safe window - no wait")]
-        [TestCase("2025-09-05T20:00:00.000", false, 0, Description = "Friday after regular market hours")]
-        public void AvoidMarketOnOpenBoundaryRejection(string nyTimeString, bool expectDelay, int expectedDelayMs)
+        private static IEnumerable<TestCaseData> MarketOnOPenBoundaryRejectionTestData
+        {
+            get
+            {
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T15:59:59.900", false, 0).SetDescription("Summer EDT - Before safe window - no wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T16:00:00.000", true, 1000).SetDescription("Summer EDT - Exactly at boundary - should wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T16:00:00.400", true, 600).SetDescription("Summer EDT - Within safe buffer - should wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T16:00:01.000", false, 0).SetDescription("Summer EDT - After safe window - no wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T15:59:59.900", false, 0).SetDescription("Winter EST - Before safe window - no wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:00.000", true, 1000).SetDescription("Winter EST - Exactly at boundary - should wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:00.400", true, 600).SetDescription("Winter EST - Within safe buffer - should wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:01.000", false, 0).SetDescription("Winter EST - After safe window - no wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-09-05T20:00:00.000", false, 0).SetDescription("Friday after regular market hours");
+
+                yield return new TestCaseData(Symbols.BTCUSD, OrderType.MarketOnOpen, "2025-09-05T20:00:00.000", false, 0).SetDescription("Doesn't support SecurityType");
+                yield return new TestCaseData(Symbols.SGX, OrderType.MarketOnOpen, "2025-09-05T20:00:00.000", false, 0).SetDescription("Doesn't support Market");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.Market, "2025-09-05T20:00:00.000", false, 0).SetDescription("Doesn't support OrderType");
+            }
+        }
+
+        [Test, TestCaseSource(nameof(MarketOnOPenBoundaryRejectionTestData))]
+        public void AvoidMarketOnOpenBoundaryRejection(Symbol symbol, OrderType orderType, string nyTimeString, bool expectDelay, int expectedDelayMs)
         {
             var nyTime = DateTime.Parse(nyTimeString);
-            var orderType = OrderType.MarketOnOpen;
-            var symbol = Symbols.AAPL;
 
             var result = _ib.TryAvoidMarketOnOpenBoundaryRejection(symbol, orderType, nyTime, out var delay);
 
