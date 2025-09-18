@@ -1122,20 +1122,25 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(mondayMarketOpenSecondTickResult);
         }
 
-        [TestCase("2025-07-15T15:59:59.900", false, Description = "Summer EDT - Before safe window - no wait")]
-        [TestCase("2025-07-15T16:00:00.000", true, Description = "Summer EDT - Exactly at boundary - should wait")]
-        [TestCase("2025-07-15T16:00:00.400", true, Description = "Summer EDT - Within safe buffer - should wait")]
-        [TestCase("2025-07-15T16:00:01.000", false, Description = "Summer EDT - After safe window - no wait")]
-        [TestCase("2025-01-15T15:59:59.900", false, Description = "Winter EST - Before safe window - no wait")]
-        [TestCase("2025-01-15T16:00:00.000", true, Description = "Winter EST - Exactly at boundary - should wait")]
-        [TestCase("2025-01-15T16:00:00.400", true, Description = "Winter EST - Within safe buffer - should wait")]
-        [TestCase("2025-01-15T16:00:01.000", false, Description = "Winter EST - After safe window - no wait")]
-        public void AvoidMarketOnOpenBoundaryRejection(string nyTimeString, bool expectDelay)
+        [TestCase("2025-07-15T15:59:59.900", false, 0, Description = "Summer EDT - Before safe window - no wait")]
+        [TestCase("2025-07-15T16:00:00.000", true, 1000, Description = "Summer EDT - Exactly at boundary - should wait")]
+        [TestCase("2025-07-15T16:00:00.400", true, 600, Description = "Summer EDT - Within safe buffer - should wait")]
+        [TestCase("2025-07-15T16:00:01.000", false, 0, Description = "Summer EDT - After safe window - no wait")]
+        [TestCase("2025-01-15T15:59:59.900", false, 0, Description = "Winter EST - Before safe window - no wait")]
+        [TestCase("2025-01-15T16:00:00.000", true, 1000, Description = "Winter EST - Exactly at boundary - should wait")]
+        [TestCase("2025-01-15T16:00:00.400", true, 600, Description = "Winter EST - Within safe buffer - should wait")]
+        [TestCase("2025-01-15T16:00:01.000", false, 0, Description = "Winter EST - After safe window - no wait")]
+        [TestCase("2025-09-05T20:00:00.000", false, 0, Description = "Friday after regular market hours")]
+        public void AvoidMarketOnOpenBoundaryRejection(string nyTimeString, bool expectDelay, int expectedDelayMs)
         {
             var nyTime = DateTime.Parse(nyTimeString);
             var orderType = OrderType.MarketOnOpen;
+            var symbol = Symbols.AAPL;
 
-            Assert.AreEqual(expectDelay, _ib.TryAvoidMarketOnOpenBoundaryRejection(orderType, nyTime));
+            var result = _ib.TryAvoidMarketOnOpenBoundaryRejection(symbol, orderType, nyTime, out var delay);
+
+            Assert.AreEqual(expectDelay, result, "Unexpected boolean result for delay requirement");
+            Assert.AreEqual(expectedDelayMs, (int)delay.TotalMilliseconds, "Unexpected delay duration");
         }
 
         [Test]

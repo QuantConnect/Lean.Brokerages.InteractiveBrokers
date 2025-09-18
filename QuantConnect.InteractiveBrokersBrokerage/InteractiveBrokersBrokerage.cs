@@ -263,25 +263,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <remarks>Ensures the warning is raised only once per application run to avoid spamming messages.</remarks>
         private bool _hasWarnedSafeMooExecution;
 
-        /// <summary>
-        /// The official market open boundary for submitting MarketOnOpen (MOO) orders.
-        /// </summary>
-        /// <remarks>
-        /// This represents 16:00:00 ET.
-        /// IB rejects MOO orders submitted exactly at this boundary.
-        /// </remarks>
-        private static readonly TimeOnly _marketOnOpenOrderSafeSubmissionStartTime = new(16, 0, 0, 0);
-
-        /// <summary>
-        /// The "safe" market open time for submitting MarketOnOpen (MOO) orders.
-        /// </summary>
-        /// <remarks>
-        /// This adds a 500 ms buffer to avoid IB rejecting orders
-        /// with error <c>201 - Order rejected - reason: Exchange is closed.</c>
-        /// when submitted exactly at the boundary.
-        /// </remarks>
-        private static readonly TimeOnly _marketOnOpenOrderSafeSubmissionEndTime = new(16, 0, 0, 500);
-
         // Symbols that IB doesn't support ("No security definition has been found for the request")
         // We keep track of them to avoid flooding the logs with the same error/warning
         private readonly HashSet<string> _unsupportedAssets = new();
@@ -1543,6 +1524,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
+            if (TryAvoidMarketOnOpenBoundaryRejection(order.Symbol, order.Type, GetRealTimeTickTime(order.Symbol), out var delay))
+            {
+                _cancellationTokenSource.Token.WaitHandle.WaitOne(delay);
+            }
+
             CheckRateLimiting();
 
             int ibOrderId;
@@ -1594,7 +1580,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     _pendingOrderResponse[ibOrderId] = orderSubmittedEvent = new ManualResetEventSlim(false);
                     var ibOrder = ConvertOrder(orders, contract, ibOrderId);
-                    TryAvoidMarketOnOpenBoundaryRejection(order.Type, GetRealTimeTickTime(order.Symbol));
                     _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
                 }
             }
@@ -1639,49 +1624,42 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
-        /// Attempts to delay submission of <see cref="OrderType.MarketOnOpen"/> orders 
-        /// to avoid Interactive Brokers (IB) rejecting them at the exact market close boundary.
+        /// Checks whether a <see cref="OrderType.MarketOnOpen"/> order falls into IB's 
+        /// unsafe submission window (exactly at market close, e.g., 16:00:00 ET),
+        /// which would otherwise be rejected with "Exchange is closed".
         /// </summary>
-        /// <param name="orderType">
-        /// The order type being submitted. Only <see cref="OrderType.MarketOnOpen"/> is affected; 
-        /// all other order types are ignored.
+        /// <param name="symbol">The trading symbol for which the order is placed.</param>
+        /// <param name="orderType">The order type being submitted (only MOO is affected).</param>
+        /// <param name="nowExchangeTimeZone">Current exchange-local time.</param>
+        /// <param name="delay">The required delay before safe submission if within the unsafe boundary.
         /// </param>
-        /// <param name="nowExchangeTimeZone">
-        /// The current time in the exchange's local time zone, used to check whether the 
-        /// submission falls within the unsafe boundary period.
-        /// </param>
-        /// <returns>
-        /// <c>true</c> if the method delayed the order to avoid rejection; otherwise <c>false</c>.
+        /// <returns><c>true</c> if submission falls into the unsafe window and a delay is required; otherwise <c>false</c>.
         /// </returns>
         /// <remarks>
-        /// <para>
-        /// Background: IB rejects MarketOnOpen (MOO) orders submitted exactly at the market close 
-        /// boundary (16:00:00 ET), returning error <c>201 - Order rejected - reason: Exchange is closed.</c>.
-        /// </para>
-        /// <para>
-        /// To prevent this, submissions made between <c>16:00:00</c> and the configured 
-        /// safe buffer (e.g., <c>16:00:00.500</c> or <c>16:00:01</c>) are delayed slightly 
-        /// (default 500 ms) before being sent.
-        /// </para>
-        /// <para>
-        /// A warning is logged only once per session when a delay is applied, to make this 
-        /// behavior visible without excessive noise.
-        /// </para>
+        /// IB rejects MarketOnOpen orders submitted at the exact close boundary
+        /// (<c>16:00:00 ET</c>). This method applies a small delay (default 1s)
+        /// to ensure safe submission.
         /// </remarks>
-        internal bool TryAvoidMarketOnOpenBoundaryRejection(OrderType orderType, in DateTime nowExchangeTimeZone)
+        internal bool TryAvoidMarketOnOpenBoundaryRejection(Symbol symbol, OrderType orderType, in DateTime nowExchangeTimeZone, out TimeSpan delay)
         {
+            delay = TimeSpan.Zero;
             if (orderType != OrderType.MarketOnOpen)
             {
                 return false;
             }
 
+            // IB rejects MOO orders submitted exactly at this boundary.
+            var marketOnOpenOrderSafeSubmissionStartTime = TimeOnly.FromDateTime(
+                MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType)
+                .GetNextMarketClose(nowExchangeTimeZone, false));
+
+            // adds a buffer to avoid IB rejecting orders with error '201 - Order rejected - reason: Exchange is closed.'
+            var marketOnOpenOrderSafeSubmissionEndTime = marketOnOpenOrderSafeSubmissionStartTime.Add(new(0, 0, 1));
+
             var nowTimeOnly = TimeOnly.FromDateTime(nowExchangeTimeZone);
 
-            if (nowTimeOnly.IsBetween(_marketOnOpenOrderSafeSubmissionStartTime, _marketOnOpenOrderSafeSubmissionEndTime))
+            if (nowTimeOnly.IsBetween(marketOnOpenOrderSafeSubmissionStartTime, marketOnOpenOrderSafeSubmissionEndTime))
             {
-                var delay = _marketOnOpenOrderSafeSubmissionEndTime - nowTimeOnly;
-                Task.Delay(delay).Wait();
-
                 if (!_hasWarnedSafeMooExecution)
                 {
                     _hasWarnedSafeMooExecution = true;
@@ -1689,6 +1667,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         "Delayed MarketOnOpen order submission to avoid IB rejection: '201 - Order rejected - reason: Exchange is closed.'"));
                 }
 
+                delay = marketOnOpenOrderSafeSubmissionEndTime - nowTimeOnly;
                 return true;
             }
 
