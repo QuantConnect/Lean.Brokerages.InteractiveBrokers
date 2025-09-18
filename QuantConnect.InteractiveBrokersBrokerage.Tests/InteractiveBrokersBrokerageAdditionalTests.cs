@@ -1135,6 +1135,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:00.400", true, 600).SetDescription("Winter EST - Within safe buffer - should wait");
                 yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:01.000", false, 0).SetDescription("Winter EST - After safe window - no wait");
                 yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-09-05T20:00:00.000", false, 0).SetDescription("Friday after regular market hours");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-09-18T08:00:00.000", false, 0);
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-09-18T08:29:00.000", false, 0);
 
                 yield return new TestCaseData(Symbols.BTCUSD, OrderType.MarketOnOpen, "2025-09-05T20:00:00.000", false, 0).SetDescription("Doesn't support SecurityType");
                 yield return new TestCaseData(Symbols.SGX, OrderType.MarketOnOpen, "2025-09-05T20:00:00.000", false, 0).SetDescription("Doesn't support Market");

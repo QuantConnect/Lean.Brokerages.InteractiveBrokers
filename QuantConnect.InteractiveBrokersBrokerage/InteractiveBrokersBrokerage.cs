@@ -1643,22 +1643,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         internal bool TryAvoidMarketOnOpenBoundaryRejection(Symbol symbol, OrderType orderType, in DateTime nowExchangeTimeZone, out TimeSpan delay)
         {
             delay = TimeSpan.Zero;
-            if (orderType != OrderType.MarketOnOpen || symbol.SecurityType != SecurityType.Equity || symbol.ID.Market != Market.USA)
+            if (orderType != OrderType.MarketOnOpen || (symbol.SecurityType != SecurityType.Equity && !symbol.SecurityType.IsOption()) || symbol.ID.Market != Market.USA)
             {
                 return false;
             }
 
+            var oneSecond = TimeSpan.FromSeconds(1);
+
             // IB rejects MOO orders submitted exactly at this boundary.
-            var marketOnOpenOrderSafeSubmissionStartTime = TimeOnly.FromDateTime(
-                MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType)
-                .GetNextMarketClose(nowExchangeTimeZone, false));
+            var marketOnOpenOrderSafeSubmissionStartTime = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType)
+                .GetLastDailyMarketClose(nowExchangeTimeZone.Add(-oneSecond), false);
 
             // adds a buffer to avoid IB rejecting orders with error '201 - Order rejected - reason: Exchange is closed.'
-            var marketOnOpenOrderSafeSubmissionEndTime = marketOnOpenOrderSafeSubmissionStartTime.Add(new(0, 0, 1));
+            var marketOnOpenOrderSafeSubmissionEndTime = marketOnOpenOrderSafeSubmissionStartTime.Add(oneSecond);
 
-            var nowTimeOnly = TimeOnly.FromDateTime(nowExchangeTimeZone);
-
-            if (nowTimeOnly.IsBetween(marketOnOpenOrderSafeSubmissionStartTime, marketOnOpenOrderSafeSubmissionEndTime))
+            if (nowExchangeTimeZone >= marketOnOpenOrderSafeSubmissionStartTime && nowExchangeTimeZone < marketOnOpenOrderSafeSubmissionEndTime)
             {
                 if (!_hasWarnedSafeMooExecution)
                 {
@@ -1667,7 +1666,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         "Delayed MarketOnOpen order submission to avoid IB rejection: '201 - Order rejected - reason: Exchange is closed.'"));
                 }
 
-                delay = marketOnOpenOrderSafeSubmissionEndTime - nowTimeOnly;
+                delay = marketOnOpenOrderSafeSubmissionEndTime - nowExchangeTimeZone;
                 return true;
             }
 
