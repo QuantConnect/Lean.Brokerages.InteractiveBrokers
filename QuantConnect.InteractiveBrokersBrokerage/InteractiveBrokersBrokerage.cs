@@ -4676,6 +4676,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
+            var exchangeTimeZone = GetSecurityExchangeHours(request.Symbol).TimeZone;
+
             // preparing the data for IB request
             var contract = CreateContract(request.Symbol, includeExpired: true);
             if (contract.SecType == IB.SecurityType.ContractForDifference)
@@ -4697,7 +4699,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             var resolution = ConvertResolution(request.Resolution);
-            var exchangeTimeZone = GetSecurityExchangeHours(request.Symbol).TimeZone;
             var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
             var startTimeLocal = startTime.ConvertFromUtc(exchangeTimeZone);
             var endTime = request.Resolution == Resolution.Daily ? request.EndTimeUtc.Date : request.EndTimeUtc;
