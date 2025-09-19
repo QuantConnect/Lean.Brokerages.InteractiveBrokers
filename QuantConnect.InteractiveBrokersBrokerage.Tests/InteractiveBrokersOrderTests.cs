@@ -13,8 +13,10 @@
  * limitations under the License.
 */
 
+using System;
 using NUnit.Framework;
 using QuantConnect.Algorithm;
+using System.Collections.Generic;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Interfaces;
@@ -84,6 +86,32 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         public override void LongFromShort(OrderTestParameters parameters)
         {
             base.LongFromShort(parameters);
+        }
+
+        private static IEnumerable<TestCaseData> MarketOnOpenOrderParameters
+        {
+            get
+            {
+                var aapl = Symbols.AAPL;
+                var aaplOptionContract = Symbol.CreateOption(aapl, aapl.ID.Market, SecurityType.Option.DefaultOptionStyle(), OptionRight.Call, 220m, new(2025, 09, 19));
+                yield return new TestCaseData(new MarketOnOpenOrderTestParameters(aaplOptionContract));
+
+                var spx = Symbols.SPX;
+                var spxOptionContract = Symbol.CreateOption(spx, "SPXW", spx.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 5980m, new(2025, 09, 19));
+                yield return new TestCaseData(new MarketOnOpenOrderTestParameters(spxOptionContract));
+
+                var futureContract = Symbol.CreateFuture(Futures.Indices.SP500EMini, Market.CME, new DateTime(2025, 12, 19));
+                var futureOptionContract = Symbol.CreateOption(futureContract, futureContract.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Call, 7000m, new(2025, 12, 19));
+                yield return new TestCaseData(new MarketOnOpenOrderTestParameters(futureOptionContract));
+            }
+        }
+
+        [Test, TestCaseSource(nameof(MarketOnOpenOrderParameters))]
+        public void PlaceMarketOnOpen(OrderTestParameters parameters)
+        {
+            var marketOnOpen = parameters.CreateLongOrder(GetDefaultQuantity());
+            OrderProvider.Add(marketOnOpen);
+            PlaceOrderWaitForStatus(marketOnOpen, Orders.OrderStatus.Invalid);
         }
 
         /// <summary>
