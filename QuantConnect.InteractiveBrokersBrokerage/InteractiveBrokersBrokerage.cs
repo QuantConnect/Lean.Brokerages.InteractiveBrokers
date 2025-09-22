@@ -213,7 +213,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private MapFilePrimaryExchangeProvider _exchangeProvider;
 
         // exchange time zones by symbol
-        private readonly Dictionary<Symbol, DateTimeZone> _symbolExchangeTimeZones = new Dictionary<Symbol, DateTimeZone>();
+        private readonly Dictionary<Symbol, SecurityExchangeHours> _symbolExchangeHours = [];
 
         // IB requests made through the IB-API must be limited to a maximum of 50 messages/3 second
         private readonly RateGate _messagingRateLimiter = new RateGate(50, TimeSpan.FromSeconds(3));
@@ -256,6 +256,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyOpenInterestWarning;
         private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
+
+        /// <summary>
+        /// Tracks whether a warning about safe MarketOnOpen execution has already been sent.
+        /// </summary>
+        /// <remarks>Ensures the warning is raised only once per application run to avoid spamming messages.</remarks>
+        private bool _hasWarnedSafeMooExecution;
 
         // Symbols that IB doesn't support ("No security definition has been found for the request")
         // We keep track of them to avoid flooding the logs with the same error/warning
@@ -1518,6 +1524,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
+            if (TryAvoidMarketOnOpenBoundaryRejection(order.Symbol, order.Type, GetRealTimeTickTime(order.Symbol), out var delay))
+            {
+                _cancellationTokenSource.Token.WaitHandle.WaitOne(delay);
+            }
+
             CheckRateLimiting();
 
             int ibOrderId;
@@ -1610,6 +1621,55 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     orderSubmittedEvent.DisposeSafely();
                 }
             }
+        }
+
+        /// <summary>
+        /// Checks whether a <see cref="OrderType.MarketOnOpen"/> order falls into IB's 
+        /// unsafe submission window (exactly at market close, e.g., 16:00:00 ET),
+        /// which would otherwise be rejected with "Exchange is closed".
+        /// </summary>
+        /// <param name="symbol">The trading symbol for which the order is placed.</param>
+        /// <param name="orderType">The order type being submitted (only MOO is affected).</param>
+        /// <param name="nowExchangeTimeZone">Current exchange-local time.</param>
+        /// <param name="delay">The required delay before safe submission if within the unsafe boundary.
+        /// </param>
+        /// <returns><c>true</c> if submission falls into the unsafe window and a delay is required; otherwise <c>false</c>.
+        /// </returns>
+        /// <remarks>
+        /// IB rejects MarketOnOpen orders submitted at the exact close boundary
+        /// (<c>16:00:00 ET</c>). This method applies a small delay (default 1s)
+        /// to ensure safe submission.
+        /// </remarks>
+        internal bool TryAvoidMarketOnOpenBoundaryRejection(Symbol symbol, OrderType orderType, in DateTime nowExchangeTimeZone, out TimeSpan delay)
+        {
+            delay = TimeSpan.Zero;
+            if (orderType != OrderType.MarketOnOpen || symbol.SecurityType != SecurityType.Equity || symbol.ID.Market != Market.USA)
+            {
+                return false;
+            }
+
+            var oneSecond = TimeSpan.FromSeconds(1);
+
+            // IB rejects MOO orders submitted exactly at this boundary.
+            var marketOnOpenOrderSafeSubmissionStartTime = GetSecurityExchangeHours(symbol).GetLastDailyMarketClose(nowExchangeTimeZone.Add(-oneSecond), false);
+
+            // adds a buffer to avoid IB rejecting orders with error '201 - Order rejected - reason: Exchange is closed.'
+            var marketOnOpenOrderSafeSubmissionEndTime = marketOnOpenOrderSafeSubmissionStartTime.Add(oneSecond);
+
+            if (nowExchangeTimeZone >= marketOnOpenOrderSafeSubmissionStartTime && nowExchangeTimeZone < marketOnOpenOrderSafeSubmissionEndTime)
+            {
+                if (!_hasWarnedSafeMooExecution)
+                {
+                    _hasWarnedSafeMooExecution = true;
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "SafeMooExecution",
+                        "Delayed MarketOnOpen order submission to avoid IB rejection: '201 - Order rejected - reason: Exchange is closed.'"));
+                }
+
+                delay = marketOnOpenOrderSafeSubmissionEndTime - nowExchangeTimeZone;
+                return true;
+            }
+
+            return false;
         }
 
         private static string GetUniqueKey(Contract contract)
@@ -4129,17 +4189,29 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private DateTime GetRealTimeTickTime(Symbol symbol)
         {
-            var time = DateTime.UtcNow;
+            return DateTime.UtcNow.ConvertFromUtc(GetSecurityExchangeHours(symbol).TimeZone);
+        }
 
-            DateTimeZone exchangeTimeZone;
-            if (!_symbolExchangeTimeZones.TryGetValue(symbol, out exchangeTimeZone))
+        /// <summary>
+        /// Gets exchange hours for the given <paramref name="symbol"/>, 
+        /// loading from <see cref="MarketHoursDatabase"/> if not cached.
+        /// </summary>
+        /// <param name="symbol">The symbol to look up.</param>
+        /// <returns>The exchange hours for the symbol.</returns>
+        private SecurityExchangeHours GetSecurityExchangeHours(Symbol symbol)
+        {
+            var securityExchangeHours = default(SecurityExchangeHours);
+            lock (_symbolExchangeHours)
             {
-                // read the exchange time zone from market-hours-database
-                exchangeTimeZone = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType).TimeZone;
-                _symbolExchangeTimeZones.Add(symbol, exchangeTimeZone);
+                if (!_symbolExchangeHours.TryGetValue(symbol, out securityExchangeHours))
+                {
+                    // read the exchange time zone from market-hours-database
+                    securityExchangeHours = MarketHoursDatabase.FromDataFolder().GetExchangeHours(symbol.ID.Market, symbol, symbol.SecurityType);
+                    _symbolExchangeHours.Add(symbol, securityExchangeHours);
+                }
             }
 
-            return time.ConvertFromUtc(exchangeTimeZone);
+            return securityExchangeHours;
         }
 
         private void HandleTickPrice(object sender, IB.TickPriceEventArgs e)
@@ -4604,13 +4676,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            DateTimeZone exchangeTimeZone;
-            if (!_symbolExchangeTimeZones.TryGetValue(request.Symbol, out exchangeTimeZone))
-            {
-                // read the exchange time zone from market-hours-database
-                exchangeTimeZone = MarketHoursDatabase.FromDataFolder().GetExchangeHours(request.Symbol.ID.Market, request.Symbol, request.Symbol.SecurityType).TimeZone;
-                _symbolExchangeTimeZones.Add(request.Symbol, exchangeTimeZone);
-            }
+            var exchangeTimeZone = GetSecurityExchangeHours(request.Symbol).TimeZone;
 
             // preparing the data for IB request
             var contract = CreateContract(request.Symbol, includeExpired: true);
@@ -4633,7 +4699,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
 
             var resolution = ConvertResolution(request.Resolution);
-
             var startTime = request.Resolution == Resolution.Daily ? request.StartTimeUtc.Date : request.StartTimeUtc;
             var startTimeLocal = startTime.ConvertFromUtc(exchangeTimeZone);
             var endTime = request.Resolution == Resolution.Daily ? request.EndTimeUtc.Date : request.EndTimeUtc;
