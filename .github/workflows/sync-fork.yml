@@ -1,0 +1,46 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # daily at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # ensure we can push branches back to origin using the provided token
+          persist-credentials: true
+
+      - name: Add upstream
+        run: |
+          git remote add upstream https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers.git || true
+          # fetch all refs from upstream so we can reset to the upstream default branch (master)
+          git fetch upstream --prune --no-tags
+
+      - name: Create sync branch
+        run: |
+          git checkout -B sync/upstream-${{ github.run_id }}
+          # Reset the new branch to the upstream 'master' branch (QuantConnect/Lean uses 'master')
+          git reset --hard upstream/master
+          git push -f origin sync/upstream-${{ github.run_id }}
+
+      - name: Run tests (Lean CLI or unit tests)
+        run: |
+          # Example: run unit tests / docker smoke test
+          ./build_and_test.sh   # implement according to your repo
+
+      - name: Create PR
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          base: main
+          title: "chore: sync from upstream QuantConnect/Lean (upstream/master) @ ${{ github.run_id }}"
+          body: |
+            Automated sync from upstream QuantConnect/Lean (upstream/master).
+          branch: sync/upstream-${{ github.run_id }}
