@@ -263,6 +263,18 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             base.LongFromShort(parameters);
         }
 
+        [Test]
+        public void PlaceMarketOnOpen()
+        {
+            PlaceOrderWaitForStatus(new MarketOnOpenOrderTestParameters(EquityCfdSymbol).CreateLongOrder(1), Orders.OrderStatus.Submitted);
+        }
+
+        [Test]
+        public void PlaceMarketOnClose()
+        {
+            PlaceOrderWaitForStatus(new MarketOnCloseOrderTestParameters(EquityCfdSymbol).CreateLongOrder(1), Orders.OrderStatus.Submitted);
+        }
+
         #endregion
 
         // TODO: Add tests to get holdings after placing orders
