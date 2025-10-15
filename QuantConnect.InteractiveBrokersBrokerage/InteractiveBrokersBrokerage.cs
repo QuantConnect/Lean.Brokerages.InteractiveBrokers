@@ -5060,10 +5060,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 Task.Factory.StartNew(() =>
                 {
-                    _ibAutomater.Exited -= OnIbAutomaterExited;
                     _ibAutomater.Stop();
-                    _ibAutomater.Exited += OnIbAutomaterExited;
-
                     var message = "2FA authentication confirmation required to reconnect.";
                     OnMessage(BrokerageMessageEvent.Disconnected(message));
                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.ActionRequired, "2FAAuthRequired", message));
@@ -5251,6 +5248,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // check if IBGateway was closed because of an IBAutomater error, die if so
             var result = _ibAutomater.GetLastStartResult();
+            if (IsRecuperable2FATimeout(result))
+            {
+                return;
+            }
             CheckIbAutomaterError(result, false);
 
             if (!result.HasError)
@@ -5394,22 +5395,30 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void CheckIbAutomaterError(StartResult result, bool throwException = true)
         {
+            if (IsRecuperable2FATimeout(result))
+            {
+                return;
+            }
+
             if (result.HasError)
             {
-                if (_pastFirstConnection && result.ErrorCode == ErrorCode.TwoFactorConfirmationTimeout)
-                {
-                    return;
-                }
-                else
-                {
-                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, result.ErrorCode.ToString(), result.ErrorMessage));
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, result.ErrorCode.ToString(), result.ErrorMessage));
 
-                    if (throwException)
-                    {
-                        throw new Exception($"InteractiveBrokersBrokerage.CheckIbAutomaterError(): {result.ErrorCode} - {result.ErrorMessage}");
-                    }
+                if (throwException)
+                {
+                    throw new Exception($"InteractiveBrokersBrokerage.CheckIbAutomaterError(): {result.ErrorCode} - {result.ErrorMessage}");
                 }
             }
+        }
+
+        private bool IsRecuperable2FATimeout(StartResult result)
+        {
+            if (_pastFirstConnection && result.ErrorCode == ErrorCode.TwoFactorConfirmationTimeout)
+            {
+                Log.Trace($"InteractiveBrokersBrokerage.IsRecuperable2FATimeout(): will trigger user action request");
+                return true;
+            }
+            return false;
         }
 
         private void HandleAccountSummary(object sender, IB.AccountSummaryEventArgs e)
