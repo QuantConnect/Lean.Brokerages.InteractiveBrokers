@@ -118,11 +118,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private CancellationTokenSource _gatewayRestartTokenSource;
 
-        private string _ibDirectory;
-        private string _ibVersion;
-        private string _userName;
-        private string _password;
-        private string _tradingMode;
         private int _port;
         private string _account;
         private string _host;
@@ -253,6 +248,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
+        private bool _pastFirstConnection;
 
         private bool _historyHighResolutionRateLimitWarning;
         private bool _historySecondResolutionWarning;
@@ -834,10 +830,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return;
             }
 
+            Log.Trace("InteractiveBrokersBrokerage.Connect(): not connected, start connecting now...");
+
             var lastAutomaterStartResult = _ibAutomater.GetLastStartResult();
-            if (lastAutomaterStartResult.HasError && lastAutomaterStartResult.ErrorCode == ErrorCode.TwoFactorConfirmationTimeout)
+            if (lastAutomaterStartResult.HasError)
             {
-                CheckIbAutomaterError(_ibAutomater.Start(false));
+                lastAutomaterStartResult = _ibAutomater.Start(false);
+                CheckIbAutomaterError(lastAutomaterStartResult);
                 // There was an error but we did not throw, must be another 2FA timeout, we can't continue
                 if (lastAutomaterStartResult.HasError)
                 {
@@ -1019,6 +1018,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // if we reached here we should be connected, check just in case
             if (IsConnected)
             {
+                _pastFirstConnection = true;
                 Log.Trace("InteractiveBrokersBrokerage.Connect(): Restoring data subscriptions...");
                 RestoreDataSubscriptions();
 
@@ -1401,11 +1401,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _account = account;
             _host = host;
             _port = port;
-            _ibDirectory = ibDirectory;
-            _ibVersion = ibVersion;
-            _userName = userName;
-            _password = password;
-            _tradingMode = tradingMode;
 
             _agentDescription = agentDescription;
 
@@ -5061,6 +5056,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var resultHandler = Composer.Instance.GetPart<IResultHandler>();
                 resultHandler?.DebugMessage("Logging into account. Check phone for two-factor authentication verification...");
             }
+            else if (e.Data.Contains("2FA maximum attempts reached", StringComparison.InvariantCultureIgnoreCase))
+            {
+                Task.Factory.StartNew(() =>
+                {
+                    _ibAutomater.Exited -= OnIbAutomaterExited;
+                    _ibAutomater.Stop();
+                    _ibAutomater.Exited += OnIbAutomaterExited;
+
+                    var message = "2FA authentication confirmation required to reconnect.";
+                    OnMessage(BrokerageMessageEvent.Disconnected(message));
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.ActionRequired, "2FAAuthRequired", message));
+                });
+            }
 
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterOutputDataReceived(): {e.Data}");
         }
@@ -5143,8 +5151,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
         }
 
-        private int _i;
-
         /// <summary>
         /// Recurring task to schedule the weekly gateway restart, which requires 2FA and can be configured by the user.
         /// This allows to have a scheduled weekly restart that users can configure in order to be able to confirm the weekly 2FA
@@ -5164,8 +5170,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var restartDate = GetNextWeeklyRestartTimeUtc(utcNow.AddDays(1));
             // we subtract _defaultRestartDelay to avoid potential race conditions with the IBAutomater.Exited event handler and
             // to ensure the 2FA confirmation is requested as close to the configured time as possible.
-            //var delay = restartDate - utcNow - _defaultRestartDelay;
-            var delay = TimeSpan.FromMinutes(1 + _i);
+            var delay = restartDate - utcNow - _defaultRestartDelay;
 
             Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): scheduled weekly restart to {restartDate} (in {delay})");
 
@@ -5202,10 +5207,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         {
                             // stopping the gateway will make the IBAutomater emit the exit event, which will trigger the restart
                             _ibAutomater?.Stop();
-                            if (_i == 0)
-                            {
-                                _i += 10;
-                            }
                         }
                         else
                         {
@@ -5267,8 +5268,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): error in Disconnect(): {exception}");
                 }
 
-                //var delay = GetWeeklyRestartDelay();
-                var delay = TimeSpan.FromMinutes(1);
+                var delay = GetWeeklyRestartDelay();
 
                 Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Delay before restart: {delay:d'd 'h'h 'm'm 's's'}");
 
@@ -5396,19 +5396,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             if (result.HasError)
             {
-                if (result.ErrorCode == ErrorCode.TwoFactorConfirmationTimeout
-                    /* TODO: && Is not first login */)
+                if (_pastFirstConnection && result.ErrorCode == ErrorCode.TwoFactorConfirmationTimeout)
                 {
-                    _ibAutomater.Exited -= OnIbAutomaterExited;
-                    _ibAutomater.Stop();
-                    _ibAutomater.Exited += OnIbAutomaterExited;
-
-                    // Send disconnect message so that the algorithm is killed if no user action is taken
-                    OnMessage(BrokerageMessageEvent.Disconnected(result.ErrorMessage));
-
-                    // Send specialized 2FA timeout message
-                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.ActionRequired, "2FAAuthRequired",
-                        "2FA authentication confirmation required to reconnect."));
+                    return;
                 }
                 else
                 {
