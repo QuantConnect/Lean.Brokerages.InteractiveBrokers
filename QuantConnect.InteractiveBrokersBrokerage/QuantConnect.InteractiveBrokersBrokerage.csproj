@@ -32,7 +32,7 @@
   <ItemGroup>
 	  <PackageReference Include="QuantConnect.Brokerages" Version="2.5.*" />
 	  <PackageReference Include="QuantConnect.Lean.Engine" Version="2.5.*" />
-	  <PackageReference Include="QuantConnect.IBAutomater" Version="2.0.85">
+	  <PackageReference Include="QuantConnect.IBAutomater" Version="2.0.88">
 		  <!--
 		  Content files of dependencies are excluded by default.
 		  This allows content files to be available in project where nuget will be consumed.

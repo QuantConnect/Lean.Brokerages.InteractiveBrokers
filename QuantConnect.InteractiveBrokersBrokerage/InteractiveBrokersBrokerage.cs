@@ -248,6 +248,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
+        private bool _pastFirstConnection;
 
         private bool _historyHighResolutionRateLimitWarning;
         private bool _historySecondResolutionWarning;
@@ -829,6 +830,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return;
             }
 
+            Log.Trace("InteractiveBrokersBrokerage.Connect(): not connected, start connecting now...");
+
+            var lastAutomaterStartResult = _ibAutomater.GetLastStartResult();
+            if (lastAutomaterStartResult.HasError)
+            {
+                lastAutomaterStartResult = _ibAutomater.Start(false);
+                CheckIbAutomaterError(lastAutomaterStartResult);
+                // There was an error but we did not throw, must be another 2FA timeout, we can't continue
+                if (lastAutomaterStartResult.HasError)
+                {
+                    // we couldn't start IBAutomater, so we cannot connect
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "IBAutomaterWarning", $"Unable to restart IBAutomater: {lastAutomaterStartResult.ErrorMessage}"));
+                    return;
+                }
+            }
+
             _stateManager.IsConnecting = true;
 
             var attempt = 1;
@@ -1001,6 +1018,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // if we reached here we should be connected, check just in case
             if (IsConnected)
             {
+                _pastFirstConnection = true;
                 Log.Trace("InteractiveBrokersBrokerage.Connect(): Restoring data subscriptions...");
                 RestoreDataSubscriptions();
 
@@ -5038,6 +5056,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var resultHandler = Composer.Instance.GetPart<IResultHandler>();
                 resultHandler?.DebugMessage("Logging into account. Check phone for two-factor authentication verification...");
             }
+            else if (e.Data.Contains("2FA maximum attempts reached", StringComparison.InvariantCultureIgnoreCase))
+            {
+                Task.Factory.StartNew(() =>
+                {
+                    _ibAutomater.Stop();
+                    var message = "2FA authentication confirmation required to reconnect.";
+                    OnMessage(BrokerageMessageEvent.Disconnected(message));
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.ActionRequired, "2FAAuthRequired", message));
+                });
+            }
 
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterOutputDataReceived(): {e.Data}");
         }
@@ -5220,6 +5248,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // check if IBGateway was closed because of an IBAutomater error, die if so
             var result = _ibAutomater.GetLastStartResult();
+            if (IsRecuperable2FATimeout(result))
+            {
+                return;
+            }
             CheckIbAutomaterError(result, false);
 
             if (!result.HasError)
@@ -5247,9 +5279,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");
 
-                        CheckIbAutomaterError(_ibAutomater.Start(false));
+                        var result = _ibAutomater.Start(false);
+                        CheckIbAutomaterError(result);
 
-                        Connect();
+                        // Has error but we are still running, we might be waiting for 2FA user required action after timeout, let's not connect in that case
+                        if (!result.HasError)
+                        {
+                            Connect();
+                        }
                     }
                     catch (Exception exception)
                     {
@@ -5358,6 +5395,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void CheckIbAutomaterError(StartResult result, bool throwException = true)
         {
+            if (IsRecuperable2FATimeout(result))
+            {
+                return;
+            }
+
             if (result.HasError)
             {
                 OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, result.ErrorCode.ToString(), result.ErrorMessage));
@@ -5367,6 +5409,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     throw new Exception($"InteractiveBrokersBrokerage.CheckIbAutomaterError(): {result.ErrorCode} - {result.ErrorMessage}");
                 }
             }
+        }
+
+        private bool IsRecuperable2FATimeout(StartResult result)
+        {
+            if (_pastFirstConnection && result.ErrorCode == ErrorCode.TwoFactorConfirmationTimeout)
+            {
+                Log.Trace($"InteractiveBrokersBrokerage.IsRecuperable2FATimeout(): will trigger user action request");
+                return true;
+            }
+            return false;
         }
 
         private void HandleAccountSummary(object sender, IB.AccountSummaryEventArgs e)
