@@ -3256,7 +3256,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="includeExpired">Include expired contracts</param>
         /// <param name="exchange">The exchange where the order will be placed, defaults to 'Smart'</param>
         /// <returns>A new IB contract for the order</returns>
-        private Contract CreateContract(Symbol symbol, bool includeExpired, List<Order> orders = null, string exchange = null)
+        internal Contract CreateContract(Symbol symbol, bool includeExpired, List<Order> orders = null, string exchange = null)
         {
             var securityType = ConvertSecurityType(symbol.SecurityType);
             var ibSymbol = _symbolMapper.GetBrokerageSymbol(symbol);

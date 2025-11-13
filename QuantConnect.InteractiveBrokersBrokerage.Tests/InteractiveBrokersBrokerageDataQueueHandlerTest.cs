@@ -25,6 +25,7 @@ using QuantConnect.Data;
 using QuantConnect.Data.Market;
 using QuantConnect.Lean.Engine.DataFeeds.Enumerators;
 using QuantConnect.Securities;
+using QuantConnect.Util;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
@@ -404,6 +405,29 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var dataTypesWithData = data.Select(tick => tick.GetType()).Distinct().ToList();
             var expectedDataTypes = configs.Select(config => config.Type).Distinct().ToList();
             Assert.AreEqual(expectedDataTypes.Count, dataTypesWithData.Count);
+        }
+
+        [Test]
+        public void CanSubscribeToRenamedFile()
+        { 
+            // Current file name: "20251103_ozc_minute_trade_american_put_4100000_20251226.csv";
+            // Proposed scaling factor: 100m;
+
+            var renamedFileCsv = "20251103_ozc_minute_trade_american_call_41000_20251226.csv";
+
+            var fopAUD = Symbol.CreateCanonicalOption(Symbol.CreateFuture(Futures.Grains.Corn, Market.CBOT, new(2026, 03, 13)));
+            var symbol = LeanData.ReadSymbolFromZipEntry(fopAUD, Resolution.Minute, renamedFileCsv);
+
+            // nameFileCsv / strikeScalingFactor / lean_scale 
+            // 4100000 / 100 / 10_000 = 4.1
+            Assert.AreEqual(4.1m, symbol.ID.StrikePrice);
+
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+            ib.Connect();
+
+            var contract = ib.CreateContract(symbol, false);
+
+            Assert.IsNotNull(contract);
         }
 
         protected SubscriptionDataConfig GetSubscriptionDataConfig<T>(Symbol symbol, Resolution resolution)
