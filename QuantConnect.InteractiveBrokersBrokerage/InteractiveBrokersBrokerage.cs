@@ -3256,7 +3256,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="includeExpired">Include expired contracts</param>
         /// <param name="exchange">The exchange where the order will be placed, defaults to 'Smart'</param>
         /// <returns>A new IB contract for the order</returns>
-        internal Contract CreateContract(Symbol symbol, bool includeExpired, List<Order> orders = null, string exchange = null)
+        private Contract CreateContract(Symbol symbol, bool includeExpired, List<Order> orders = null, string exchange = null)
         {
             var securityType = ConvertSecurityType(symbol.SecurityType);
             var ibSymbol = _symbolMapper.GetBrokerageSymbol(symbol);
@@ -3862,7 +3862,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     // As such, we resolve the underlying future to the future with the correct contract month.
                     // There's a chance this can fail, and if it does, we throw because this Symbol can't be
                     // represented accurately in Lean.
-                    var futureSymbol = FuturesOptionsUnderlyingMapper.GetUnderlyingFutureFromFutureOption(leanSymbol, market, contractExpiryDate, _algorithm.Time);
+                    var futureSymbol = FuturesOptionsUnderlyingMapper.GetUnderlyingFutureFromFutureOption(leanSymbol, market, contractExpiryDate, DateTime.UtcNow);
                     if (futureSymbol == null)
                     {
                         // This is the worst case scenario, because we didn't find a matching futures contract for the FOP.
