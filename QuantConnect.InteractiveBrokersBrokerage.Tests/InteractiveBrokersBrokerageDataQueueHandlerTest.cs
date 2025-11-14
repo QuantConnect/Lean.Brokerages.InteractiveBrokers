@@ -408,26 +408,73 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         }
 
         [Test]
-        public void CanSubscribeToRenamedFile()
-        { 
-            // Current file name: "20251103_ozc_minute_trade_american_put_4100000_20251226.csv";
-            // Proposed scaling factor: 100m;
-
-            var renamedFileCsv = "20251103_ozc_minute_trade_american_call_41000_20251226.csv";
-
-            var fopAUD = Symbol.CreateCanonicalOption(Symbol.CreateFuture(Futures.Grains.Corn, Market.CBOT, new(2026, 03, 13)));
-            var symbol = LeanData.ReadSymbolFromZipEntry(fopAUD, Resolution.Minute, renamedFileCsv);
-
-            // nameFileCsv / strikeScalingFactor / lean_scale 
-            // 4100000 / 100 / 10_000 = 4.1
-            Assert.AreEqual(4.1m, symbol.ID.StrikePrice);
-
+        public void SubscribeOnDifferentFOPWithCorrectStrikePrices()
+        {
+            var cts = new CancellationTokenSource();
             using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+
+            var corn = Symbol.CreateFuture(Futures.Grains.Corn, Market.CBOT, new(2025, 12, 12));
+            var le = Symbol.CreateFuture(Futures.Meats.LiveCattle, Market.CME, new(2025, 12, 31));
+            var jpy = Symbol.CreateFuture(Futures.Currencies.JPY, Market.CME, new(2025, 12, 15));
+            var aud = Symbol.CreateFuture(Futures.Currencies.AUD, Market.CME, new(2025, 12, 15));
+
+            // Not found
+            var nzd = Symbol.CreateFuture(Futures.Currencies.NZD, Market.CME, new(2025, 12, 15));
+
+            var style = SecurityType.FutureOption.DefaultOptionStyle();
+            var fops = new List<Symbol>(6)
+            {
+                Symbol.CreateOption(corn, corn.ID.Market, style, OptionRight.Call, 4.1m, new(2025, 11, 21)), //  corn: price magnifier: 100
+                Symbol.CreateOption(le, le.ID.Market, style, OptionRight.Call, 2.18m, new(2025, 12, 05)), // le: price magnifier: 100
+                Symbol.CreateOption(jpy, jpy.ID.Market, style, OptionRight.Call, 0.00625m, new(2026, 01, 09)), // jpy: price magnifier: undefined
+                Symbol.CreateOption(jpy, jpy.ID.Market, style, OptionRight.Put, 0.0068m, new(2026, 01, 09)), // jpy: price magnifier: undefined
+                Symbol.CreateOption(aud, aud.ID.Market, style, OptionRight.Call, 0.635m, new(2025, 12, 05)), // aud: price magnifier: undefined
+
+                // Not found
+                Symbol.CreateOption(nzd, nzd.ID.Market, style, OptionRight.Call, 0.54m, new(2026, 12, 05)), // nzd: price magnifier: undefined
+            };
+
             ib.Connect();
 
-            var contract = ib.CreateContract(symbol, false);
+            var securityDefinitionNotFoundCounter = 0;
+            ib.Message += (_, brokerageMessageEvent) =>
+            {
+                switch (brokerageMessageEvent.Code)
+                {
+                    case "200":
+                        // No security definition has been found for the request. Origin: [Id=7] GetContractDetails: 6N15Z25  261205C00000540 (FOP NZD USD CME)}
+                        securityDefinitionNotFoundCounter += 1;
+                        break;
+                }
+            };
 
-            Assert.IsNotNull(contract);
+            var configs = new List<SubscriptionDataConfig>();
+            foreach (var fop in fops)
+            {
+                var config = GetSubscriptionDataConfig<Tick>(fop, Resolution.Tick);
+                configs.Add(config);
+
+                ib.Subscribe(config, (_, EventArgs) => { });
+            }
+
+            cts.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(5));
+
+            foreach (var config in configs)
+            {
+                ib.Unsubscribe(config);
+            }
+
+            cts.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(2));
+
+            try
+            {
+                Assert.AreEqual(2, securityDefinitionNotFoundCounter, "Expected 2 missing security definitions: FUT 6N15Z25 and FOP 261205C00000540.");
+            }
+            finally
+            {
+                cts.Cancel();
+                cts.DisposeSafely();
+            }
         }
 
         protected SubscriptionDataConfig GetSubscriptionDataConfig<T>(Symbol symbol, Resolution resolution)
