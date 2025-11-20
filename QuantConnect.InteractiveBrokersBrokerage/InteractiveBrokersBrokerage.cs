@@ -5277,6 +5277,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     try
                     {
+                        // We won't trigger a restart if the automater was already started in the meantime
+                        // or if there was an error starting it. If it's recoverable, it will be restarted
+                        // by the user action somewhere else
+                        if (_ibAutomater.IsRunning())
+                        {
+                            Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): IBAutomater is already running, skipping restart.");
+                            return;
+                        }
+
+                        var lastResult = _ibAutomater.GetLastStartResult();
+                        if (lastResult.HasError)
+                        {
+                            Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): last IBAutomater start had error, skipping restart.");
+                            return;
+                        }
+
                         Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");
 
                         var result = _ibAutomater.Start(false);
