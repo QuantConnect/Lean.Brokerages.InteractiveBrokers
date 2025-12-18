@@ -40,7 +40,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using QuantConnect.Api;
-using RestSharp;
 using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -56,6 +55,7 @@ using QuantConnect.Data.Auxiliary;
 using QuantConnect.Securities.Forex;
 using QuantConnect.Lean.Engine.Results;
 using System.Runtime.CompilerServices;
+using System.Net.Http;
 
 [assembly: InternalsVisibleTo("QuantConnect.Tests.Brokerages.InteractiveBrokers")]
 
@@ -5595,8 +5595,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     information.Add("organizationId", organizationId);
                 }
-                var request = new RestRequest("modules/license/read", Method.POST) { RequestFormat = DataFormat.Json };
-                request.AddParameter("application/json", JsonConvert.SerializeObject(information), ParameterType.RequestBody);
+                // Create HTTP request
+                var request = new HttpRequestMessage(HttpMethod.Post, "modules/license/read");
+                request.Content = new StringContent(
+                    JsonConvert.SerializeObject(information),
+                    Encoding.UTF8,
+                    "application/json"
+                );
                 api.TryRequest(request, out ModulesReadLicenseRead result);
                 if (!result.Success)
                 {
