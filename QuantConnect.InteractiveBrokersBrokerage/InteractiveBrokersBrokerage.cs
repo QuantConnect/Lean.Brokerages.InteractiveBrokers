@@ -3862,7 +3862,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     // As such, we resolve the underlying future to the future with the correct contract month.
                     // There's a chance this can fail, and if it does, we throw because this Symbol can't be
                     // represented accurately in Lean.
-                    var futureSymbol = FuturesOptionsUnderlyingMapper.GetUnderlyingFutureFromFutureOption(leanSymbol, market, contractExpiryDate, _algorithm.Time);
+                    var futureSymbol = FuturesOptionsUnderlyingMapper.GetUnderlyingFutureFromFutureOption(leanSymbol, market, contractExpiryDate,
+                        _algorithm?.GetLocked() == true ? _algorithm.Time : DateTime.UtcNow);
                     if (futureSymbol == null)
                     {
                         // This is the worst case scenario, because we didn't find a matching futures contract for the FOP.
