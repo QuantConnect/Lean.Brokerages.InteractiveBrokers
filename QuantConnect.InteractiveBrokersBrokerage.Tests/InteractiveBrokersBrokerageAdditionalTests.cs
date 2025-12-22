@@ -1127,13 +1127,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             get
             {
                 yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T15:59:59.900", false, 0).SetDescription("Summer EDT - Before safe window - no wait");
-                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T16:00:00.000", true, 5000).SetDescription("Summer EDT - Exactly at boundary - should wait");
-                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T16:00:00.400", true, 4600).SetDescription("Summer EDT - Within safe buffer - should wait");
-                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T16:00:05.000", false, 0).SetDescription("Summer EDT - After safe window - no wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T16:00:00.000", true, 10000).SetDescription("Summer EDT - Exactly at boundary - should wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T16:00:00.400", true, 9600).SetDescription("Summer EDT - Within safe buffer - should wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-07-15T16:00:10.000", false, 0).SetDescription("Summer EDT - After safe window - no wait");
                 yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T15:59:59.900", false, 0).SetDescription("Winter EST - Before safe window - no wait");
-                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:00.000", true, 5000).SetDescription("Winter EST - Exactly at boundary - should wait");
-                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:00.400", true, 4600).SetDescription("Winter EST - Within safe buffer - should wait");
-                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:05.000", false, 0).SetDescription("Winter EST - After safe window - no wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:00.000", true, 10000).SetDescription("Winter EST - Exactly at boundary - should wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:00.400", true, 9600).SetDescription("Winter EST - Within safe buffer - should wait");
+                yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-01-15T16:00:10.000", false, 0).SetDescription("Winter EST - After safe window - no wait");
                 yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-09-05T20:00:00.000", false, 0).SetDescription("Friday after regular market hours");
                 yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-09-18T08:00:00.000", false, 0);
                 yield return new TestCaseData(Symbols.AAPL, OrderType.MarketOnOpen, "2025-09-18T08:29:00.000", false, 0);

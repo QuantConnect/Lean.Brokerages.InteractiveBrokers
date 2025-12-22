@@ -1666,13 +1666,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return false;
             }
 
-            var fiveSeconds = TimeSpan.FromSeconds(5);
+            var tenSeconds = TimeSpan.FromSeconds(10);
 
             // IB rejects MOO orders submitted exactly at this boundary.
-            var marketOnOpenOrderSafeSubmissionStartTime = GetSecurityExchangeHours(symbol).GetLastDailyMarketClose(nowExchangeTimeZone.Add(-fiveSeconds), false);
+            var marketOnOpenOrderSafeSubmissionStartTime = GetSecurityExchangeHours(symbol).GetLastDailyMarketClose(nowExchangeTimeZone.Add(-tenSeconds), false);
 
             // adds a buffer to avoid IB rejecting orders with error '201 - Order rejected - reason: Exchange is closed.'
-            var marketOnOpenOrderSafeSubmissionEndTime = marketOnOpenOrderSafeSubmissionStartTime.Add(fiveSeconds);
+            var marketOnOpenOrderSafeSubmissionEndTime = marketOnOpenOrderSafeSubmissionStartTime.Add(tenSeconds);
 
             if (nowExchangeTimeZone >= marketOnOpenOrderSafeSubmissionStartTime && nowExchangeTimeZone < marketOnOpenOrderSafeSubmissionEndTime)
             {
