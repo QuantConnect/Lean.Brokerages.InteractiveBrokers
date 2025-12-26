@@ -98,6 +98,70 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         }
 
         [Test]
+        public void SubscribeOnFutureMappedSymbols()
+        {
+            using var cts = new CancellationTokenSource();
+            using var resetEvent = new ManualResetEvent(false);
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+
+            var mxnFuture = Symbol.CreateFuture(Futures.Currencies.MXN, Market.CME, new(2026, 03, 16));
+            var mxnFutureOptionContract = Symbol.CreateOption(mxnFuture, mxnFuture.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Call, 0.055m, new(2026, 01, 09));
+
+            var symbols = new List<Symbol>()
+            {
+                mxnFuture,
+                mxnFutureOptionContract
+            };
+
+            var securityNotFoundCounter = 0;
+            var securityDefinitionsFound = 0;
+            ib.Message += (_, brokerageMessageEvent) =>
+            {
+                switch (brokerageMessageEvent.Code)
+                {
+                    case "200":
+                        // Code: 200 - No security definition has been found for the request.
+                        securityNotFoundCounter += 1;
+                        break;
+                    case "354":
+                        // Requested market data is not subscribed. Delayed market data is available.
+                        securityDefinitionsFound += 1;
+                        if (securityDefinitionsFound >= symbols.Count)
+                        {
+                            resetEvent.Set();
+                        }
+                        break;
+
+                }
+            };
+
+            ib.Connect();
+
+            var configs = new List<SubscriptionDataConfig>(symbols.Count);
+            foreach (var symbol in symbols)
+            {
+                var config = GetSubscriptionDataConfig<Tick>(symbol, Resolution.Tick);
+                ProcessFeed(ib.Subscribe(config, (_, _) => { }), cts, (_) => { });
+                configs.Add(config);
+            }
+
+            _ = resetEvent.WaitOne(TimeSpan.FromSeconds(20), cts.Token);
+
+            foreach (var config in configs)
+            {
+                ib.Unsubscribe(config);
+            }
+
+            resetEvent.Reset();
+            resetEvent.WaitOne(TimeSpan.FromSeconds(1), cts.Token);
+
+            cts.Cancel();
+
+            Assert.GreaterOrEqual(securityDefinitionsFound, symbols.Count);
+            Assert.AreEqual(0, securityNotFoundCounter);
+        }
+
+        [Test]
         public void GetsTickDataAfterDisconnectionConnectionCycle()
         {
             using (var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider()))
