@@ -4953,6 +4953,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
 
                     // moving endTime to the new position to proceed with next request (if needed)
+                    // the 1 second prevent duplicate data (IB uses inclusive end times)
                     endDateTimeUtc = oldestDataPoint.Time.AddSeconds(-1);
                 }
                 finally
