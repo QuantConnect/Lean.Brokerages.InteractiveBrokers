@@ -4800,8 +4800,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private IEnumerable<TradeBar> GetHistory(
             HistoryRequest request,
             Contract contract,
-            DateTime startDateTimeUtc,
-            DateTime endDateTimeUtc,
+            DateTime startTime,
+            DateTime endTime,
             DateTimeZone exchangeTimeZone,
             string resolution,
             string dataType)
@@ -4821,7 +4821,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var priceMagnifier = symbolProperties.PriceMagnifier;
 
             // making multiple requests if needed in order to download the history
-            while (endDateTimeUtc >= startDateTimeUtc)
+            while (endTime >= startTime)
             {
                 // before we do anything let's check our rate limits
                 CheckRateLimiting();
@@ -4831,7 +4831,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 try
                 {
                     // let's refetch the duration for each request, so for example we don't request 2 years for of data for 1 extra day
-                    var duration = GetDuration(request.Resolution, endDateTimeUtc - startDateTimeUtc);
+                    var duration = GetDuration(request.Resolution, endTime - startTime);
 
                     var pacing = false;
                     var dataDownloadedCount = 0;
@@ -4852,8 +4852,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         if (args.RequestId == historicalTicker)
                         {
                             var bar = ConvertTradeBar(request.Symbol, request.Resolution, args, priceMagnifier);
-                            // Store the first data point timestamp in UTC
-                            oldestDataPoint ??= bar;
                             if (request.Resolution != Resolution.Daily)
                             {
                                 bar.Time = bar.Time.ConvertFromUtc(exchangeTimeZone);
@@ -4865,6 +4863,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 }
                             }
 
+                            oldestDataPoint ??= bar;
                             history.Add(bar);
 
                             Interlocked.Increment(ref dataDownloadedCount);
@@ -4883,7 +4882,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         if (args.Id == historicalTicker)
                         {
-                            Log.Debug($"{nameof(GetHistory)}.clientOnError: code = {args.Code}, msg = {args.Message}");
                             if (args.Code == 162 && args.Message.Contains("pacing violation"))
                             {
                                 // pacing violation happened
@@ -4905,9 +4903,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Client.HistoricalData += clientOnHistoricalData;
                     Client.HistoricalDataEnd += clientOnHistoricalDataEnd;
 
-                    var requestEndDateTime = (request.Resolution == Resolution.Daily ? endDateTimeUtc.Date : endDateTimeUtc)
-                        .ToStringInvariant("yyyyMMdd-HH:mm:ss");
-                    Client.ClientSocket.reqHistoricalData(historicalTicker, contract, requestEndDateTime,
+                    Client.ClientSocket.reqHistoricalData(historicalTicker, contract, endTime.ToStringInvariant("yyyyMMdd HH:mm:ss UTC"),
                         duration, resolution, dataType, useRegularTradingHours, 2, false, new List<TagValue>());
 
                     var waitResult = 0;
@@ -4953,8 +4949,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
 
                     // moving endTime to the new position to proceed with next request (if needed)
-                    // the 1 second prevent duplicate data (IB uses inclusive end times)
-                    endDateTimeUtc = oldestDataPoint.Time.AddSeconds(-1);
+                    endTime = oldestDataPoint.Time.ConvertToUtc(exchangeTimeZone);
                 }
                 finally
                 {
