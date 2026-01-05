@@ -4800,8 +4800,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private IEnumerable<TradeBar> GetHistory(
             HistoryRequest request,
             Contract contract,
-            DateTime startTime,
-            DateTime endTime,
+            DateTime startDateTimeUtc,
+            DateTime endDateTimeUtc,
             DateTimeZone exchangeTimeZone,
             string resolution,
             string dataType)
@@ -4821,7 +4821,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var priceMagnifier = symbolProperties.PriceMagnifier;
 
             // making multiple requests if needed in order to download the history
-            while (endTime >= startTime)
+            while (endDateTimeUtc >= startDateTimeUtc)
             {
                 // before we do anything let's check our rate limits
                 CheckRateLimiting();
@@ -4831,7 +4831,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 try
                 {
                     // let's refetch the duration for each request, so for example we don't request 2 years for of data for 1 extra day
-                    var duration = GetDuration(request.Resolution, endTime - startTime);
+                    var duration = GetDuration(request.Resolution, endDateTimeUtc - startDateTimeUtc);
 
                     var pacing = false;
                     var dataDownloadedCount = 0;
@@ -4863,7 +4863,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 }
                             }
 
-                            oldestDataPoint ??= bar;
+                            if (oldestDataPoint == null)
+                            {
+                                oldestDataPoint = bar;
+                                // skip the first bar if it matches the requested end time exactly
+                                if (endDateTimeUtc.ConvertFromUtc(exchangeTimeZone) == bar.Time)
+                                {
+                                    // move back the bar time to avoid including it in the results
+                                    bar.Time = bar.Time.Subtract(request.Resolution.ToTimeSpan());
+                                    return;
+                                }
+                            }
+
                             history.Add(bar);
 
                             Interlocked.Increment(ref dataDownloadedCount);
@@ -4903,7 +4914,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Client.HistoricalData += clientOnHistoricalData;
                     Client.HistoricalDataEnd += clientOnHistoricalDataEnd;
 
-                    Client.ClientSocket.reqHistoricalData(historicalTicker, contract, endTime.ToStringInvariant("yyyyMMdd HH:mm:ss UTC"),
+                    Client.ClientSocket.reqHistoricalData(historicalTicker, contract, endDateTimeUtc.ToStringInvariant("yyyyMMdd HH:mm:ss UTC"),
                         duration, resolution, dataType, useRegularTradingHours, 2, false, new List<TagValue>());
 
                     var waitResult = 0;
@@ -4949,7 +4960,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
 
                     // moving endTime to the new position to proceed with next request (if needed)
-                    endTime = oldestDataPoint.Time.ConvertToUtc(exchangeTimeZone);
+                    endDateTimeUtc = oldestDataPoint.Time.ConvertToUtc(exchangeTimeZone);
                 }
                 finally
                 {
