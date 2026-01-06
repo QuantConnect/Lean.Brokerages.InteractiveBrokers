@@ -3757,6 +3757,35 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
         }
 
+        /// <summary>
+        /// Converts a duration string (e.g. "120 S", "7 D", "6 M", "2 Y") into a <see cref="TimeSpan"/>.
+        /// </summary>
+        /// <param name="duration">
+        /// Duration in the format "&lt;value&gt; &lt;unit&gt;" (S = seconds, D = days, M = months, Y = years).
+        /// </param>
+        /// <param name="fromUtc">Reference UTC date used to correctly resolve month and year durations.</param>
+        /// <returns>Calculated <see cref="TimeSpan"/>.</returns>
+        internal static TimeSpan ParseDuration(string duration, DateTime fromUtc)
+        {
+            var parts = duration.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var value = int.Parse(parts[0]);
+            var unit = parts[1].ToUpperInvariant();
+
+            switch (unit)
+            {
+                case "S":
+                    return TimeSpan.FromSeconds(value);
+                case "D":
+                    return TimeSpan.FromDays(value);
+                case "M":
+                    return fromUtc.AddMonths(value) - fromUtc;
+                case "Y":
+                    return fromUtc.AddYears(value) - fromUtc;
+                default:
+                    throw new NotSupportedException($"Unsupported duration unit: '{unit}'");
+            }
+        }
+
         private static TradeBar ConvertTradeBar(Symbol symbol, Resolution resolution, IB.HistoricalDataEventArgs historyBar, decimal priceMagnifier)
         {
             var time = resolution != Resolution.Daily ?
@@ -4957,9 +4986,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             Log.Debug($"InteractiveBrokersBrokerage.GetHistory(): received no data." +
                                 $"Request = [{request.Symbol.Value}({GetContractDescription(contract)}): {request.Resolution}/{request.TickType}/{duration}/{endDateTimeUtc}]");
                         }
-
-                        endDateTimeUtc = endDateTimeUtc.Subtract(request.Resolution.ToTimeSpan());
-                        // e.g. Historical Market Data Service error message:HMDS query returned no data: 6AF6@CME Trades
+                        endDateTimeUtc = endDateTimeUtc.Subtract(ParseDuration(duration, endDateTimeUtc));
                         continue;
                     }
 

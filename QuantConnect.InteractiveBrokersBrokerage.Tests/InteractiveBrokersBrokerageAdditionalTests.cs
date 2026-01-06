@@ -991,6 +991,18 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(result.Count == 0, isEmpty);
         }
 
+        [TestCase("120 S", 120)]
+        [TestCase("1 D", 86400)]
+        [TestCase("1 M", 31 * 86400, Description = "Jan => Feb (2024/01/01 => 2024/02/01)")]
+        [TestCase("1 Y", 366 * 86400, Description = "referenceUtc: 2024 is a leap year")]
+        public void ParseDuration_ReturnsExpectedTimeSpan(string duration, int expectedSeconds)
+        {
+            var referenceUtc = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            var result = InteractiveBrokersBrokerage.ParseDuration(duration, referenceUtc);
+
+            Assert.AreEqual(TimeSpan.FromSeconds(expectedSeconds), result);
+        }
+
         [Test]
         public void IgnoresSecurityNotFoundErrorOnExpiredContractsHistoricalRequests()
         {
