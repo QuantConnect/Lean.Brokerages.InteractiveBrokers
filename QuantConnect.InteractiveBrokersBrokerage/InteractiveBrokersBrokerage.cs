@@ -4866,14 +4866,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             }
 
                             oldestDataPoint ??= bar;
-
                             if (lastRequestedDataPoint?.Time == bar.Time)
                             {
-                                // move back the bar time to avoid including it in the results
+                                // move back the bar time to avoid including duplication in 'history' collection
                                 bar.Time = bar.Time.Subtract(request.Resolution.ToTimeSpan());
                                 return;
                             }
-
                             history.Add(bar);
 
                             Interlocked.Increment(ref dataDownloadedCount);
@@ -4959,7 +4957,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         break;
                     }
 
-                    // if no data has been received this time, we exit
+                    // if no data has been received this time, we moved endTime
                     if (oldestDataPoint == null)
                     {
                         Log.Error($"InteractiveBrokersBrokerage.GetHistory(): received no data." +
@@ -4970,6 +4968,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     // moving endTime to the new position to proceed with next request (if needed)
                     endDateTimeUtc = oldestDataPoint.Time.ConvertToUtc(exchangeTimeZone);
+                    // keep instance in global scope for compare with next request data
                     lastRequestedDataPoint = oldestDataPoint;
                 }
                 finally
