@@ -4819,6 +4819,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(request.Symbol.ID.Market, request.Symbol, request.Symbol.SecurityType, Currencies.USD);
             var priceMagnifier = symbolProperties.PriceMagnifier;
+            var lastRequestedDataPoint = null as TradeBar;
+            var errorHappened = false;
 
             // making multiple requests if needed in order to download the history
             while (endDateTimeUtc >= startDateTimeUtc)
@@ -4863,16 +4865,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 }
                             }
 
-                            if (oldestDataPoint == null)
+                            oldestDataPoint ??= bar;
+
+                            if (lastRequestedDataPoint?.Time == bar.Time)
                             {
-                                oldestDataPoint = bar;
-                                // skip the first bar if it matches the requested end time exactly
-                                if (endDateTimeUtc.ConvertFromUtc(exchangeTimeZone) == bar.Time)
-                                {
-                                    // move back the bar time to avoid including it in the results
-                                    bar.Time = bar.Time.Subtract(request.Resolution.ToTimeSpan());
-                                    return;
-                                }
+                                // move back the bar time to avoid including it in the results
+                                bar.Time = bar.Time.Subtract(request.Resolution.ToTimeSpan());
+                                return;
                             }
 
                             history.Add(bar);
@@ -4906,6 +4905,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "History", args.Message));
                                 }
                                 dataDownloaded.Set();
+                                errorHappened = true;
                             }
                         }
                     };
@@ -4953,14 +4953,24 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         break;
                     }
 
+                    if (errorHappened)
+                    {
+                        // e.g. Historical Market Data Service error message:HMDS query returned no data: 6AF6@CME Trades
+                        break;
+                    }
+
                     // if no data has been received this time, we exit
                     if (oldestDataPoint == null)
                     {
-                        break;
+                        Log.Error($"InteractiveBrokersBrokerage.GetHistory(): received no data." +
+                            $"Request = [{request.Symbol.Value}({GetContractDescription(contract)}): {request.Resolution}/{request.TickType}/{duration}/{endDateTimeUtc}]");
+                        endDateTimeUtc = endDateTimeUtc.Subtract(request.Resolution.ToTimeSpan());
+                        continue;
                     }
 
                     // moving endTime to the new position to proceed with next request (if needed)
                     endDateTimeUtc = oldestDataPoint.Time.ConvertToUtc(exchangeTimeZone);
+                    lastRequestedDataPoint = oldestDataPoint;
                 }
                 finally
                 {
