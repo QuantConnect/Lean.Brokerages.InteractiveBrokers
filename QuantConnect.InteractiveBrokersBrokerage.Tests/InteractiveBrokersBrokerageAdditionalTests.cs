@@ -995,12 +995,26 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [TestCase("1 D", 86400)]
         [TestCase("1 M", 31 * 86400, Description = "Jan => Feb (2024/01/01 => 2024/02/01)")]
         [TestCase("1 Y", 366 * 86400, Description = "referenceUtc: 2024 is a leap year")]
-        public void ParseDuration_ReturnsExpectedTimeSpan(string duration, int expectedSeconds)
+        public void ParseDurationReturnsExpectedTimeSpan(string duration, int expectedSeconds)
         {
             var referenceUtc = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             var result = InteractiveBrokersBrokerage.ParseDuration(duration, referenceUtc);
 
             Assert.AreEqual(TimeSpan.FromSeconds(expectedSeconds), result);
+        }
+
+        [TestCase("0 D")]
+        [TestCase("-5 S")]
+        [TestCase("0 M")]
+        [TestCase("abc")]
+        [TestCase("")]
+        [TestCase("10 W", Description = "Unsupported duration ib unit")]
+        public void ParseDurationReturnsOneDayWhenInvalidOrNonPositive(string duration)
+        {
+            var referenceUtc = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            var result = InteractiveBrokersBrokerage.ParseDuration(duration, referenceUtc);
+
+            Assert.AreEqual(TimeSpan.FromDays(1), result);
         }
 
         [Test]

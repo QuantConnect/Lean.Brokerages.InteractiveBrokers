@@ -3767,22 +3767,33 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns>Calculated <see cref="TimeSpan"/>.</returns>
         internal static TimeSpan ParseDuration(string duration, DateTime fromUtc)
         {
-            var parts = duration.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var value = int.Parse(parts[0]);
-            var unit = parts[1].ToUpperInvariant();
-
-            switch (unit)
+            try
             {
-                case "S":
-                    return TimeSpan.FromSeconds(value);
-                case "D":
-                    return TimeSpan.FromDays(value);
-                case "M":
-                    return fromUtc.AddMonths(value) - fromUtc;
-                case "Y":
-                    return fromUtc.AddYears(value) - fromUtc;
-                default:
-                    throw new NotSupportedException($"Unsupported duration unit: '{unit}'");
+                var parts = duration.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (!int.TryParse(parts[0], out var value) || value <= 0)
+                {
+                    throw new FormatException($"Invalid duration value: '{parts[0]}'");
+                }
+                var unit = parts[1].ToUpperInvariant();
+
+                switch (unit)
+                {
+                    case "S":
+                        return TimeSpan.FromSeconds(value);
+                    case "D":
+                        return TimeSpan.FromDays(value);
+                    case "M":
+                        return fromUtc.AddMonths(value) - fromUtc;
+                    case "Y":
+                        return fromUtc.AddYears(value) - fromUtc;
+                    default:
+                        throw new NotSupportedException($"Unsupported duration unit: '{unit}'");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"InteractiveBrokersBrokerage.ParseDuration().Error: parsing duration string '{duration}'. {ex}");
+                return TimeSpan.FromDays(1);
             }
         }
 
