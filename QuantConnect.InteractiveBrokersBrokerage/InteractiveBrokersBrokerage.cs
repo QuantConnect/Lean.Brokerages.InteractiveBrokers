@@ -3757,6 +3757,46 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
         }
 
+        /// <summary>
+        /// Converts a duration string (e.g. "120 S", "7 D", "6 M", "2 Y") into a <see cref="TimeSpan"/>.
+        /// </summary>
+        /// <param name="duration">
+        /// Duration in the format "&lt;value&gt; &lt;unit&gt;" (S = seconds, D = days, M = months, Y = years).
+        /// </param>
+        /// <param name="fromUtc">Reference UTC date used to correctly resolve month and year durations.</param>
+        /// <returns>Calculated <see cref="TimeSpan"/>.</returns>
+        internal static TimeSpan ParseDuration(string duration, DateTime fromUtc)
+        {
+            try
+            {
+                var parts = duration.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (!int.TryParse(parts[0], out var value) || value <= 0)
+                {
+                    throw new FormatException($"Invalid duration value: '{parts[0]}'");
+                }
+                var unit = parts[1].ToUpperInvariant();
+
+                switch (unit)
+                {
+                    case "S":
+                        return TimeSpan.FromSeconds(value);
+                    case "D":
+                        return TimeSpan.FromDays(value);
+                    case "M":
+                        return fromUtc.AddMonths(value) - fromUtc;
+                    case "Y":
+                        return fromUtc.AddYears(value) - fromUtc;
+                    default:
+                        throw new NotSupportedException($"Unsupported duration unit: '{unit}'");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"InteractiveBrokersBrokerage.ParseDuration().Error: parsing duration string '{duration}'. {ex}");
+                return TimeSpan.FromDays(1);
+            }
+        }
+
         private static TradeBar ConvertTradeBar(Symbol symbol, Resolution resolution, IB.HistoricalDataEventArgs historyBar, decimal priceMagnifier)
         {
             var time = resolution != Resolution.Daily ?
@@ -4800,8 +4840,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private IEnumerable<TradeBar> GetHistory(
             HistoryRequest request,
             Contract contract,
-            DateTime startTime,
-            DateTime endTime,
+            DateTime startDateTimeUtc,
+            DateTime endDateTimeUtc,
             DateTimeZone exchangeTimeZone,
             string resolution,
             string dataType)
@@ -4819,9 +4859,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(request.Symbol.ID.Market, request.Symbol, request.Symbol.SecurityType, Currencies.USD);
             var priceMagnifier = symbolProperties.PriceMagnifier;
+            var lastRequestedDataPoint = null as TradeBar;
 
             // making multiple requests if needed in order to download the history
-            while (endTime >= startTime)
+            while (endDateTimeUtc >= startDateTimeUtc)
             {
                 // before we do anything let's check our rate limits
                 CheckRateLimiting();
@@ -4831,7 +4872,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 try
                 {
                     // let's refetch the duration for each request, so for example we don't request 2 years for of data for 1 extra day
-                    var duration = GetDuration(request.Resolution, endTime - startTime);
+                    var duration = GetDuration(request.Resolution, endDateTimeUtc - startDateTimeUtc);
 
                     var pacing = false;
                     var dataDownloadedCount = 0;
@@ -4863,6 +4904,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 }
                             }
 
+                            if (lastRequestedDataPoint?.Time == bar.Time)
+                            {
+                                // keep oldestDataPoint is null to avoid duplicate bars in 'history' collection
+                                // move back the end time resubmit request
+                                return;
+                            }
                             oldestDataPoint ??= bar;
                             history.Add(bar);
 
@@ -4903,7 +4950,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Client.HistoricalData += clientOnHistoricalData;
                     Client.HistoricalDataEnd += clientOnHistoricalDataEnd;
 
-                    Client.ClientSocket.reqHistoricalData(historicalTicker, contract, endTime.ToStringInvariant("yyyyMMdd HH:mm:ss UTC"),
+                    Client.ClientSocket.reqHistoricalData(historicalTicker, contract, endDateTimeUtc.ToStringInvariant("yyyyMMdd HH:mm:ss UTC"),
                         duration, resolution, dataType, useRegularTradingHours, 2, false, new List<TagValue>());
 
                     var waitResult = 0;
@@ -4942,14 +4989,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         break;
                     }
 
-                    // if no data has been received this time, we exit
+                    // if no data has been received this time, we moved endTime
                     if (oldestDataPoint == null)
                     {
-                        break;
+                        if (Log.DebuggingEnabled)
+                        {
+                            Log.Debug($"InteractiveBrokersBrokerage.GetHistory(): received no data." +
+                                $"Request = [{request.Symbol.Value}({GetContractDescription(contract)}): {request.Resolution}/{request.TickType}/{duration}/{endDateTimeUtc}]");
+                        }
+                        endDateTimeUtc = endDateTimeUtc.Subtract(ParseDuration(duration, endDateTimeUtc));
+                        continue;
                     }
 
                     // moving endTime to the new position to proceed with next request (if needed)
-                    endTime = oldestDataPoint.Time.ConvertToUtc(exchangeTimeZone);
+                    endDateTimeUtc = oldestDataPoint.Time.ConvertToUtc(exchangeTimeZone);
+                    // keep instance in global scope for compare with next request data
+                    lastRequestedDataPoint = oldestDataPoint;
                 }
                 finally
                 {
