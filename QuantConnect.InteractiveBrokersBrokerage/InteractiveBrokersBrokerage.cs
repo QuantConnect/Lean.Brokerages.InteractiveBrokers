@@ -4820,7 +4820,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(request.Symbol.ID.Market, request.Symbol, request.Symbol.SecurityType, Currencies.USD);
             var priceMagnifier = symbolProperties.PriceMagnifier;
             var lastRequestedDataPoint = null as TradeBar;
-            var errorHappened = false;
 
             // making multiple requests if needed in order to download the history
             while (endDateTimeUtc >= startDateTimeUtc)
@@ -4865,13 +4864,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                 }
                             }
 
-                            oldestDataPoint ??= bar;
                             if (lastRequestedDataPoint?.Time == bar.Time)
                             {
-                                // move back the bar time to avoid including duplication in 'history' collection
-                                bar.Time = bar.Time.Subtract(request.Resolution.ToTimeSpan());
+                                // keep oldestDataPoint is null to avoid duplicate bars in 'history' collection
+                                // move back the end time resubmit request
                                 return;
                             }
+                            oldestDataPoint ??= bar;
                             history.Add(bar);
 
                             Interlocked.Increment(ref dataDownloadedCount);
@@ -4903,7 +4902,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "History", args.Message));
                                 }
                                 dataDownloaded.Set();
-                                errorHappened = true;
                             }
                         }
                     };
@@ -4951,18 +4949,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         break;
                     }
 
-                    if (errorHappened)
-                    {
-                        // e.g. Historical Market Data Service error message:HMDS query returned no data: 6AF6@CME Trades
-                        break;
-                    }
-
                     // if no data has been received this time, we moved endTime
                     if (oldestDataPoint == null)
                     {
-                        Log.Error($"InteractiveBrokersBrokerage.GetHistory(): received no data." +
-                            $"Request = [{request.Symbol.Value}({GetContractDescription(contract)}): {request.Resolution}/{request.TickType}/{duration}/{endDateTimeUtc}]");
+                        if (Log.DebuggingEnabled)
+                        {
+                            Log.Debug($"InteractiveBrokersBrokerage.GetHistory(): received no data." +
+                                $"Request = [{request.Symbol.Value}({GetContractDescription(contract)}): {request.Resolution}/{request.TickType}/{duration}/{endDateTimeUtc}]");
+                        }
+
                         endDateTimeUtc = endDateTimeUtc.Subtract(request.Resolution.ToTimeSpan());
+                        // e.g. Historical Market Data Service error message:HMDS query returned no data: 6AF6@CME Trades
                         continue;
                     }
 
