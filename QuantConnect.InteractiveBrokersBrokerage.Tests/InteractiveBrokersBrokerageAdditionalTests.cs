@@ -967,20 +967,20 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
         private static IEnumerable<TestCaseData> LongRangeHistoricalDataTestCases()
         {
-            yield return new TestCaseData(Symbols.AAPL, Resolution.Daily, new DateTime(1979, 06, 01), new DateTime(2025, 12, 30, 16, 0, 0));
-            yield return new TestCaseData(Symbols.AAPL, Resolution.Hour, new DateTime(1979, 06, 01), new DateTime(2025, 12, 30, 16, 0, 0));
+            yield return new TestCaseData(Symbols.AAPL, Resolution.Daily, new DateTime(1979, 06, 01), new DateTime(2025, 12, 30, 16, 0, 0), false);
+            yield return new TestCaseData(Symbols.AAPL, Resolution.Hour, new DateTime(1979, 06, 01), new DateTime(2025, 12, 30, 16, 0, 0), false);
 
             var aud = Symbols.CreateFutureSymbol(Futures.Currencies.AUD, new(2026, 01, 16));
-            // the starting trade of 6A 2026 / 01 / 16 is on 2025 / 08 / 19
-            yield return new TestCaseData(aud, Resolution.Daily, new DateTime(2025, 06, 01), new DateTime(2025, 12, 30, 16, 0, 0));
-            yield return new TestCaseData(aud, Resolution.Hour, new DateTime(2025, 8, 17, 16, 0, 0), new DateTime(2025, 8, 20, 16, 0, 0));
-            yield return new TestCaseData(aud, Resolution.Daily, new DateTime(2025, 8, 17, 16, 0, 0), new DateTime(2025, 8, 20, 16, 0, 0));
-            //2025 / 08 / 23 - Saturday, 2025 / 08 / 24 - Sunday
-            yield return new TestCaseData(aud, Resolution.Daily, new DateTime(2025, 8, 24, 9, 0, 0), new DateTime(2025, 8, 24, 16, 0, 0)).SetDescription("Weekend");
+            // the starting trade of 6A 2026/01/16 is on 2025/08/19
+            yield return new TestCaseData(aud, Resolution.Daily, new DateTime(2025, 06, 01), new DateTime(2025, 12, 30, 16, 0, 0), false);
+            yield return new TestCaseData(aud, Resolution.Hour, new DateTime(2025, 8, 17, 16, 0, 0), new DateTime(2025, 8, 20, 16, 0, 0), true);
+            yield return new TestCaseData(aud, Resolution.Daily, new DateTime(2025, 8, 17, 16, 0, 0), new DateTime(2025, 8, 20, 16, 0, 0), false);
+            // 2025/08/23 - Saturday, 2025/08/24 - Sunday
+            yield return new TestCaseData(aud, Resolution.Daily, new DateTime(2025, 8, 23, 9, 0, 0), new DateTime(2025, 8, 24, 16, 0, 0), true).SetDescription("Weekend");
         }
 
         [TestCaseSource(nameof(LongRangeHistoricalDataTestCases))]
-        public void GetsHistoricalDataForExtendedDateRanges(Symbol symbol, Resolution resolution, DateTime startDate, DateTime endDate)
+        public void GetsHistoricalDataForExtendedDateRanges(Symbol symbol, Resolution resolution, DateTime startDate, DateTime endDate, bool isEmpty)
         {
             Log.DebuggingEnabled = true;
             var tz = TimeZones.NewYork;
@@ -988,7 +988,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var backwardsTs = endDate - startDate;
             var result = GetHistory(symbol, resolution, tz, tz, endDate, backwardsTs, includeExtendedMarketHours: false);
 
-            Assert.IsNotEmpty(result);
+            Assert.AreEqual(result.Count == 0, isEmpty);
         }
 
         [Test]
