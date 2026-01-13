@@ -1692,5 +1692,22 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.That(messageInvocationCount, Is.EqualTo(1));
         }
+
+        [Test]
+        public void HandleEmitsOnlyOnceWithinThrottleInterval()
+        {
+            var emittedCount = 0;
+            var handler = new IB.CompetingLiveSessionMarketDataErrorHandler(_ => emittedCount++);
+            var now = DateTime.UtcNow;
+
+            for (var i = 0; i < 5; i++)
+            {
+                handler.Handle(now, IB.CompetingLiveSessionMarketDataErrorHandler.ErrorCode, "Test message");
+            }
+
+            Assert.AreEqual(1, emittedCount, "Handler should throttle repeated messages within interval");
+            handler.Handle(now.AddSeconds(6), IB.CompetingLiveSessionMarketDataErrorHandler.ErrorCode, "Test message 2");
+            Assert.AreEqual(2, emittedCount, "Handler should emit again after throttle interval");
+        }
     }
 }
