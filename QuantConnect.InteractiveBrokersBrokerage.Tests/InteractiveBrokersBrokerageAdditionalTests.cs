@@ -1677,6 +1677,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.IsTrue(brokerage.IsConnected);
 
+            brokerage.Message += OnMessage;
+
             for (var i = 0; i < invocationCount; i++)
             {
                 var errorEvent = new IB.ErrorEventArgs(
