@@ -288,6 +288,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static SecurityExchangeHours _ndxSecurityExchangeHours;
 
         /// <summary>
+        /// Lazily-initialized handler for competing live session market data errors.
+        /// </summary>
+        private Lazy<IB.CompetingLiveSessionMarketDataErrorHandler> _competingSessionErrorHandler;
+
+        /// <summary>
         /// Returns true if we're currently connected to the broker
         /// </summary>
         public override bool IsConnected => _client != null && _client.Connected && !_stateManager.Disconnected1100Fired && !_stateManager.IsConnecting;
@@ -1407,6 +1412,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _symbolMapper = new InteractiveBrokersSymbolMapper(_mapFileProvider);
             _contractSpecificationService = new(GetContractDetails);
             _exchangeProvider = new MapFilePrimaryExchangeProvider(_mapFileProvider);
+            _competingSessionErrorHandler = new Lazy<IB.CompetingLiveSessionMarketDataErrorHandler>(() => new(OnMessage));
 
             _subscriptionManager = new EventBasedDataQueueHandlerSubscriptionManager();
             _subscriptionManager.SubscribeImpl += (s, t) => Subscribe(s);
@@ -1951,7 +1957,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Handles error messages from IB
         /// </summary>
-        private void HandleError(object sender, IB.ErrorEventArgs e)
+        internal void HandleError(object sender, IB.ErrorEventArgs e)
         {
             // handles the 'connection refused' connect cases
             _connectEvent.Set();
@@ -2106,6 +2112,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         brokerageMessageType = BrokerageMessageType.Warning;
                     }
                 }
+            }
+            else if (errorCode == IB.CompetingLiveSessionMarketDataErrorHandler.ErrorCode)
+            {
+                _competingSessionErrorHandler.Value.Handle(DateTime.UtcNow, errorCode, errorMsg);
             }
 
             if (InvalidatingCodes.Contains(errorCode))
@@ -5753,7 +5763,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // 'Request Account Data Sending Error' can happen while connecting sometimes let's ignore it else it bubbles up to the user even if we connected successfully later
             542,
             10148, // we are going to handle it as an order event
-            1100, 1101, 1102, 2103, 2104, 2105, 2106, 2107, 2108, 2119, 2157, 2158, 10197
+            1100, 1101, 1102, 2103, 2104, 2105, 2106, 2107, 2108, 2119, 2157, 2158, IB.CompetingLiveSessionMarketDataErrorHandler.ErrorCode
         };
 
         // the default delay for IBAutomater restart

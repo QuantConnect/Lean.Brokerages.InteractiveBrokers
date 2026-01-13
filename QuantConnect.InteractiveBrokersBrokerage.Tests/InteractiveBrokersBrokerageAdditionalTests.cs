@@ -1659,5 +1659,38 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
             throw new NotImplementedException();
         }
+
+        [Test]
+        public void HandleErrorCompetingLiveSessionIsThrottled()
+        {
+            using var brokerage = GetBrokerage();
+            const int invocationCount = 5;
+            var messageInvocationCount = 0;
+
+            void OnMessage(object _, BrokerageMessageEvent message)
+            {
+                if (message.Code == IB.CompetingLiveSessionMarketDataErrorHandler.ErrorCode.ToString())
+                {
+                    messageInvocationCount++;
+                }
+            }
+
+            Assert.IsTrue(brokerage.IsConnected);
+
+            for (var i = 0; i < invocationCount; i++)
+            {
+                var errorEvent = new IB.ErrorEventArgs(
+                    id: 1,
+                    time: 0,
+                    code: IB.CompetingLiveSessionMarketDataErrorHandler.ErrorCode,
+                    message: "No market data during competing live session. Origin: [Id=5] Subscribe: SPY (STK SPY USD Smart ARCA  0 )");
+
+                brokerage.HandleError(this, errorEvent);
+            }
+
+            brokerage.Message -= OnMessage;
+
+            Assert.That(messageInvocationCount, Is.EqualTo(1));
+        }
     }
 }
