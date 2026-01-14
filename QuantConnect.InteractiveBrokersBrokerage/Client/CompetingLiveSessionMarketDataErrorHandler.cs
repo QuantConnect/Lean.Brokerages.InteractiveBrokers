@@ -34,7 +34,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <summary>
         /// Minimum time between emitted messages.
         /// </summary>
-        private static readonly TimeSpan ThrottleInterval = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan ThrottleInterval = TimeSpan.FromMinutes(15);
 
         /// <summary>
         /// Next UTC time when execution is allowed.
