@@ -1877,15 +1877,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="price">Price to be normalized</param>
         /// <param name="contract">Contract of the symbol</param>
         /// <param name="symbol">The symbol from which we need to get the PriceMagnifier attribute to normalize the price</param>
+        /// <param name="orderType">The order type, used for special cases like Index Options ComboLimit orders</param>
         /// <returns>The price normalized to be brokerage expected unit</returns>
-        public double NormalizePriceToBrokerage(decimal price, Contract contract, Symbol symbol)
+        public double NormalizePriceToBrokerage(decimal price, Contract contract, Symbol symbol, OrderType? orderType = null)
         {
             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType, Currencies.USD);
 
             var minTick = 0m;
             switch (symbol.SecurityType)
             {
-                case SecurityType.IndexOption:
+                case SecurityType.IndexOption when orderType != OrderType.ComboLimit:
                     minTick = IndexOptionSymbolProperties.MinimumPriceVariationForPrice(symbol, price);
                     break;
                 default:
@@ -2997,7 +2998,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 AddGuaranteedTag(ibOrder, orders.All(x => x.SecurityType == SecurityType.Equity));
                 var baseContract = CreateContract(order.Symbol, includeExpired: false);
-                ibOrder.LmtPrice = NormalizePriceToBrokerage(comboLimitOrder.GroupOrderManager.LimitPrice, baseContract, order.Symbol);
+                ibOrder.LmtPrice = NormalizePriceToBrokerage(comboLimitOrder.GroupOrderManager.LimitPrice, baseContract, order.Symbol, OrderType.ComboLimit);
             }
             else if (comboMarketOrder != null)
             {
