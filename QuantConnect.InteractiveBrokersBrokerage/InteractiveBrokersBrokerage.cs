@@ -1899,7 +1899,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (!_hasLoggedPriceRoundingWarning && !price.Equals(roundedPrice))
             {
                 OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "PriceRounding",
-                    $"To meet brokerage precision requirements, price was rounded to {roundedPrice.ToStringInvariant()} from {price.ToStringInvariant()}")
+                    $"To meet brokerage precision requirements, price was rounded to {roundedPrice.ToStringInvariant()} from {price.ToStringInvariant()} due to minimum tick size constraint ({minTick}).")
                 );
                 _hasLoggedPriceRoundingWarning = true;
             }
