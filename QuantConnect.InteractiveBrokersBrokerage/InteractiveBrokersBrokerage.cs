@@ -257,6 +257,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyOpenInterestWarning;
         private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
+        private bool _hasLoggedPriceRoundingWarning;
 
         /// <summary>
         /// Tracks whether a warning about safe MarketOnOpen execution has already been sent.
@@ -1880,8 +1881,29 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public double NormalizePriceToBrokerage(decimal price, Contract contract, Symbol symbol)
         {
             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType, Currencies.USD);
-            var roundedPrice = RoundPrice(price, _contractSpecificationService.GetMinTick(contract, symbol));
+
+            var minTick = 0m;
+            switch (symbol.SecurityType)
+            {
+                case SecurityType.IndexOption:
+                    minTick = IndexOptionSymbolProperties.MinimumPriceVariationForPrice(symbol, price);
+                    break;
+                default:
+                    minTick = _contractSpecificationService.GetMinTick(contract, symbol);
+                    break;
+            }
+
+            var roundedPrice = RoundPrice(price, minTick);
             roundedPrice *= symbolProperties.PriceMagnifier;
+
+            if (!_hasLoggedPriceRoundingWarning && !price.Equals(roundedPrice))
+            {
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "PriceRounding",
+                    $"To meet brokerage precision requirements, price was rounded to {roundedPrice.ToStringInvariant()} from {price.ToStringInvariant()}")
+                );
+                _hasLoggedPriceRoundingWarning = true;
+            }
+
             return Convert.ToDouble(roundedPrice);
         }
 

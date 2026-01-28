@@ -13,11 +13,13 @@
  * limitations under the License.
 */
 
+using System;
 using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.Interfaces;
 using QuantConnect.Securities;
+using QuantConnect.Securities.Option;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
@@ -278,6 +280,18 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         #endregion
 
         // TODO: Add tests to get holdings after placing orders
+
+        [Test]
+        public void ComboLimitOrderIndex()
+        {
+            var spx = Symbol.Create("SPX", SecurityType.Index, Market.USA);
+            var spxCanonical = Symbol.CreateCanonicalOption(spx, targetOption: "SPXW");
+            var parameters = new ComboLimitOrderTestParameters(
+                OptionStrategies.BullPutSpread(spxCanonical, 7510m, 7500m, new DateTime(2026, 02, 20)),
+                askPrice: 0.75m,
+                bidPrice: -0.12m);
+            base.CancelComboOrders(parameters);
+        }
 
         protected override bool IsAsync()
         {
