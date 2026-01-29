@@ -257,6 +257,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private bool _historyOpenInterestWarning;
         private bool _historyCfdTradeWarning;
         private bool _historyInvalidPeriodWarning;
+        private bool _hasLoggedPriceRoundingWarning;
 
         /// <summary>
         /// Tracks whether a warning about safe MarketOnOpen execution has already been sent.
@@ -1876,12 +1877,41 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="price">Price to be normalized</param>
         /// <param name="contract">Contract of the symbol</param>
         /// <param name="symbol">The symbol from which we need to get the PriceMagnifier attribute to normalize the price</param>
+        /// <param name="orderType">The order type, used for special cases like Index Options ComboLimit orders</param>
         /// <returns>The price normalized to be brokerage expected unit</returns>
-        public double NormalizePriceToBrokerage(decimal price, Contract contract, Symbol symbol)
+        public double NormalizePriceToBrokerage(decimal price, Contract contract, Symbol symbol, OrderType? orderType = null)
         {
             var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType, Currencies.USD);
-            var roundedPrice = RoundPrice(price, _contractSpecificationService.GetMinTick(contract, symbol));
+
+            var minTick = 0m;
+            switch (symbol.SecurityType)
+            {
+                case SecurityType.IndexOption when orderType is not (OrderType.ComboLimit or OrderType.ComboLegLimit):
+                    minTick = IndexOptionSymbolProperties.MinimumPriceVariationForPrice(symbol, price);
+                    break;
+                default:
+                    minTick = _contractSpecificationService.GetMinTick(contract, symbol);
+                    break;
+            }
+
+            var roundedPrice = RoundPrice(price, minTick);
             roundedPrice *= symbolProperties.PriceMagnifier;
+
+            if (!price.Equals(roundedPrice))
+            {
+                var message = $"To meet brokerage precision requirements, price was rounded to {roundedPrice.ToStringInvariant()} from {price.ToStringInvariant()} due to minimum tick size constraint ({minTick}).";
+
+                if (_hasLoggedPriceRoundingWarning)
+                {
+                    Log.Trace("InteractiveBrokersBrokerage.NormalizePriceToBrokerage(): " + message);
+                }
+                else
+                {
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "PriceRounding", message));
+                    _hasLoggedPriceRoundingWarning = true;
+                }
+            }
+
             return Convert.ToDouble(roundedPrice);
         }
 
@@ -2936,7 +2966,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     ibOrder.OrderComboLegs.Add(new OrderComboLeg
                     {
-                        Price = NormalizePriceToBrokerage(comboLegLimit.LimitPrice, legContract, comboLegLimit.Symbol)
+                        Price = NormalizePriceToBrokerage(comboLegLimit.LimitPrice, legContract, comboLegLimit.Symbol, comboLegLimit.Type)
                     });
                 }
             }
@@ -2975,7 +3005,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 AddGuaranteedTag(ibOrder, orders.All(x => x.SecurityType == SecurityType.Equity));
                 var baseContract = CreateContract(order.Symbol, includeExpired: false);
-                ibOrder.LmtPrice = NormalizePriceToBrokerage(comboLimitOrder.GroupOrderManager.LimitPrice, baseContract, order.Symbol);
+                ibOrder.LmtPrice = NormalizePriceToBrokerage(comboLimitOrder.GroupOrderManager.LimitPrice, baseContract, order.Symbol, order.Type);
             }
             else if (comboMarketOrder != null)
             {
