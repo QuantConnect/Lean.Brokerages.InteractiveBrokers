@@ -18,7 +18,9 @@ using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.Interfaces;
+using QuantConnect.Orders;
 using QuantConnect.Securities;
+using System.Collections.Generic;
 using QuantConnect.Securities.Option;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
@@ -293,6 +295,33 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             base.CancelComboOrders(parameters);
         }
 
+        private static IEnumerable<TestCaseData> ComboLegLimitParameters
+        {
+            get
+            {
+                var spx = Symbol.Create("SPX", SecurityType.Index, Market.USA);
+                var spxCanonical = Symbol.CreateCanonicalOption(spx, targetOption: "SPXW");
+
+                var legLimitOrdersPriceAboveThree = CreateLegLimitOrders(OptionStrategies.BullPutSpread(spxCanonical, 6980m, 6970m, new DateTime(2026, 01, 29)), 1, 7.35m, 8.45m);
+                yield return new TestCaseData(legLimitOrdersPriceAboveThree).SetDescription("ComboLegLimitOrderIndex_BullPutSpread_PriceGreaterThree");
+
+                var legLimitOrdersPriceBellowThree = CreateLegLimitOrders(OptionStrategies.BullPutSpread(spxCanonical, 7510m, 7500m, new DateTime(2026, 02, 20)), 1, 0.77m, 0.78m);
+                yield return new TestCaseData(legLimitOrdersPriceBellowThree).SetDescription("ComboLegLimitOrderIndex_BearCallSpread_PriceBellowThree");
+
+            }
+        }
+
+        [TestCaseSource(nameof(ComboLegLimitParameters))]
+        public void ComboLegLimitOrderIndexOption(List<ComboLegLimitOrder> comboLegLimitOrders)
+        {
+            foreach (var order in comboLegLimitOrders)
+            {
+                OrderProvider.Add(order);
+                Brokerage.PlaceOrder(order);
+            }
+
+        }
+
         protected override bool IsAsync()
         {
             return true;
@@ -315,6 +344,50 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 brokerage.Disconnect();
                 brokerage.Dispose();
             }
+        }
+
+        private static List<ComboLegLimitOrder> CreateLegLimitOrders(OptionStrategy strategy, decimal quantity, params decimal[] limitPrices)
+        {
+            var targetOption = strategy.CanonicalOption?.Canonical.ID.Symbol;
+
+            var legs = new List<Leg>(strategy.UnderlyingLegs);
+
+            foreach (var optionLeg in strategy.OptionLegs)
+            {
+                var option = Symbol.CreateOption(
+                    strategy.Underlying,
+                    targetOption,
+                    strategy.Underlying.ID.Market,
+                    strategy.Underlying.SecurityType.DefaultOptionStyle(),
+                    optionLeg.Right,
+                    optionLeg.Strike,
+                    optionLeg.Expiration);
+
+                legs.Add(new Leg { Symbol = option, OrderPrice = optionLeg.OrderPrice, Quantity = optionLeg.Quantity });
+            }
+
+            var groupOrderManager = new GroupOrderManager(1, legs.Count, quantity);
+
+            var orders = new List<ComboLegLimitOrder>();
+            for (int i = 0; i < limitPrices.Length; i++)
+            {
+                orders.Add(CreateComboLimitOrder(legs[i], limitPrices[i], groupOrderManager));
+            }
+
+            return orders;
+        }
+
+        private static ComboLegLimitOrder CreateComboLimitOrder(Leg leg, decimal limitPrice, GroupOrderManager groupOrderManager)
+        {
+            return new ComboLegLimitOrder(
+                leg.Symbol,
+                ((decimal)leg.Quantity).GetOrderLegGroupQuantity(groupOrderManager),
+                limitPrice,
+                DateTime.UtcNow,
+                groupOrderManager)
+            {
+                Status = OrderStatus.New
+            };
         }
     }
 }
