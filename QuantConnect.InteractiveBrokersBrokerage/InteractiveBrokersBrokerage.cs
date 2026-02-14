@@ -1517,9 +1517,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="exchange">The exchange to send the order to, defaults to "Smart" to use IB's smart routing</param>
         private void IBPlaceOrder(Order order, bool needsNewId, string exchange = null)
         {
-            if (!_groupOrderCacheManager.TryGetGroupCachedOrders(order, out var orders))
+            List<Order> orders;
+            if (needsNewId)
             {
-                return;
+                // During submission we need the original group orders to propagate the generated brokerage id to all legs.
+                if (!_groupOrderCacheManager.TryGetGroupCachedOrders(order, out orders))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                // During updates we only receive one leg request, so we fetch sibling legs directly from the order provider.
+                if (!order.TryGetGroupOrders(orderId => _orderProvider.GetOrderById(orderId), out orders))
+                {
+                    throw new InvalidOperationException($"Could not retrieve all grouped orders for update request. GroupId: {order.GroupOrderManager?.Id}, OrderId: {order.Id}");
+                }
             }
 
             // MOO/MOC require directed option orders.
