@@ -3345,7 +3345,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             else if (symbol.ID.SecurityType == SecurityType.Equity)
             {
-                contract.PrimaryExch = GetPrimaryExchange(contract, symbol);
+                // Look up cached contract details to get PrimaryExch AND ConId.
+                // ConId is critical for symbols that IB cannot resolve by ticker alone
+                // (e.g. dual-listed ETFs like EQQU on LSEETF where SMART routing fails
+                // without an explicit ConId).
+                var equityDetails = GetContractDetails(contract, symbol.Value, failIfNotFound: false);
+                if (equityDetails != null)
+                {
+                    contract.PrimaryExch = equityDetails.Contract.PrimaryExch;
+                    if (equityDetails.Contract.ConId > 0)
+                    {
+                        contract.ConId = equityDetails.Contract.ConId;
+                    }
+                }
             }
             // Indexes requires that the exchange be specified exactly
             else if (symbol.ID.SecurityType == SecurityType.Index)
