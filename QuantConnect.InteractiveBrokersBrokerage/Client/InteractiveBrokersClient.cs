@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -450,7 +450,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="realisedPnl">Shows your profit on closed positions, which is the difference between your entry execution cost (execution price + commissions to open the position) and exit execution cost ((execution price + commissions to close the position)</param>
         /// <param name="accountName">The name of the account to which the message applies.  Useful for Financial Advisor sub-account messages.</param>
         public override void updatePortfolio(Contract contract, decimal position, double marketPrice, double marketValue, double averageCost,
-            double realisedPnl, double unrealisedPnl, string accountName)
+            double unrealisedPnl, double realisedPnl, string accountName)
         {
             var positionValue = Convert.ToInt32(position);
             OnUpdatePortfolio(new UpdatePortfolioEventArgs(contract, positionValue, marketPrice, marketValue, averageCost, unrealisedPnl, realisedPnl,
