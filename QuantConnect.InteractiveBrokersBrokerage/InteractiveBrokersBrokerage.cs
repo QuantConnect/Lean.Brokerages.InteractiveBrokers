@@ -2893,19 +2893,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 quantity = order.Quantity;
             }
 
-            var outsideRth = false;
             var orderProperties = order.Properties as InteractiveBrokersOrderProperties;
-            if (order.Type == OrderType.Limit ||
-                order.Type == OrderType.LimitIfTouched ||
-                order.Type == OrderType.StopMarket ||
-                order.Type == OrderType.StopLimit ||
-                order.Type == OrderType.TrailingStop)
-            {
-                if (orderProperties != null)
-                {
-                    outsideRth = orderProperties.OutsideRegularTradingHours;
-                }
-            }
+            var outsideRth = GetOutsideRegularTradingHours(order.Type, orderProperties);
 
             var ibOrder = new IBApi.Order
             {
@@ -3489,6 +3478,28 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 default:
                     throw new InvalidEnumArgumentException(nameof(type), (int)type, typeof(OrderType));
             }
+        }
+
+        /// <summary>
+        /// Resolves the outside-RTH flag to send to IB, and emits a one-shot warning when the
+        /// user requested the flag on a combo order. IB server-side ignores the flag on combo
+        /// (BAG) orders (returns warning 2109), so we don't propagate it and tell the user once.
+        /// </summary>
+        internal bool GetOutsideRegularTradingHours(OrderType orderType, InteractiveBrokersOrderProperties orderProperties)
+        {
+            if (orderProperties?.OutsideRegularTradingHours != true)
+            {
+                return false;
+            }
+
+            return orderType is OrderType.Limit
+                or OrderType.LimitIfTouched
+                or OrderType.StopMarket
+                or OrderType.StopLimit
+                or OrderType.TrailingStop
+                or OrderType.ComboMarket
+                or OrderType.ComboLimit
+                or OrderType.ComboLegLimit;
         }
 
         /// <summary>

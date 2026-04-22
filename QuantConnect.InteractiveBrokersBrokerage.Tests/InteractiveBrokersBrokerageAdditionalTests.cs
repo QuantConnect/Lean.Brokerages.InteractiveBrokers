@@ -1711,5 +1711,30 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             handler.Handle(now.AddMinutes(15).AddSeconds(1), IB.CompetingLiveSessionMarketDataErrorHandler.ErrorCode, "Test message 2");
             Assert.AreEqual(2, emittedCount, "Handler should emit again after throttle interval");
         }
+
+        [TestCase(OrderType.Market, false, false)]
+        [TestCase(OrderType.Market, true, false)]
+        [TestCase(OrderType.Limit, true, true)]
+        [TestCase(OrderType.Limit, false, false)]
+        [TestCase(OrderType.ComboMarket, true, true)]
+        [TestCase(OrderType.ComboLimit, true, true)]
+        [TestCase(OrderType.ComboLegLimit, true, true)]
+        public void GetOutsideRegularTradingHoursFlagWithDifferentOrderTypes(OrderType orderType, bool orth, bool expected)
+        {
+            var brokerage = new InteractiveBrokersBrokerage();
+            var ibOP = new InteractiveBrokersOrderProperties { OutsideRegularTradingHours = orth };
+
+            var actual = brokerage.GetOutsideRegularTradingHours(orderType, ibOP);
+
+            Assert.AreEqual(expected, actual);
+        }
+
+        [Test]
+        public void GetOutsideRegularTradingHoursWithNullPropertiesAlwaysReturnsFalse(
+           [Values(OrderType.Limit, OrderType.LimitIfTouched, OrderType.StopMarket)] OrderType orderType)
+        {
+            var brokerage = new InteractiveBrokersBrokerage();
+            Assert.IsFalse(brokerage.GetOutsideRegularTradingHours(orderType, null));
+        }
     }
 }
