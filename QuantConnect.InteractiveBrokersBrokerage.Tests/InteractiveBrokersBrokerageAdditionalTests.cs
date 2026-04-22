@@ -1711,38 +1711,5 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             handler.Handle(now.AddMinutes(15).AddSeconds(1), IB.CompetingLiveSessionMarketDataErrorHandler.ErrorCode, "Test message 2");
             Assert.AreEqual(2, emittedCount, "Handler should emit again after throttle interval");
         }
-
-        [Test]
-        public void GetOutsideRegularTradingHoursComboWithFlagEmitsWarningOnce()
-        {
-            var brokerage = new InteractiveBrokersBrokerage();
-            var warnings = new List<BrokerageMessageEvent>();
-            brokerage.Message += (_, e) =>
-            {
-                if (e.Code == "ComboOrderOutsideRth")
-                {
-                    warnings.Add(e);
-                }
-            };
-
-            var flagged = new InteractiveBrokersOrderProperties { OutsideRegularTradingHours = true };
-            var unflagged = new InteractiveBrokersOrderProperties { OutsideRegularTradingHours = false };
-
-            brokerage.GetOutsideRegularTradingHours(OrderType.ComboLimit, flagged);
-            brokerage.GetOutsideRegularTradingHours(OrderType.ComboMarket, flagged);
-            brokerage.GetOutsideRegularTradingHours(OrderType.ComboLegLimit, flagged);
-            brokerage.GetOutsideRegularTradingHours(OrderType.Limit, flagged);
-            brokerage.GetOutsideRegularTradingHours(OrderType.ComboLimit, unflagged);
-
-            Assert.AreEqual(1, warnings.Count);
-        }
-
-        [Test]
-        public void GetOutsideRegularTradingHoursWithNullPropertiesAlwaysReturnsFalse(
-           [Values(OrderType.Limit, OrderType.LimitIfTouched, OrderType.StopMarket)] OrderType orderType)
-        {
-            var brokerage = new InteractiveBrokersBrokerage();
-            Assert.IsFalse(brokerage.GetOutsideRegularTradingHours(orderType, null));
-        }
     }
 }

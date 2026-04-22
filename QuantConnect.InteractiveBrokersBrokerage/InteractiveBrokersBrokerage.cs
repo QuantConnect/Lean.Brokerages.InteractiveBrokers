@@ -265,12 +265,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <remarks>Ensures the warning is raised only once per application run to avoid spamming messages.</remarks>
         private bool _hasWarnedSafeMooExecution;
 
-        /// <summary>
-        /// Tracks whether the warning about IB ignoring OutsideRegularTradingHours on combo orders has already been sent.
-        /// </summary>
-        /// <remarks>Ensures the warning is raised only once per brokerage instance.</remarks>
-        private bool _hasWarnedComboOutsideRth;
-
         // Symbols that IB doesn't support ("No security definition has been found for the request")
         // We keep track of them to avoid flooding the logs with the same error/warning
         private readonly HashSet<string> _unsupportedAssets = new();
@@ -2899,8 +2893,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 quantity = order.Quantity;
             }
 
+            var outsideRth = false;
             var orderProperties = order.Properties as InteractiveBrokersOrderProperties;
-            var outsideRth = GetOutsideRegularTradingHours(order.Type, orderProperties);
+            if (order.Type == OrderType.Limit ||
+                order.Type == OrderType.LimitIfTouched ||
+                order.Type == OrderType.StopMarket ||
+                order.Type == OrderType.StopLimit ||
+                order.Type == OrderType.TrailingStop)
+            {
+                if (orderProperties != null)
+                {
+                    outsideRth = orderProperties.OutsideRegularTradingHours;
+                }
+            }
 
             var ibOrder = new IBApi.Order
             {
@@ -3484,36 +3489,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 default:
                     throw new InvalidEnumArgumentException(nameof(type), (int)type, typeof(OrderType));
             }
-        }
-
-        /// <summary>
-        /// Resolves the outside-RTH flag to send to IB, and emits a one-shot warning when the
-        /// user requested the flag on a combo order. IB server-side ignores the flag on combo
-        /// (BAG) orders (returns warning 2109), so we don't propagate it and tell the user once.
-        /// </summary>
-        internal bool GetOutsideRegularTradingHours(OrderType orderType, InteractiveBrokersOrderProperties orderProperties)
-        {
-            if (orderProperties?.OutsideRegularTradingHours != true)
-            {
-                return false;
-            }
-
-            if (orderType is OrderType.ComboMarket or OrderType.ComboLimit or OrderType.ComboLegLimit)
-            {
-                if (!_hasWarnedComboOutsideRth)
-                {
-                    _hasWarnedComboOutsideRth = true;
-                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "ComboOrderOutsideRth",
-                        "Interactive Brokers ignores the 'OutsideRegularTradingHours' order property on Combo Order Types."));
-                }
-                return false;
-            }
-
-            return orderType is OrderType.Limit 
-                or OrderType.LimitIfTouched
-                or OrderType.StopMarket
-                or OrderType.StopLimit
-                or OrderType.TrailingStop;
         }
 
         /// <summary>
