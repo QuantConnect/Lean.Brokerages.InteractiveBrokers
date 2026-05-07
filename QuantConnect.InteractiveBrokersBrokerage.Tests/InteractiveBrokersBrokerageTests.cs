@@ -774,6 +774,73 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             return holdings;
         }
 
+        /// <summary>
+        /// Live regression test for IB error 201 ("Invalid account number") when the FA group
+        /// filter is active and an order also carries a per-order
+        /// <see cref="InteractiveBrokersOrderProperties.Account"/> override. The order should be
+        /// accepted (<c>Status: Submitted</c>) and route to the single sub-account.
+        /// </summary>
+        /// <remarks>
+        /// Validated end-to-end against a live IB Financial Advisor master account: TWS shows the
+        /// resulting order under the "IndBrokerage" allocation (single-account routing) rather
+        /// than under the FA group's allocation method, confirming the per-order
+        /// <c>Account</c> override took effect. A complementary scenario with no Account override
+        /// (using only the global FA group filter) was also verified to still route as a group
+        /// order in the same algorithm run, proving the fix did not regress the default path.
+        /// </remarks>
+        [Test, Explicit("Requires IB master account with FA group 'TestGroup1' configured and a sub-account belonging to that group; supply ib-account (master) and ib-fa-test-sub-account (sub-account).")]
+        public void PlaceLimitOrderWithFaGroupFilterAndAccountOverride()
+        {
+            var masterAccount = Config.Get("ib-account");
+            Assert.IsTrue(InteractiveBrokersBrokerage.IsMasterAccount(masterAccount), $"Expected master account '{masterAccount}' to be recognized as a master account, but it was not.");
+
+            var subAccount = Config.Get("ib-fa-test-sub-account");
+            Assert.IsFalse(string.IsNullOrEmpty(subAccount), "Config 'ib-fa-test-sub-account' must be set to a valid sub-account belonging to the FA master.");
+
+            // Should Disconnect and dispose to prevent action of [SetUp] method
+            _interactiveBrokersBrokerage.Dispose();
+            Assert.IsFalse(_interactiveBrokersBrokerage.IsConnected, "Brokerage should be disconnected after Dispose");
+
+            // Apply the FA group filter and rebuild the brokerage so the filter takes effect at construction.
+            Config.Set("ib-financial-advisors-group-filter", "TestGroup1");
+            _interactiveBrokersBrokerage = CreateBrokerage();
+
+            var submittedEvent = new AutoResetEvent(false);
+            OrderEvent rejection = null;
+            void OnOrdersStatusChanged(object _, List<OrderEvent> events)
+            {
+                foreach (var orderEvent in events)
+                {
+                    if (orderEvent.Status == OrderStatus.Submitted)
+                    {
+                        submittedEvent.Set();
+                    }
+                    if (orderEvent.Status == OrderStatus.Invalid)
+                    {
+                        rejection = orderEvent;
+                    }
+                }
+            }
+
+            _interactiveBrokersBrokerage.OrdersStatusChanged += OnOrdersStatusChanged;
+
+            // Far-from-market limit so the order sits as Submitted rather than filling.
+            var properties = new InteractiveBrokersOrderProperties { Account = subAccount };
+            var order = new LimitOrder(Symbols.SPY, 10, 100.00m, DateTime.UtcNow, tag: string.Empty, properties: properties);
+            _orders.Add(order);
+
+            Assert.IsTrue(_interactiveBrokersBrokerage.PlaceOrder(order), "Failed to place limit order.");
+
+            var submitted = submittedEvent.WaitOne(TimeSpan.FromSeconds(20));
+
+            // Cleanup: cancel the working order regardless of outcome.
+            _interactiveBrokersBrokerage.CancelOrder(order);
+            _interactiveBrokersBrokerage.OrdersStatusChanged -= OnOrdersStatusChanged;
+
+            Assert.IsNull(rejection, $"Order should not be rejected by IB. Got: {rejection?.Message}");
+            Assert.IsTrue(submitted, "Order did not reach Submitted status within 20 seconds.");
+        }
+
 
         [Explicit("Ignore a test")]
         public void DoesNotLoopEndlesslyIfGetCashBalanceAlwaysThrows()
