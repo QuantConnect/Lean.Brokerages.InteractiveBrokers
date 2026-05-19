@@ -3025,8 +3025,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (!string.IsNullOrWhiteSpace(orderProperties.Account))
                     {
-                        // order for a single managed account
+                        // order for a single managed account.
+                        // IB requires Account, FaGroup and FaProfile to be mutually exclusive on the wire —
+                        // if both Account and FaGroup are sent, IB rejects with error 201 "Invalid account
+                        // number". Clear any FaGroup/FaMethod that the global financial-advisors group
+                        // filter assigned earlier so the per-order Account override is unambiguous.
                         ibOrder.Account = orderProperties.Account;
+                        ibOrder.FaGroup = string.Empty;
+                        ibOrder.FaMethod = string.Empty;
                     }
                     else if (!string.IsNullOrWhiteSpace(orderProperties.FaGroup) || !string.IsNullOrWhiteSpace(orderProperties.FaProfile))
                     {
