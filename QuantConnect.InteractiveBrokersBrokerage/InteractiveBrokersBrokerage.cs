@@ -2876,7 +2876,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Converts a QC order to an IB order
         /// </summary>
-        private IBApi.Order ConvertOrder(List<Order> orders, Contract contract, int ibOrderId)
+        internal IBApi.Order ConvertOrder(List<Order> orders, Contract contract, int ibOrderId)
         {
             OrderDirection direction;
             decimal quantity;

@@ -788,22 +788,22 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         /// (using only the global FA group filter) was also verified to still route as a group
         /// order in the same algorithm run, proving the fix did not regress the default path.
         /// </remarks>
-        [Test, Explicit("Requires IB master account with FA group 'TestGroup1' configured and a sub-account belonging to that group; supply ib-account (master) and ib-fa-test-sub-account (sub-account).")]
-        public void PlaceLimitOrderWithFaGroupFilterAndAccountOverride()
+        [TestCase("TestGroup1", "DUXXXXXXX", Description = "Requires IB master account with the given FA group configured and the given sub-account belonging to that group; ib-account must point to the FA master.")]
+        [Explicit]
+        public void PlaceLimitOrderWithFaGroupFilterAndAccountOverride(string financialAdvisorsGroupFilter, string subAccount)
         {
-            var masterAccount = Config.Get("ib-account");
-            Assert.IsTrue(InteractiveBrokersBrokerage.IsMasterAccount(masterAccount), $"Expected master account '{masterAccount}' to be recognized as a master account, but it was not.");
+            Assert.IsFalse(string.IsNullOrEmpty(financialAdvisorsGroupFilter), "FA group filter argument must be a valid FA group configured on the master account.");
+            Assert.IsFalse(string.IsNullOrEmpty(subAccount), "Sub-account argument must be a valid sub-account belonging to the FA master.");
 
-            var subAccount = Config.Get("ib-fa-test-sub-account");
-            Assert.IsFalse(string.IsNullOrEmpty(subAccount), "Config 'ib-fa-test-sub-account' must be set to a valid sub-account belonging to the FA master.");
+            // Apply the FA group filter and rebuild the brokerage so the filter takes effect at construction.
+            Config.Set("ib-financial-advisors-group-filter", financialAdvisorsGroupFilter);
 
             // Should Disconnect and dispose to prevent action of [SetUp] method
             _interactiveBrokersBrokerage.Dispose();
             Assert.IsFalse(_interactiveBrokersBrokerage.IsConnected, "Brokerage should be disconnected after Dispose");
 
-            // Apply the FA group filter and rebuild the brokerage so the filter takes effect at construction.
-            Config.Set("ib-financial-advisors-group-filter", "TestGroup1");
             _interactiveBrokersBrokerage = CreateBrokerage();
+            Assert.IsTrue(_interactiveBrokersBrokerage.IsFinancialAdvisor, "Expected configured ib-account to be recognized as a Financial Advisor master account.");
 
             var submittedEvent = new AutoResetEvent(false);
             OrderEvent rejection = null;

@@ -1736,5 +1736,49 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var brokerage = new InteractiveBrokersBrokerage();
             Assert.IsFalse(brokerage.GetOutsideRegularTradingHours(orderType, null));
         }
+
+        /// <summary>
+        /// Hermetic regression for IB error 201 ("Invalid account number") when an FA group filter
+        /// is active and an order also carries a per-order
+        /// <see cref="InteractiveBrokersOrderProperties.Account"/> override. The resulting
+        /// <see cref="IBApi.Order"/> must have <c>Account</c> set and <c>FaGroup</c>/<c>FaMethod</c>
+        /// cleared, because IB rejects orders that ship <c>Account</c> and <c>FaGroup</c> together.
+        /// </summary>
+        [Test]
+        public void LimitOrderWithAccountOverrideAndGroupFilterAccountWinsAndFaGroupCleared()
+        {
+            using var brokerage = GetBrokerage();
+
+            const string overrideAccount = "TestSubAccount";
+            var props = new InteractiveBrokersOrderProperties
+            {
+                Account = overrideAccount,
+                FaGroup = string.Empty,
+                FaProfile = string.Empty,
+                FaMethod = string.Empty,
+            };
+
+            var leanOrder = new LimitOrder(Symbols.SPY, 10m, 100.00m,
+                new DateTime(2026, 1, 1, 15, 0, 0, DateTimeKind.Utc),
+                tag: string.Empty,
+                properties: props);
+
+            var ibContract = new Contract
+            {
+                Symbol = "SPY",
+                SecType = IB.SecurityType.Stock,
+                Exchange = "SMART",
+                Currency = "USD"
+            };
+
+            var ibOrder = brokerage.ConvertOrder([leanOrder], ibContract, 1);
+
+            Assert.AreEqual(overrideAccount, ibOrder.Account,
+                "When orderProperties.Account is supplied, ibOrder.Account must reflect that override.");
+            Assert.IsTrue(string.IsNullOrEmpty(ibOrder.FaGroup),
+                "FaGroup must be cleared when an Account override is supplied (IB rejects Account+FaGroup together with error 201).");
+            Assert.IsTrue(string.IsNullOrEmpty(ibOrder.FaMethod),
+                "FaMethod must be cleared alongside FaGroup when an Account override is supplied.");
+        }
     }
 }
