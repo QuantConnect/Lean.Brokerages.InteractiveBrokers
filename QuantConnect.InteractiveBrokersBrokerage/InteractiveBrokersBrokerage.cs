@@ -5169,7 +5169,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var resultHandler = Composer.Instance.GetPart<IResultHandler>();
                 resultHandler?.DebugMessage("Logging into account. Check phone for two-factor authentication verification...");
             }
-            else if (e.Data.Contains("2FA maximum attempts reached", StringComparison.InvariantCultureIgnoreCase))
+            else if (e.Data.Contains("2FA maximum attempts reached", StringComparison.InvariantCultureIgnoreCase) || 
+                     e.Data.Contains("IB Automater initialization timeout", StringComparison.InvariantCultureIgnoreCase))
             {
                 Task.Factory.StartNew(() =>
                 {
@@ -5542,7 +5543,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private bool IsRecuperable2FATimeout(StartResult result)
         {
-            if (_pastFirstConnection && result.ErrorCode == ErrorCode.TwoFactorConfirmationTimeout)
+            if (_pastFirstConnection && (result.ErrorCode == ErrorCode.TwoFactorConfirmationTimeout || result.ErrorCode == ErrorCode.InitializationTimeout))
             {
                 Log.Trace($"InteractiveBrokersBrokerage.IsRecuperable2FATimeout(): will trigger user action request");
                 return true;
