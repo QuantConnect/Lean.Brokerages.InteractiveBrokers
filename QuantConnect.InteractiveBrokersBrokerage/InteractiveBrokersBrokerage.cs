@@ -5654,6 +5654,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private static void ValidateSubscription()
         {
+            // Hyperion self-hosts IB (no QuantConnect IB data-subscription); skip the QC license
+            // validation phone-home that otherwise shuts the algorithm down.
+            return;
+#pragma warning disable CS0162
             try
             {
                 var productId = 181;
