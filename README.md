@@ -23,13 +23,13 @@ This repository hosts the Interactive Brokers (IB) Brokerage Plugin Integration 
 
 IB was founded by Thomas Peterffy in 1993 with the goal to "create technology to provide liquidity on better terms. Compete on price, speed, size, diversity of global products and advanced trading tools". IB provides access to trading Equities, ETFs, Options, Futures, Future Options, Forex, Gold, Warrants, Bonds, and Mutual Funds for clients in over [200 countries and territories](https://www.interactivebrokers.com/en/index.php?f=7021) with no minimum deposit. IB also provides paper trading, a trading platform, and educational services.
 
-For more information about the IB brokerage, see the [QuantConnect-IB Integration Page](https://www.quantconnect.com/docs/v2/our-platform/live-trading/brokerages/interactive-brokers).
+For more information about the IB brokerage, see the [QuantConnect-IB Integration Page](https://www.quantconnect.com/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers).
 
 ## Using the Brokerage Plugin
   
 ### Deploying IB with VSCode User Interace
 
-  You can deploy using a visual interface in the QuantConnect cloud. For instructions, see the [QuantConnect-IB Integration Page](https://www.quantconnect.com/docs/v2/our-platform/live-trading/brokerages/interactive-brokers). 
+  You can deploy using a visual interface in the QuantConnect cloud. For instructions, see the [QuantConnect-IB Integration Page](https://www.quantconnect.com/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers). 
   
   ![deploy-ib](https://user-images.githubusercontent.com/38889814/207988504-86a110b9-dc74-4d8a-83ac-e0f0572d413f.gif) 
 
@@ -39,7 +39,7 @@ For more information about the IB brokerage, see the [QuantConnect-IB Integratio
 
 Follow these steps to start local live trading with the IB brokerage:
 
-1.  Open a terminal in your [CLI root directory](https://www.quantconnect.com/docs/v2/lean-cli/initialization/directory-structure#02-lean-init).
+1.  Open a terminal in your [CLI root directory](https://www.quantconnect.com/docs/v2/lean-cli/initialization/organization-workspaces#03-Directory-Structure).
 2.  Run `lean live "<projectName>"` to start a live deployment wizard for the project in `./<projectName>` and then enter the brokerage number.
 
 	```
@@ -108,8 +108,8 @@ Follow these steps to start local live trading with the IB brokerage:
     To enter multiple options, separate them with comma.:
     ```
 
-    If you select IQFeed, see [IQFeed](https://www.quantconnect.com/docs/v2/lean-cli/live-trading/other-data-feeds/iqfeed) for set up instructions.  
-    If you select Polygon Data Feed, see [Polygon](https://www.quantconnect.com/docs/v2/lean-cli/live-trading/other-data-feeds/polygon) for set up instructions.
+    If you select IQFeed, see [IQFeed](https://www.quantconnect.com/docs/v2/lean-cli/live-trading/data-providers/iqfeed) for set up instructions.  
+    If you select Polygon Data Feed, see [Polygon](https://www.quantconnect.com/docs/v2/lean-cli/live-trading/data-providers/polygon) for set up instructions.
 
 7.  Enter whether you want to enable delayed market data.
 
@@ -170,17 +170,17 @@ You can set the Brokerage Model with the following statements
     SetBrokerageModel(BrokerageName.InteractiveBrokersBrokerage, AccountType.Cash);
     SetBrokerageModel(BrokerageName.InteractiveBrokersBrokerage, AccountType.Margin);
 
-[Read Documentation](https://www.quantconnect.com/docs/v2/our-platform/live-trading/brokerages/interactive-brokers)
+[Read Documentation](https://www.quantconnect.com/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers)
 
 ### Fees
 
-We model the order fees of IB for each asset class. For information about each asset class, see [Fees](https://www.quantconnect.com/docs/v2/our-platform/live-trading/brokerages/interactive-brokers#07-Fees).
+We model the order fees of IB for each asset class. For information about each asset class, see [Fees](https://www.quantconnect.com/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers#07-Fees).
 
 ### Margin
 
 We model buying power and margin calls to ensure your algorithm stays within the margin requirements.
 
-[Read Documentation](https://www.quantconnect.com/docs/v2/our-platform/live-trading/brokerages/interactive-brokers)
+[Read Documentation](https://www.quantconnect.com/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers)
 
 #### Buying Power
 
