@@ -189,27 +189,6 @@ In the US, IB allows up to 2x leverage on Equity trades for margin accounts. In 
 
 Regulation T margin rules apply. When the amount of margin remaining in your portfolio drops below 5% of the total portfolio value, you receive a [warning](https://www.quantconnect.com/docs/v2/writing-algorithms/reality-modeling/margin-calls#08-Monitor-Margin-Call-Events). When the amount of margin remaining in your portfolio drops to zero or goes negative, the portfolio sorts the generated margin call orders by their unrealized profit and executes each order synchronously until your portfolio is within the margin requirements.
 
-#### Pattern Day Trading
-
-If all of the following statements are true, you are classified as a pattern day trader:
-
-- You reside in the United States.
-- You trade in a margin account.
-- You execute 4+ intraday US Equity trades within 5 business days.
-- Your intraday US Equity trades represent more than 6% of your total trades.
-
-Pattern day traders must maintain a minimum equity of $25,000 in their margin account to continue trading. For more information about pattern day trading, see [Am I a Pattern Day Trader?](https://www.finra.org/investors/learn-to-invest/advanced-investing/day-trading-margin-requirements-know-rules) on the FINRA website.
-
-The `PatternDayTradingMarginModel` doesn't enforce minimum equity rules and doesn't limit your trades, but it adjusts your available leverage based on the market state. During regular market hours, you can use up to 4x leverage. During extended market hours, you can use up to 2x leverage.
-
-```
-security.MarginModel = new PatternDayTradingMarginModel();
-```
-
-In live trading, if you have less than $25,000 in your account and you try to open a 4th day trade for an Equity asset in a 5 business day period, you'll get the following error message:
-
-> Message: 201 - Order rejected - reason:Potential Pattern Day Trade. A potential pattern day trader error message means that an account has less than the SEC required USD 25,000 minimum Net Liquidation Value AND the number of available day trades (3) has already been used within the last 5 days.. You need to maintain an account balance of at least USD 25,000 if you wish to day trade. If you do not, we restrict you to no more than 3 day trades within any 5 business day period as a 4th trade would create a violation.. This order rejection serves to prevent you from opening a 4th trade and possibly closing it today. Please refer to our [Knowledge Base](https://www.ibkr.info/article/193) for further details.
-
 ### Slippage
 
 Orders through IB do not experience slippage in backtests. In paper trading and live trading, your orders may experience slippage.
