@@ -2015,6 +2015,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             Log.Trace($"InteractiveBrokersBrokerage.HandleError(): RequestId: {requestId} ErrorCode: {errorCode} - {errorMsg}");
 
+            // error 300: "Can't find EId with tickerId:N" - IB rejecting a cancelMktData for a ticker
+            // it has no active subscription for. This is benign only when it's a market-data ticker we
+            // have already unsubscribed (the async cancel races the removal, common during teardown).
+            // In that case _subscribedTickers no longer has the id; otherwise let the error surface.
+            if (errorCode == 300
+                && requestInfo?.RequestType == RequestType.Subscription
+                && !_subscribedTickers.ContainsKey(requestId))
+            {
+                Log.Trace($"InteractiveBrokersBrokerage.HandleError(): Ignoring benign cancel-market-data error for an already-unsubscribed ticker. ErrorCode: {errorCode} - {errorMsg}");
+                return;
+            }
+
             if (errorCode == 2105 || errorCode == 2103)
             {
                 // 'connection is broken': if we haven't already let's trigger a gateway restart
