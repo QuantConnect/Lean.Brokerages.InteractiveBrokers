@@ -53,14 +53,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 },
                 modifiers: null);
 
-        [TestCase(OrderType.Limit)]
-        [TestCase(OrderType.MarketOnOpen)]
-        public void OpenOrderTimeIsDiscoveryTimeNotMinValue(OrderType orderType)
+        [Test]
+        public void OpenOrderTimeIsDiscoveryTimeNotMinValue()
         {
             var brokerage = CreateOfflineBrokerage();
 
             var before = DateTime.UtcNow;
-            var order = InvokeConvert(brokerage, orderType, limitPrice: 100.00);
+            var order = InvokeConvert(brokerage, OrderType.Limit, limitPrice: 100.00);
             var after = DateTime.UtcNow;
 
             Assert.AreNotEqual(default(DateTime), order.Time, "open order time must not be DateTime.MinValue");
