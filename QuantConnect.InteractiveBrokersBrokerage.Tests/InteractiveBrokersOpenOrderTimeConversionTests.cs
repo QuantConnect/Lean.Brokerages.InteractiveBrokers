@@ -14,14 +14,12 @@
 */
 
 using System;
-using System.Collections.Generic;
 using System.Reflection;
 using IBApi;
 using NUnit.Framework;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.Interfaces;
 using QuantConnect.Orders;
-using QuantConnect.Securities;
 using QuantConnect.Util;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 using LeanOrder = QuantConnect.Orders.Order;
@@ -29,13 +27,12 @@ using LeanOrder = QuantConnect.Orders.Order;
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
     /// <summary>
-    /// Hermetic tests for the open-order timestamp behavior (issue #117). Orders rebuilt by
-    /// <c>GetOpenOrders</c> during live setup carry no submission time from IB, so the brokerage
-    /// stamps the discovery time (<see cref="DateTime.UtcNow"/>) instead of
-    /// <see cref="DateTime.MinValue"/>, keeping time-based cancel/age logic working after a restart.
-    /// MarketOnOpen uses the UTC date only, so the timestamp stays before the open it targets.
-    /// The private <c>ConvertOrder</c> overload is invoked via reflection (the assembly exposes its
-    /// internals to this test project) so the test runs in CI without a live IB Gateway / TWS.
+    /// Hermetic tests for the open-order timestamp behavior. Orders rebuilt by <c>GetOpenOrders</c>
+    /// during live setup carry no submission time from IB, so the brokerage stamps the discovery time
+    /// (<see cref="DateTime.UtcNow"/>, rounded down to the minute) instead of <see cref="DateTime.MinValue"/>,
+    /// keeping time-based cancel/age logic working after a restart. The private <c>ConvertOrder</c>
+    /// overload is invoked via reflection (the assembly exposes its internals to this test project) so the
+    /// test runs in CI without a live IB Gateway / TWS.
     /// </summary>
     [TestFixture]
     public class InteractiveBrokersOpenOrderTimeConversionTests
@@ -56,13 +53,14 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 },
                 modifiers: null);
 
-        [Test]
-        public void OpenOrderTimeIsDiscoveryTimeNotMinValue()
+        [TestCase(OrderType.Limit)]
+        [TestCase(OrderType.MarketOnOpen)]
+        public void OpenOrderTimeIsDiscoveryTimeNotMinValue(OrderType orderType)
         {
             var brokerage = CreateOfflineBrokerage();
 
             var before = DateTime.UtcNow;
-            var order = InvokeConvert(brokerage, OrderType.Limit, limitPrice: 100.00);
+            var order = InvokeConvert(brokerage, orderType, limitPrice: 100.00);
             var after = DateTime.UtcNow;
 
             Assert.AreNotEqual(default(DateTime), order.Time, "open order time must not be DateTime.MinValue");
@@ -71,55 +69,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(0, order.Time.Millisecond, "time must be rounded down to the minute");
             Assert.GreaterOrEqual(order.Time, before.AddMinutes(-1));
             Assert.LessOrEqual(order.Time, after);
-        }
-
-        [Test]
-        public void MarketOnOpenOrderTimeIsSaneDiscoveryTime()
-        {
-            var brokerage = CreateOfflineBrokerage();
-
-            var before = DateTime.UtcNow;
-            var order = InvokeConvert(brokerage, OrderType.MarketOnOpen);
-            var after = DateTime.UtcNow;
-
-            // best-effort discovery time: the current UTC date, or the last close in the post-close window
-            Assert.AreNotEqual(default(DateTime), order.Time, "MarketOnOpen time must not be DateTime.MinValue");
-            Assert.GreaterOrEqual(order.Time, before.Date, "must not predate the current UTC day");
-            Assert.LessOrEqual(order.Time, after, "must not be in the future");
-            Assert.AreEqual(0, order.Time.Second, "time must be minute-aligned");
-            Assert.AreEqual(0, order.Time.Millisecond, "time must be minute-aligned");
-        }
-
-        // Deterministic coverage of GetMarketOnOpenOrderTime using US equity hours.
-        // A January date keeps us in EST (UTC-5), so the 16:00 ET close maps to 21:00 UTC.
-        private static readonly SecurityExchangeHours UsEquityHours =
-            MarketHoursDatabase.FromDataFolder().GetExchangeHours(Market.USA, Symbols.SPY, SecurityType.Equity);
-
-        [Test]
-        public void MarketOnOpenTime_BeforeOpen_UsesUtcDate()
-        {
-            // 2026-01-15 (Thu) 14:00 UTC = 09:00 EST, before the 09:30 open
-            var time = InteractiveBrokersBrokerage.GetMarketOnOpenOrderTime(
-                new DateTime(2026, 1, 15, 14, 0, 0, DateTimeKind.Utc), UsEquityHours);
-            Assert.AreEqual(new DateTime(2026, 1, 15), time);
-        }
-
-        [Test]
-        public void MarketOnOpenTime_AfterCloseSameUtcDay_UsesClose()
-        {
-            // 2026-01-15 (Thu) 22:00 UTC = 17:00 EST, after the 16:00 close and still the same UTC day
-            var time = InteractiveBrokersBrokerage.GetMarketOnOpenOrderTime(
-                new DateTime(2026, 1, 15, 22, 0, 0, DateTimeKind.Utc), UsEquityHours);
-            Assert.AreEqual(new DateTime(2026, 1, 15, 21, 0, 0), time); // 16:00 EST -> 21:00 UTC
-        }
-
-        [Test]
-        public void MarketOnOpenTime_EveningAfterUtcMidnight_UsesUtcDate()
-        {
-            // 2026-01-16 02:00 UTC = 21:00 EST on the 15th; the UTC date has rolled to the 16th
-            var time = InteractiveBrokersBrokerage.GetMarketOnOpenOrderTime(
-                new DateTime(2026, 1, 16, 2, 0, 0, DateTimeKind.Utc), UsEquityHours);
-            Assert.AreEqual(new DateTime(2026, 1, 16), time);
         }
 
         private static LeanOrder InvokeConvert(InteractiveBrokersBrokerage brokerage, OrderType orderType, double limitPrice = 0.0)

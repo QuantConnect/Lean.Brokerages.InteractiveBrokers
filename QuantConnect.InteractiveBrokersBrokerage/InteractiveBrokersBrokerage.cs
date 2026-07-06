@@ -3202,11 +3202,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     break;
 
                 case OrderType.MarketOnOpen:
-                    // a MarketOnOpen order must be stamped before the open it targets, which isn't
-                    // simply the UTC date once we are past the close (see GetMarketOnOpenOrderTime).
                     order = new MarketOnOpenOrder(mappedSymbol,
                         quantity,
-                        GetMarketOnOpenOrderTime(orderTime, GetSecurityExchangeHours(mappedSymbol)));
+                        orderTime);
                     break;
 
                 case OrderType.MarketOnClose:
@@ -3308,35 +3306,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             order.Status = ConvertOrderStatus(orderState.Status);
 
             return order;
-        }
-
-        /// <summary>
-        /// Determines the timestamp used for a reconstructed MarketOnOpen order. IB does not report the
-        /// original submission time, and a MarketOnOpen order must be stamped before the market open it
-        /// targets. The UTC date (midnight) works most of the time, but 00:00 UTC falls in the evening of
-        /// the exchange time zone: between the market close and the following 00:00 UTC, that midnight is
-        /// on the same day as an open that has already passed. In that window we use the close preceding
-        /// the target open instead, so the order still maps to the next open.
-        /// </summary>
-        /// <param name="utcNow">The current time (UTC).</param>
-        /// <param name="exchangeHours">The exchange hours of the order's security.</param>
-        internal static DateTime GetMarketOnOpenOrderTime(DateTime utcNow, SecurityExchangeHours exchangeHours)
-        {
-            var timeZone = exchangeHours.TimeZone;
-            var utcDate = utcNow.Date;
-            var nowExchange = utcNow.ConvertFromUtc(timeZone);
-
-            // the open this MarketOnOpen order targets: the next open strictly after now
-            var targetOpen = exchangeHours.GetNextMarketOpen(nowExchange, extendedMarketHours: false);
-            // the open that stamping the UTC date (midnight) would resolve to
-            var openFromUtcDate = exchangeHours.GetNextMarketOpen(utcDate.ConvertFromUtc(timeZone), extendedMarketHours: false);
-
-            // prefer the UTC date, but only while it still resolves to that same open. Between the close
-            // and the following 00:00 UTC it doesn't (00:00 UTC lands in the exchange evening, on the same
-            // day as an open that already passed), so fall back to the close of the current exchange day.
-            return openFromUtcDate == targetOpen
-                ? utcDate
-                : exchangeHours.GetNextMarketClose(nowExchange.Date, extendedMarketHours: false).ConvertToUtc(timeZone);
         }
 
         /// <summary>
