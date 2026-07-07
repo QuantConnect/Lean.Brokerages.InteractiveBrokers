@@ -203,7 +203,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             { Market.ICE, "NYBOT" },
             { Market.CFE, "CFE" },
             { Market.NYSELIFFE, "NYSELIFFE" },
-            { Market.EUREX, "EUREX" }
+            { Market.EUREX, "EUREX" },
+            { Market.KRX, "KSE" }
         };
 
         private static readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
@@ -4315,7 +4316,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // our subscriptions are removed without any sort of notice.
             return
                 (securityType == SecurityType.Equity && market == Market.USA) ||
-                (securityType == SecurityType.Forex && market == Market.Oanda) ||
+                (securityType == SecurityType.Forex && (market == Market.Oanda || market == Market.InteractiveBrokers)) ||
                 (securityType == SecurityType.Option && market == Market.USA) ||
                 (securityType == SecurityType.IndexOption && market == Market.USA) ||
                 (securityType == SecurityType.Index && (market == Market.USA || market == Market.EUREX || market == Market.OSE || market == Market.HKFE)) ||

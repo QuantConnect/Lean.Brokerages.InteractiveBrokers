@@ -81,6 +81,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 var audFuture = Symbol.CreateFuture("6A", Market.CME, new DateTime(2055, 12, 15));
                 yield return new(audFuture, "AUD");
                 yield return new(Symbol.CreateOption(audFuture, Market.CME, OptionStyle.European, OptionRight.Call, 0.645m, new DateTime(2025, 12, 05)), "AUD");
+
+                // KOSPI 200 future: LEAN root "KM" maps to IB's "K200"
+                var kospi200Future = Symbol.CreateFuture(Futures.Indices.Kospi200, Market.KRX, new DateTime(2025, 12, 11));
+                yield return new(kospi200Future, "K200");
             }
         }
 
@@ -91,6 +95,24 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var brokerageSymbol = mapper.GetBrokerageSymbol(leanSymbol);
             Assert.AreEqual(expectedBrokerageSymbol, brokerageSymbol);
+        }
+
+        [Test]
+        public void MapsKospi200Future()
+        {
+            var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
+
+            var expiry = new DateTime(2025, 12, 11);
+            var leanSymbol = mapper.GetLeanSymbol("K200", SecurityType.Future, Market.KRX, expiry);
+            Assert.AreEqual(Futures.Indices.Kospi200, leanSymbol.ID.Symbol);
+            Assert.AreEqual(SecurityType.Future, leanSymbol.ID.SecurityType);
+            Assert.AreEqual(Market.KRX, leanSymbol.ID.Market);
+            Assert.AreEqual(expiry, leanSymbol.ID.Date);
+
+            Assert.AreEqual("K200", mapper.GetBrokerageSymbol(leanSymbol));
+
+            // KOSPI 200 futures are routed to IB's "KSE" exchange
+            Assert.AreEqual("KSE", InteractiveBrokersBrokerage.GetSymbolExchange(SecurityType.Future, Market.KRX));
         }
 
         [TestCase("AAPL", "AAPL")]

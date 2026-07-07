@@ -21,7 +21,8 @@
     "ESTX50": "FESX",
     "DAX": "FDAX",
     "DDAX": "FDIV",
-    "TDX": "FTDX"
+    "TDX": "FTDX",
+    "K200": "KM"
   },
   "Index": {
     "ESTX50": "SX5E",
