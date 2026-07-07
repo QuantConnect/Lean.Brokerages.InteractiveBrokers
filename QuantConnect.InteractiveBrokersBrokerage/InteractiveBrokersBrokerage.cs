@@ -83,6 +83,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <remarks>I've seen combo limit order take up to 5 seconds to be trigger a submission event</remarks>
         private static readonly TimeSpan _noSubmissionOrdersResponseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-no-submission-orders-response-timeout", 10));
         private static bool _submissionOrdersWarningSent;
+        private static bool _openOrderTimeWarningSent;
         private bool _sentFAOrderPropertiesWarning;
 
         private readonly HashSet<OrderType> _noSubmissionOrderTypes = new(new[] {
@@ -642,6 +643,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Log.Trace($"InteractiveBrokersBrokerage.GetOpenOrders(): Updating nextValidId from {_nextValidId} to {lastOrderId + 1}");
                     _nextValidId = lastOrderId + 1;
                 }
+            }
+
+            // IB doesn't report the original submission time for open orders, so their timestamp is set
+            // to the time they were fetched. Warn the user once so they don't rely on it being accurate.
+            if (orders.Count > 0 && !_openOrderTimeWarningSent)
+            {
+                _openOrderTimeWarningSent = true;
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning,
+                    "OpenOrderTimeWarning",
+                    "Interactive Brokers does not provide the original submission time for open orders; their time is set to when they were fetched."));
             }
 
             // convert results to Lean Orders outside the eventhandler to avoid nesting requests, as conversion may request
@@ -3173,10 +3184,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private Order ConvertOrder(string timeInForce, string goodTillDate, int ibOrderId, double auxPrice, OrderType orderType, decimal quantity,
             double limitPrice, double trailingStopPrice, double trailingPercentage, Contract contract, GroupOrderManager groupOrderManager, OrderState orderState)
         {
-            // this function is called by GetOpenOrders which is mainly used by the setup handler to
-            // initialize algorithm state.  So the only time we'll be executing this code is when the account
-            // has orders sitting and waiting from before algo initialization...
-            // because of this we can't get the time accurately
+            // GetOpenOrders rebuilds orders that predate the algorithm; IB doesn't report their original
+            // submission time, so we stamp the discovery time instead of DateTime.MinValue to keep
+            // time-based cancel/age logic working after a restart. Rounded down to the minute since the
+            // exact time isn't meaningful.
+            var orderTime = DateTime.UtcNow.RoundDown(TimeSpan.FromMinutes(1));
 
             Order order;
             var mappedSymbol = MapSymbol(contract);
@@ -3185,20 +3197,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case OrderType.Market:
                     order = new MarketOrder(mappedSymbol,
                         quantity,
-                        new DateTime() // not sure how to get this data
+                        orderTime
                         );
                     break;
 
                 case OrderType.MarketOnOpen:
                     order = new MarketOnOpenOrder(mappedSymbol,
                         quantity,
-                        new DateTime());
+                        orderTime);
                     break;
 
                 case OrderType.MarketOnClose:
                     order = new MarketOnCloseOrder(mappedSymbol,
                         quantity,
-                        new DateTime()
+                        orderTime
                         );
                     break;
 
@@ -3206,7 +3218,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     order = new LimitOrder(mappedSymbol,
                         quantity,
                         NormalizePriceToLean(limitPrice, mappedSymbol),
-                        new DateTime()
+                        orderTime
                         );
                     break;
 
@@ -3214,7 +3226,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     order = new StopMarketOrder(mappedSymbol,
                         quantity,
                         NormalizePriceToLean(auxPrice, mappedSymbol),
-                        new DateTime()
+                        orderTime
                         );
                     break;
 
@@ -3223,7 +3235,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         quantity,
                         NormalizePriceToLean(auxPrice, mappedSymbol),
                         NormalizePriceToLean(limitPrice, mappedSymbol),
-                        new DateTime()
+                        orderTime
                         );
                     break;
 
@@ -3246,7 +3258,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         NormalizePriceToLean(trailingStopPrice, mappedSymbol),
                         trailingAmount,
                         trailingAsPecentage,
-                        new DateTime()
+                        orderTime
                     );
                     break;
 
@@ -3255,14 +3267,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         quantity,
                         NormalizePriceToLean(auxPrice, mappedSymbol),
                         NormalizePriceToLean(limitPrice, mappedSymbol),
-                        new DateTime()
+                        orderTime
                     );
                     break;
 
                 case OrderType.ComboMarket:
                     order = new ComboMarketOrder(mappedSymbol,
                         quantity,
-                        new DateTime(),
+                        orderTime,
                         groupOrderManager
                     );
                     break;
@@ -3271,7 +3283,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     order = new ComboLimitOrder(mappedSymbol,
                         quantity,
                         NormalizePriceToLean(limitPrice, mappedSymbol),
-                        new DateTime(),
+                        orderTime,
                         groupOrderManager
                     );
                     break;
@@ -3280,7 +3292,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     order = new ComboLegLimitOrder(mappedSymbol,
                         quantity,
                         NormalizePriceToLean(limitPrice, mappedSymbol),
-                        new DateTime(),
+                        orderTime,
                         groupOrderManager
                     );
                     break;
