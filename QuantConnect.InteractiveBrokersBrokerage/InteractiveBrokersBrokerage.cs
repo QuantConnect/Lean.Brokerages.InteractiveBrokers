@@ -154,6 +154,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // tracks pending brokerage order responses. In some cases we've seen orders been placed and they never get through to IB
         private readonly ConcurrentDictionary<int, ManualResetEventSlim> _pendingOrderResponse = new();
 
+        // serializes the open orders enumerations triggered by order requests missing a response,
+        // so concurrent missing responses share a single enumeration. See TryResolveMissingOrderResponse
+        private readonly Lock _missingOrderResponseResyncLocker = new();
+        private DateTime _lastMissingOrderResponseResyncTimeUtc;
+
         // tracks the pending orders in the group before emitting the fill events
         private readonly Dictionary<int, List<PendingFillEvent>> _pendingGroupOrdersForFilling = new();
 
@@ -528,7 +533,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (!eventSlim.Wait(_responseTimeout))
                     {
-                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {orderId} lean id {order.Id}"));
+                        if (_pendingOrderResponse.TryRemove(orderId, out _))
+                        {
+                            eventSlim.DisposeSafely();
+
+                            // IB does not acknowledge cancellation requests of orders queued outside regular trading hours
+                            // until the market opens, so we don't error out, the algorithm can carry on
+                            // and the confirmation may still arrive later
+                            OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "NoBrokerageResponse",
+                                $"Timeout waiting for brokerage response for cancellation of brokerage order id {orderId} lean id {order.Id}"));
+                        }
                     }
                     else
                     {
@@ -1647,9 +1661,24 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             OnOrderEvents(orderEvents);
                         }
                     }
-                    else
+                    else if (TryResolveMissingOrderResponse(ibOrderId, orderSubmittedEvent))
                     {
-                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}"));
+                        orderSubmittedEvent.DisposeSafely();
+                    }
+                    else if (_pendingOrderResponse.TryRemove(ibOrderId, out _))
+                    {
+                        orderSubmittedEvent.DisposeSafely();
+
+                        // The order request never reached IB: we got no response for it and it's not in the open orders.
+                        // This has been seen in paper trading, where the server silently drops order requests.
+                        // We invalidate the order instead of erroring out so the algorithm can carry on and retry if it chooses to.
+                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "NoBrokerageResponse",
+                            $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}. The order was not found at the brokerage, invalidating it."));
+                        OnOrderEvents(orders.Where(order => order != null).Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
+                        {
+                            Status = OrderStatus.Invalid,
+                            Message = "Timed out waiting for the Interactive Brokers response and the order was not found in the open orders. The order can be resubmitted"
+                        }).ToList());
                     }
                 }
                 else
@@ -1660,7 +1689,63 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
-        /// Checks whether a <see cref="OrderType.MarketOnOpen"/> order falls into IB's 
+        /// Attempts to resolve a missing response for an order request by requesting the open orders,
+        /// which will trigger order status events for the orders that reached IB, signaling the pending response event.
+        /// The IB paper trading server has been seen silently dropping order requests, never sending a response back.
+        /// </summary>
+        /// <param name="ibOrderId">The IB order id of the request missing a response</param>
+        /// <param name="pendingResponseEvent">The event that is signaled when a response for the order is received</param>
+        /// <returns>True if a response for the order was received</returns>
+        private bool TryResolveMissingOrderResponse(int ibOrderId, ManualResetEventSlim pendingResponseEvent)
+        {
+            var startTimeUtc = DateTime.UtcNow;
+
+            // there is no request to fetch a single order, so we enumerate the client's open orders,
+            // which answers for every pending order at once: lock so concurrent missing responses share one enumeration
+            lock (_missingOrderResponseResyncLocker)
+            {
+                // an enumeration run by another thread might have already resolved it
+                if (pendingResponseEvent.IsSet)
+                {
+                    return true;
+                }
+                // an enumeration completed after this thread started waiting for the lock, so it's conclusive for this order too
+                if (_lastMissingOrderResponseResyncTimeUtc >= startTimeUtc)
+                {
+                    return false;
+                }
+
+                Log.Trace($"InteractiveBrokersBrokerage.TryResolveMissingOrderResponse(): no response received for IB order id {ibOrderId}, requesting open orders");
+
+                using var openOrderEndEvent = new ManualResetEventSlim(false);
+                void ClientOnOpenOrderEnd(object sender, EventArgs args) => openOrderEndEvent.Set();
+                _client.OpenOrderEnd += ClientOnOpenOrderEnd;
+                try
+                {
+                    CheckRateLimiting();
+
+                    _client.ClientSocket.reqOpenOrders();
+
+                    // the orders that reached IB will trigger order status events through our default handlers,
+                    // signaling the pending response event, so we wait for either it or the end of the enumeration
+                    WaitHandle.WaitAny([pendingResponseEvent.WaitHandle, openOrderEndEvent.WaitHandle], _responseTimeout);
+
+                    if (openOrderEndEvent.IsSet)
+                    {
+                        _lastMissingOrderResponseResyncTimeUtc = DateTime.UtcNow;
+                    }
+                }
+                finally
+                {
+                    _client.OpenOrderEnd -= ClientOnOpenOrderEnd;
+                }
+            }
+
+            return pendingResponseEvent.IsSet;
+        }
+
+        /// <summary>
+        /// Checks whether a <see cref="OrderType.MarketOnOpen"/> order falls into IB's
         /// unsafe submission window (exactly at market close, e.g., 16:00:00 ET),
         /// which would otherwise be rejected with "Exchange is closed".
         /// </summary>
@@ -5818,7 +5903,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // these are warning messages from IB
         private static readonly HashSet<int> WarningCodes = new HashSet<int>
         {
-            102, 104, 105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 201, 303,312,313,314,315,319,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,385,386,387,388,389,390,391,392,393,394,395,396,397,398,399,400,402,403,404,405,406,407,408,409,410,411,412,413,417,418,419,420,421,422,423,424,425,426,427,428,429,430,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,450,10002,10003,10006,10007,10008,10009,10010,10011,10012,10014,10018,10019,10020,10052,10147,10148,10149,2100,2101,2102,2109,2148
+            102, 104, 105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 201, 303,312,313,314,315,319,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,385,386,387,388,389,390,391,392,393,394,395,396,397,398,399,400,402,403,404,405,406,407,408,409,410,411,412,413,417,418,419,420,421,422,423,424,425,426,427,428,429,430,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,450,460,10002,10003,10006,10007,10008,10009,10010,10011,10012,10014,10018,10019,10020,10052,10147,10148,10149,2100,2101,2102,2109,2148
         };
 
         // these require us to issue invalidated order events
@@ -5826,6 +5911,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             104, // Can't modify a filled order
             10148, // OrderId <OrderId> that needs to be cancelled can not be cancelled, state:
+            460, // No trading permissions
             105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 147, 148, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 163, 167, 168, 201,312,313,314,315,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,387,388,389,390,391,392,393,394,395,396,397,398,400,401,402,403,405,406,407,408,409,410,411,412,413,417,418,419,421,423,424,427,428,429,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,463,10002,10006,10007,10008,10009,10010,10011,10012,10014,10020,10058,2102
         };
 
