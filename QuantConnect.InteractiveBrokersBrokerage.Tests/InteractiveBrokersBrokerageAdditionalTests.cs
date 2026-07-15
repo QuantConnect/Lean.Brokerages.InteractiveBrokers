@@ -15,6 +15,7 @@
 
 using System;
 using System.Text;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -125,6 +126,57 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             StringAssert.Contains(ErrorCode.LoginFailed.ToString(), exception.Message);
 
             Config.Set("ib-user-name", originalUserName);
+        }
+
+        // The IB paper trading server has been seen silently dropping order requests, never sending a response
+        // back, previously stopping the algorithm with a 'Timeout waiting for brokerage response' runtime error.
+        // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/93
+        [Test]
+        public void ResolvesMissingOrderResponsesThroughOpenOrdersResync()
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
+            brokerage.Connect();
+
+            // a resting, never-filling order that the re-sync must find at the brokerage
+            var order = new LimitOrder(Symbols.USDJPY, -1, 100000m, DateTime.UtcNow);
+            orderProvider.Add(order);
+            using var submittedEvent = new ManualResetEvent(false);
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                if (orderEvents.Any(orderEvent => orderEvent.OrderId == order.Id && orderEvent.Status == OrderStatus.Submitted))
+                {
+                    submittedEvent.Set();
+                }
+            };
+            Assert.IsTrue(brokerage.PlaceOrder(order));
+            Assert.IsTrue(submittedEvent.WaitOne(TimeSpan.FromSeconds(30)));
+
+            var tryResolveMissingOrderResponse = typeof(InteractiveBrokersBrokerage)
+                .GetMethod("TryResolveMissingOrderResponse", BindingFlags.NonPublic | BindingFlags.Instance);
+            var pendingOrderResponses = (IDictionary)typeof(InteractiveBrokersBrokerage)
+                .GetField("_pendingOrderResponse", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(brokerage);
+
+            // an order that reached IB: simulate a missed response for the resting order,
+            // the open orders re-sync resolves it, signaling the pending response event
+            var ibOrderId = Parse.Int(order.BrokerId[0]);
+            using var pendingKnownOrderResponse = new ManualResetEventSlim(false);
+            pendingOrderResponses[ibOrderId] = pendingKnownOrderResponse;
+            Assert.IsTrue((bool)tryResolveMissingOrderResponse.Invoke(brokerage, [ibOrderId, pendingKnownOrderResponse]));
+            Assert.IsTrue(pendingKnownOrderResponse.IsSet);
+
+            // an order that never reached IB: the re-sync completes without resolving it,
+            // so the request gives up and the order can be invalidated
+            const int missingIbOrderId = int.MaxValue;
+            using var pendingMissingOrderResponse = new ManualResetEventSlim(false);
+            pendingOrderResponses[missingIbOrderId] = pendingMissingOrderResponse;
+            Assert.IsFalse((bool)tryResolveMissingOrderResponse.Invoke(brokerage, [missingIbOrderId, pendingMissingOrderResponse]));
+            Assert.IsFalse(pendingMissingOrderResponse.IsSet);
+            pendingOrderResponses.Remove(missingIbOrderId);
+
+            Assert.IsTrue(brokerage.CancelOrder(order));
         }
 
         [TestCase(OrderType.ComboMarket, 0, OrderDirection.Buy, OrderDirection.Buy, OrderDirection.Buy, true, SecurityType.Option)]
