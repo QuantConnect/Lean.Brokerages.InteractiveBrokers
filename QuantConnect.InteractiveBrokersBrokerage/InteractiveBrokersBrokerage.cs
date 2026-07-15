@@ -203,7 +203,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             { Market.ICE, "NYBOT" },
             { Market.CFE, "CFE" },
             { Market.NYSELIFFE, "NYSELIFFE" },
-            { Market.EUREX, "EUREX" }
+            { Market.EUREX, "EUREX" },
+            { Market.KRX, "KSE" }
         };
 
         private static readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
@@ -3373,6 +3374,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     contract.Exchange = "OSE.JPN";
                 }
+                else if(string.Equals(symbol.ID.Market, Market.KRX, StringComparison.InvariantCultureIgnoreCase))
+                {
+                    contract.Exchange = "KSE";
+                }
                 else
                 {
                     contract.Exchange = IndexSymbol.GetIndexExchange(symbol);
@@ -4315,10 +4320,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             // our subscriptions are removed without any sort of notice.
             return
                 (securityType == SecurityType.Equity && market == Market.USA) ||
-                (securityType == SecurityType.Forex && market == Market.Oanda) ||
+                (securityType == SecurityType.Forex && (market == Market.Oanda || market == Market.InteractiveBrokers)) ||
                 (securityType == SecurityType.Option && market == Market.USA) ||
                 (securityType == SecurityType.IndexOption && market == Market.USA) ||
-                (securityType == SecurityType.Index && (market == Market.USA || market == Market.EUREX || market == Market.OSE || market == Market.HKFE)) ||
+                (securityType == SecurityType.Index && (market == Market.USA || market == Market.EUREX || market == Market.OSE || market == Market.HKFE || market == Market.KRX)) ||
                 (securityType == SecurityType.FutureOption) ||
                 (securityType == SecurityType.Future) ||
                 (securityType == SecurityType.Cfd && market == Market.InteractiveBrokers);

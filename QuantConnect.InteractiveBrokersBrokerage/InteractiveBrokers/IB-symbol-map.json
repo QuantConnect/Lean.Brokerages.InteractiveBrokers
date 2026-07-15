@@ -21,7 +21,8 @@
     "ESTX50": "FESX",
     "DAX": "FDAX",
     "DDAX": "FDIV",
-    "TDX": "FTDX"
+    "TDX": "FTDX",
+    "K200": "KM"
   },
   "Index": {
     "ESTX50": "SX5E",
@@ -37,6 +38,7 @@
     "DTX": "DJTTR",
     "SML": "SP600",
     "CVK": "SPSV",
-    "WFVK.IV": "DWCF"
+    "WFVK.IV": "DWCF",
+    "K200": "KM"
   }
 }
