@@ -74,12 +74,15 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(expectedMessageCount, messages.Count(m => m.Code == "300"));
         }
 
-        // error 460 ("No trading permissions") references an order request, so it must invalidate the
-        // order and release the thread waiting for the order response, otherwise the wait times out
-        // five minutes later and stops the algorithm with 'Timeout waiting for brokerage response'.
-        // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/93
-        [Test]
-        public void HandleErrorCode460InvalidatesOrderAndReleasesPendingResponse()
+        // errors rejecting an order request must invalidate the order and release the thread waiting
+        // for the order response, otherwise the wait times out five minutes later and stops the
+        // algorithm with 'Timeout waiting for brokerage response'.
+        // - 460 ("No trading permissions"), see https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/93
+        // - 200 ("No security definition", e.g. a delisted symbol), see https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/25
+        [TestCase(460, "No trading permissions.", BrokerageMessageType.Warning)]
+        [TestCase(200, "No security definition has been found for the request", BrokerageMessageType.Error)]
+        public void HandleErrorOrderRejectionInvalidatesOrderAndReleasesPendingResponse(
+            int errorCode, string errorMessage, BrokerageMessageType expectedMessageType)
         {
             using var brokerage = new InteractiveBrokersBrokerage();
             const int ibOrderId = 2;
@@ -104,13 +107,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             brokerage.HandleError(this, new IB.ErrorEventArgs(
                 id: ibOrderId,
                 time: 0,
-                code: 460,
-                message: "No trading permissions."));
+                code: errorCode,
+                message: errorMessage));
 
             Assert.IsTrue(pendingResponseEvent.IsSet);
             Assert.IsFalse(pendingOrderResponses.Contains(ibOrderId));
             Assert.AreEqual(1, orderEvents.Count(e => e.OrderId == order.Id && e.Status == OrderStatus.Invalid));
-            Assert.AreEqual(1, messages.Count(m => m.Code == "460" && m.Type == BrokerageMessageType.Warning));
+            Assert.AreEqual(1, messages.Count(m => m.Code == errorCode.ToStringInvariant() && m.Type == expectedMessageType));
         }
 
         private static object GetPrivateFieldValue(object instance, string name)
