@@ -1670,7 +1670,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         orderSubmittedEvent.DisposeSafely();
 
                         // The order request never reached IB: we got no response for it and it's not in the open orders.
-                        // This has been seen in paper trading, where the server silently drops order requests.
+                        // This has been seen live, e.g. with orders held behind an IB Gateway dialog awaiting confirmation.
                         // We invalidate the order instead of erroring out so the algorithm can carry on and retry if it chooses to.
                         OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "NoBrokerageResponse",
                             $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}. The order was not found at the brokerage, invalidating it."));
@@ -1691,7 +1691,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Attempts to resolve a missing response for an order request by requesting the open orders,
         /// which will trigger order status events for the orders that reached IB, signaling the pending response event.
-        /// The IB paper trading server has been seen silently dropping order requests, never sending a response back.
+        /// Order requests have been seen going unanswered in live trading, never receiving a response back,
+        /// e.g. when IB Gateway holds an order behind a dialog awaiting confirmation.
         /// </summary>
         /// <param name="ibOrderId">The IB order id of the request missing a response</param>
         /// <param name="pendingResponseEvent">The event that is signaled when a response for the order is received</param>

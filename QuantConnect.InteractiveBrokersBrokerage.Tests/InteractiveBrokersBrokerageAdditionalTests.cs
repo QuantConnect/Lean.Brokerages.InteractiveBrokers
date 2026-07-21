@@ -162,8 +162,9 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             StringAssert.StartsWith("200 - No security definition", invalidOrderEvent.Message);
         }
 
-        // The IB paper trading server has been seen silently dropping order requests, never sending a response
-        // back, previously stopping the algorithm with a 'Timeout waiting for brokerage response' runtime error.
+        // Order requests have been seen going unanswered in live trading, never receiving a response back
+        // (e.g. held behind an IB Gateway dialog awaiting confirmation), previously stopping the algorithm
+        // with a 'Timeout waiting for brokerage response' runtime error.
         // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/93
         [Test]
         public void ResolvesMissingOrderResponsesThroughOpenOrdersResync()
