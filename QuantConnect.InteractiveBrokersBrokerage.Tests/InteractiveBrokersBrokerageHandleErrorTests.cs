@@ -18,9 +18,11 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using NUnit.Framework;
 using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.InteractiveBrokers;
+using QuantConnect.Orders;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
@@ -70,6 +72,48 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             brokerage.Message -= OnMessage;
 
             Assert.AreEqual(expectedMessageCount, messages.Count(m => m.Code == "300"));
+        }
+
+        // errors rejecting an order request must invalidate the order and release the thread waiting
+        // for the order response, otherwise the wait times out five minutes later and stops the
+        // algorithm with 'Timeout waiting for brokerage response'.
+        // - 460 ("No trading permissions"), see https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/93
+        // - 200 ("No security definition", e.g. a delisted symbol), see https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/25
+        [TestCase(460, "No trading permissions.", BrokerageMessageType.Warning)]
+        [TestCase(200, "No security definition has been found for the request", BrokerageMessageType.Error)]
+        public void HandleErrorOrderRejectionInvalidatesOrderAndReleasesPendingResponse(
+            int errorCode, string errorMessage, BrokerageMessageType expectedMessageType)
+        {
+            using var brokerage = new InteractiveBrokersBrokerage();
+            const int ibOrderId = 2;
+
+            var orderProvider = new OrderProvider();
+            var order = new MarketOrder(Symbols.SPY, 23580, DateTime.UtcNow);
+            orderProvider.Add(order);
+            order.BrokerId.Add("2");
+            typeof(InteractiveBrokersBrokerage)
+                .GetField("_orderProvider", BindingFlags.NonPublic | BindingFlags.Instance)
+                .SetValue(brokerage, orderProvider);
+
+            using var pendingResponseEvent = new ManualResetEventSlim(false);
+            var pendingOrderResponses = (IDictionary)GetPrivateFieldValue(brokerage, "_pendingOrderResponse");
+            pendingOrderResponses[ibOrderId] = pendingResponseEvent;
+
+            List<BrokerageMessageEvent> messages = [];
+            List<OrderEvent> orderEvents = [];
+            brokerage.Message += (_, message) => messages.Add(message);
+            brokerage.OrdersStatusChanged += (_, events) => orderEvents.AddRange(events);
+
+            brokerage.HandleError(this, new IB.ErrorEventArgs(
+                id: ibOrderId,
+                time: 0,
+                code: errorCode,
+                message: errorMessage));
+
+            Assert.IsTrue(pendingResponseEvent.IsSet);
+            Assert.IsFalse(pendingOrderResponses.Contains(ibOrderId));
+            Assert.AreEqual(1, orderEvents.Count(e => e.OrderId == order.Id && e.Status == OrderStatus.Invalid));
+            Assert.AreEqual(1, messages.Count(m => m.Code == errorCode.ToStringInvariant() && m.Type == expectedMessageType));
         }
 
         private static object GetPrivateFieldValue(object instance, string name)

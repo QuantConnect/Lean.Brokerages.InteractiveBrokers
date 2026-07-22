@@ -15,6 +15,7 @@
 
 using System;
 using System.Text;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -125,6 +126,92 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             StringAssert.Contains(ErrorCode.LoginFailed.ToString(), exception.Message);
 
             Config.Set("ib-user-name", originalUserName);
+        }
+
+        // An order for a symbol IB cannot resolve is rejected with error 200 "No security definition",
+        // which must invalidate the order right away instead of stalling until the response timeout.
+        // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/25
+        [Test]
+        public void InvalidatesOrderRejectedWithNoSecurityDefinition()
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
+            brokerage.Connect();
+
+            // a well-formed ticker with no contract at IB
+            var symbol = Symbol.Create("ZZZZZZ", SecurityType.Equity, Market.USA);
+            var order = new MarketOrder(symbol, 1, DateTime.UtcNow);
+            orderProvider.Add(order);
+
+            using var invalidatedEvent = new ManualResetEvent(false);
+            OrderEvent invalidOrderEvent = null;
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                invalidOrderEvent ??= orderEvents.FirstOrDefault(orderEvent => orderEvent.OrderId == order.Id && orderEvent.Status == OrderStatus.Invalid);
+                if (invalidOrderEvent != null)
+                {
+                    invalidatedEvent.Set();
+                }
+            };
+
+            Assert.IsTrue(brokerage.PlaceOrder(order));
+
+            // IB answers within milliseconds, well before the response timeout
+            Assert.IsTrue(invalidatedEvent.WaitOne(TimeSpan.FromSeconds(30)));
+            StringAssert.StartsWith("200 - No security definition", invalidOrderEvent.Message);
+        }
+
+        // Order requests have been seen going unanswered in live trading, never receiving a response back
+        // (e.g. held behind an IB Gateway dialog awaiting confirmation), previously stopping the algorithm
+        // with a 'Timeout waiting for brokerage response' runtime error.
+        // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/93
+        [Test]
+        public void ResolvesMissingOrderResponsesThroughOpenOrdersResync()
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
+            brokerage.Connect();
+
+            // a resting, never-filling order that the re-sync must find at the brokerage
+            var order = new LimitOrder(Symbols.USDJPY, -1, 100000m, DateTime.UtcNow);
+            orderProvider.Add(order);
+            using var submittedEvent = new ManualResetEvent(false);
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                if (orderEvents.Any(orderEvent => orderEvent.OrderId == order.Id && orderEvent.Status == OrderStatus.Submitted))
+                {
+                    submittedEvent.Set();
+                }
+            };
+            Assert.IsTrue(brokerage.PlaceOrder(order));
+            Assert.IsTrue(submittedEvent.WaitOne(TimeSpan.FromSeconds(30)));
+
+            var tryResolveMissingOrderResponse = typeof(InteractiveBrokersBrokerage)
+                .GetMethod("TryResolveMissingOrderResponse", BindingFlags.NonPublic | BindingFlags.Instance);
+            var pendingOrderResponses = (IDictionary)typeof(InteractiveBrokersBrokerage)
+                .GetField("_pendingOrderResponse", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(brokerage);
+
+            // an order that reached IB: simulate a missed response for the resting order,
+            // the open orders re-sync resolves it, signaling the pending response event
+            var ibOrderId = Parse.Int(order.BrokerId[0]);
+            using var pendingKnownOrderResponse = new ManualResetEventSlim(false);
+            pendingOrderResponses[ibOrderId] = pendingKnownOrderResponse;
+            Assert.IsTrue((bool)tryResolveMissingOrderResponse.Invoke(brokerage, [ibOrderId, pendingKnownOrderResponse]));
+            Assert.IsTrue(pendingKnownOrderResponse.IsSet);
+
+            // an order that never reached IB: the re-sync completes without resolving it,
+            // so the request gives up and the order can be invalidated
+            const int missingIbOrderId = int.MaxValue;
+            using var pendingMissingOrderResponse = new ManualResetEventSlim(false);
+            pendingOrderResponses[missingIbOrderId] = pendingMissingOrderResponse;
+            Assert.IsFalse((bool)tryResolveMissingOrderResponse.Invoke(brokerage, [missingIbOrderId, pendingMissingOrderResponse]));
+            Assert.IsFalse(pendingMissingOrderResponse.IsSet);
+            pendingOrderResponses.Remove(missingIbOrderId);
+
+            Assert.IsTrue(brokerage.CancelOrder(order));
         }
 
         [TestCase(OrderType.ComboMarket, 0, OrderDirection.Buy, OrderDirection.Buy, OrderDirection.Buy, true, SecurityType.Option)]
