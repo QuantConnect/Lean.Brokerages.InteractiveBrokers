@@ -73,6 +73,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private const string BrokerageName = "Interactive Brokers Brokerage";
 
         /// <summary>
+        /// Prefix of the IBAutomater log line emitted when an order confirmation/warning
+        /// window is auto-accepted. The text after the prefix is the message shown to the user.
+        /// </summary>
+        private const string OrderConfirmationWindowMarker = "Order confirmation window: ";
+
+        /// <summary>
         /// During market open there can be some extra delay and resource constraint so let's be generous
         /// </summary>
         private static readonly TimeSpan _responseTimeout = TimeSpan.FromSeconds(Config.GetInt("ib-response-timeout", 60 * 5));
@@ -5198,7 +5204,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var resultHandler = Composer.Instance.GetPart<IResultHandler>();
                 resultHandler?.DebugMessage("Logging into account. Check phone for two-factor authentication verification...");
             }
-            else if (e.Data.Contains("2FA maximum attempts reached", StringComparison.InvariantCultureIgnoreCase) || 
+            else if (e.Data.Contains("2FA maximum attempts reached", StringComparison.InvariantCultureIgnoreCase) ||
                      e.Data.Contains("IB Automater initialization timeout", StringComparison.InvariantCultureIgnoreCase))
             {
                 Task.Factory.StartNew(() =>
@@ -5208,6 +5214,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     OnMessage(BrokerageMessageEvent.Disconnected(message));
                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.ActionRequired, "2FAAuthRequired", message));
                 });
+            }
+            else if (e.Data.Contains(OrderConfirmationWindowMarker, StringComparison.InvariantCultureIgnoreCase))
+            {
+                // IBAutomater auto-accepted an order confirmation/warning window, let the user know
+                var index = e.Data.IndexOf(OrderConfirmationWindowMarker, StringComparison.InvariantCultureIgnoreCase);
+                var message = e.Data.Substring(index + OrderConfirmationWindowMarker.Length).Trim();
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "OrderConfirmationWindow", message));
             }
 
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterOutputDataReceived(): {e.Data}");
