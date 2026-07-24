@@ -122,6 +122,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private string _account;
         private string _host;
         private IAlgorithm _algorithm;
+        private volatile string _reportedManagedAccounts;
         private bool _loadExistingHoldings;
         private IOrderProvider _orderProvider;
         private IMapFileProvider _mapFileProvider;
@@ -302,6 +303,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// Returns true if the connected user is a financial advisor
         /// </summary>
         public bool IsFinancialAdvisor => IsMasterAccount(_account);
+
+        /// <summary>
+        /// Gets the raw comma-separated managed-account list reported by Interactive Brokers, or null until it is received
+        /// </summary>
+        public string ReportedManagedAccounts => _reportedManagedAccounts;
 
         /// <summary>
         /// Returns true if the account is a financial advisor master account
@@ -5566,7 +5572,22 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void HandleManagedAccounts(object sender, IB.ManagedAccountsEventArgs e)
         {
-            Log.Trace($"InteractiveBrokersBrokerage.HandleManagedAccounts(): Account list: {e.AccountList}");
+            try
+            {
+                var accountList = e?.AccountList;
+                Log.Trace($"InteractiveBrokersBrokerage.HandleManagedAccounts(): Account list: {accountList}");
+                _reportedManagedAccounts = accountList;
+
+                var runtimeStatistics = _algorithm?.RuntimeStatistics;
+                if (runtimeStatistics != null && accountList != null)
+                {
+                    runtimeStatistics["ib-reported-accounts"] = accountList;
+                }
+            }
+            catch (Exception err)
+            {
+                Log.Error("InteractiveBrokersBrokerage.HandleManagedAccounts(): " + err);
+            }
         }
 
         private void AddGuaranteedTag(IBApi.Order ibOrder, bool nonGuaranteed)
