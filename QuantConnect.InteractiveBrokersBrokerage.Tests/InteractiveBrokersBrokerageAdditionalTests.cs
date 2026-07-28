@@ -243,6 +243,79 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(manualResetEvent.WaitOne(TimeSpan.FromSeconds(60)));
         }
 
+        [TestCase(-100, 250, 100)] // far take-profit limit and far stop, group stays open until canceled
+        public void SendOneCancelsTheOtherOrder(decimal quantity, decimal limitPrice, decimal stopPrice)
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            // wait for the previous run to finish, avoid any race condition
+            Thread.Sleep(2000);
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
+            brokerage.Connect();
+
+            var openOrders = brokerage.GetOpenOrders();
+            foreach (var order in openOrders)
+            {
+                brokerage.CancelOrder(order);
+            }
+
+            var symbol = Symbols.AAPL;
+            var orderProperties = new InteractiveBrokersOrderProperties();
+            var group = new GroupOrderManager(1, legCount: 2, quantity) { ComboType = ComboType.OneCancelsTheOther };
+
+            var limitRequest = new SubmitOrderRequest(OrderType.Limit, symbol.SecurityType, symbol, quantity, 0, limitPrice, 0,
+                DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
+            algo.Transactions.SetOrderId(limitRequest);
+            var limitOrder = Order.CreateOrder(limitRequest);
+
+            var stopRequest = new SubmitOrderRequest(OrderType.StopMarket, symbol.SecurityType, symbol, quantity, stopPrice, 0, 0,
+                DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
+            algo.Transactions.SetOrderId(stopRequest);
+            var stopOrder = Order.CreateOrder(stopRequest);
+
+            var orders = new List<Order> { limitOrder, stopOrder };
+
+            using var manualResetEvent = new ManualResetEvent(false);
+            var events = new List<OrderEvent>();
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                events.AddRange(orderEvents);
+
+                foreach (var order in orders)
+                {
+                    foreach (var orderEvent in orderEvents)
+                    {
+                        if (orderEvent.OrderId == order.Id)
+                        {
+                            // update the order like the BTH would do
+                            order.Status = orderEvent.Status;
+                        }
+                    }
+                }
+
+                if (orders.All(o => o.Status == OrderStatus.Submitted))
+                {
+                    manualResetEvent.Set();
+                }
+            };
+
+            foreach (var order in orders)
+            {
+                orderProvider.Add(order);
+                Assert.IsTrue(brokerage.PlaceOrder(order));
+            }
+
+            Assert.IsTrue(manualResetEvent.WaitOne(TimeSpan.FromSeconds(60)));
+
+            // each leg is its own independent IB order, not one shared combo order id
+            Assert.AreEqual(2, orders.Select(o => o.BrokerId.Single()).Distinct().Count());
+
+            foreach (var order in orders)
+            {
+                brokerage.CancelOrder(order);
+            }
+        }
+
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0, OrderDirection.Buy, OrderDirection.Sell)]
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0, OrderDirection.Sell, OrderDirection.Sell)]
         [TestCase(OrderType.ComboMarket, 0, 0, 0, 0, OrderDirection.Sell, OrderDirection.Buy)]
