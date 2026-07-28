@@ -1582,19 +1582,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 // every leg of a one-cancels-the-other group is its own independent IB order (linked only by
                 // OcaGroup), not one shared combo order, so each leg needs its own id, contract and placeOrder
-                // call. Transmit is held back on every leg but the last, so IB activates the whole group as
-                // one unit: https://interactivebrokers.github.io/tws-api/oca.html
-                for (var i = 0; i < orders.Count; i++)
+                // call. The group is formed as the legs arrive, and OcaType 1 routes only one leg at a time,
+                // which is what prevents an overfill: https://interactivebrokers.github.io/tws-api/oca.html
+                foreach (var leg in orders)
                 {
-                    PlaceSingleOrder(orders[i], new List<Order> { orders[i] }, needsNewId, exchange, transmit: i == orders.Count - 1);
+                    PlaceSingleOrder(leg, new List<Order> { leg }, needsNewId, exchange);
                 }
                 return;
             }
 
-            PlaceSingleOrder(order, orders, needsNewId, exchange, transmit: true);
+            PlaceSingleOrder(order, orders, needsNewId, exchange);
         }
 
-        private void PlaceSingleOrder(Order order, List<Order> orders, bool needsNewId, string exchange, bool transmit)
+        private void PlaceSingleOrder(Order order, List<Order> orders, bool needsNewId, string exchange)
         {
             // MOO/MOC require directed option orders.
             // We resolve non-equity markets in the `CreateContract` method.
@@ -1678,7 +1678,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 else
                 {
                     _pendingOrderResponse[ibOrderId] = orderSubmittedEvent = new ManualResetEventSlim(false);
-                    var ibOrder = ConvertOrder(orders, contract, ibOrderId, transmit);
+                    var ibOrder = ConvertOrder(orders, contract, ibOrderId);
                     _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
                 }
             }
@@ -2968,7 +2968,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Converts a QC order to an IB order
         /// </summary>
-        private IBApi.Order ConvertOrder(List<Order> orders, Contract contract, int ibOrderId, bool transmit = true)
+        private IBApi.Order ConvertOrder(List<Order> orders, Contract contract, int ibOrderId)
         {
             OrderDirection direction;
             decimal quantity;
@@ -3000,7 +3000,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 OrderType = ConvertOrderType(order.Type),
                 AllOrNone = false,
                 Tif = ConvertTimeInForce(order),
-                Transmit = transmit,
+                Transmit = true,
                 Rule80A = _agentDescription,
                 OutsideRth = outsideRth
             };

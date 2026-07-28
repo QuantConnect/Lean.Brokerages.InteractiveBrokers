@@ -63,7 +63,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [OneTimeSetUp]
         public void Setup()
         {
-            Log.LogHandler = new NUnitLogHandler();
             PythonInitializer.Initialize();
             _ib = new InteractiveBrokersBrokerage();
         }
@@ -261,7 +260,9 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var symbol = Symbols.AAPL;
             var orderProperties = new InteractiveBrokersOrderProperties();
-            var group = new GroupOrderManager(1, legCount: 2, quantity) { ComboType = ComboType.OneCancelsTheOther };
+            // a fixed id would send IB the same OcaGroup string ("lean-oco-1") on every run, which can collide
+            // with a resting group left behind by a previous, aborted run
+            var group = new GroupOrderManager(unchecked((int)DateTime.UtcNow.Ticks), legCount: 2, quantity) { ComboType = ComboType.OneCancelsTheOther };
 
             var limitRequest = new SubmitOrderRequest(OrderType.Limit, symbol.SecurityType, symbol, quantity, 0, limitPrice, 0,
                 DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
@@ -313,6 +314,113 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             foreach (var order in orders)
             {
                 brokerage.CancelOrder(order);
+            }
+        }
+
+        [TestCase(500, 339.4)] // every leg priced through the market so all 5 are immediately marketable at once
+        public void SendOneCancelsTheOtherOrderWithPartialFill(decimal quantity, decimal limitPrice)
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            // wait for the previous run to finish, avoid any race condition
+            Thread.Sleep(2000);
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
+            brokerage.Connect();
+
+            var openOrders = brokerage.GetOpenOrders();
+            foreach (var order in openOrders)
+            {
+                brokerage.CancelOrder(order);
+            }
+
+            var symbol = Symbols.AAPL;
+            var orderProperties = new InteractiveBrokersOrderProperties();
+            // a fixed id would send IB the same OcaGroup string ("lean-oco-1") on every run, which can collide
+            // with a resting group left behind by a previous, aborted run
+
+            var group = new GroupOrderManager(unchecked((int)DateTime.UtcNow.Ticks), legCount: 5, quantity) { ComboType = ComboType.OneCancelsTheOther };
+
+            var limitOrder_1 = BuildOneCancelsTheOtherLimitLeg(symbol, quantity, limitPrice, group, orderProperties, algo.Transactions);
+            var limitOrder_2 = BuildOneCancelsTheOtherLimitLeg(symbol, quantity, limitPrice - 0.01m, group, orderProperties, algo.Transactions);
+            var limitOrder_3 = BuildOneCancelsTheOtherLimitLeg(symbol, quantity, limitPrice + 0.01m, group, orderProperties, algo.Transactions);
+            var limitOrder_4 = BuildOneCancelsTheOtherLimitLeg(symbol, quantity, limitPrice - 0.02m, group, orderProperties, algo.Transactions);
+            var limitOrder_5 = BuildOneCancelsTheOtherLimitLeg(symbol, quantity, limitPrice + 0.02m, group, orderProperties, algo.Transactions);
+
+            var orders = new List<Order> { limitOrder_1, limitOrder_2, limitOrder_3, limitOrder_4, limitOrder_5 };
+
+            using var manualResetEvent = new ManualResetEvent(false);
+            var events = new List<OrderEvent>();
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                events.AddRange(orderEvents);
+
+                foreach (var orderEvent in orderEvents)
+                {
+                    Log.Trace($"SendOneCancelsTheOtherOrderWithPartialFill(): order event: {orderEvent}");
+                }
+
+                foreach (var order in orders)
+                {
+                    foreach (var orderEvent in orderEvents)
+                    {
+                        if (orderEvent.OrderId == order.Id)
+                        {
+                            // update the order like the BTH would do
+                            order.Status = orderEvent.Status;
+                        }
+                    }
+                }
+
+                if (orders.All(o => o.Status.IsClosed()))
+                {
+                    manualResetEvent.Set();
+                }
+            };
+
+            foreach (var order in orders)
+            {
+                orderProvider.Add(order);
+                Assert.IsTrue(brokerage.PlaceOrder(order));
+                Log.Trace($"SendOneCancelsTheOtherOrderWithPartialFill(): placed order {order.Id}, BrokerId: {string.Join(",", order.BrokerId)}");
+            }
+
+            // IB's overfill block only ever routes one leg of the group to the exchange at a time, so even
+            // though every leg here is priced to be immediately marketable, only one should ever execute
+            // (fully or across several partial fills) and the other four get canceled - see the open question
+            // in Documentation/ADR/0002-one-cancels-the-other-order-group.md about partial fills at IB
+            Assert.IsTrue(manualResetEvent.WaitOne(TimeSpan.FromSeconds(600)));
+
+            // each leg is its own independent IB order, not one shared combo order id
+            Assert.AreEqual(5, orders.Select(o => o.BrokerId.Single()).Distinct().Count());
+
+            var winners = orders.Where(o => o.Status == OrderStatus.Filled).ToList();
+            var canceledLegs = orders.Where(o => o.Status == OrderStatus.Canceled).ToList();
+
+            Log.Trace($"SendOneCancelsTheOtherOrderWithPartialFill(): winners: {winners.Count}, canceled: {canceledLegs.Count}");
+
+            Assert.AreEqual(1, winners.Count);
+            Assert.AreEqual(4, canceledLegs.Count);
+
+            var winnerFillEvents = events.Where(oe => oe.OrderId == winners[0].Id && oe.Status.IsFill()).ToList();
+            Log.Trace($"SendOneCancelsTheOtherOrderWithPartialFill(): winner order {winners[0].Id} filled in {winnerFillEvents.Count} event(s), " +
+                $"total quantity: {winnerFillEvents.Sum(oe => oe.FillQuantity)}");
+
+            Assert.IsTrue(winnerFillEvents.Count > 0);
+            Assert.AreEqual(winners[0].Quantity, winnerFillEvents.Sum(oe => oe.FillQuantity));
+
+            // the winning leg opened a real position; close it so repeated runs don't pile up shares and
+            // eventually leave the account without the buying power to place the group at all
+            var filledQuantity = winnerFillEvents.Sum(oe => oe.FillQuantity);
+            if (filledQuantity != 0)
+            {
+                var closeRequest = new SubmitOrderRequest(OrderType.Market, symbol.SecurityType, symbol, -filledQuantity, 0, 0, 0,
+                    DateTime.UtcNow, string.Empty, orderProperties);
+                algo.Transactions.SetOrderId(closeRequest);
+                var closeOrder = Order.CreateOrder(closeRequest);
+
+                orderProvider.Add(closeOrder);
+                Assert.IsTrue(brokerage.PlaceOrder(closeOrder));
+                Log.Trace($"SendOneCancelsTheOtherOrderWithPartialFill(): closing position with {-filledQuantity} {symbol.Value}");
             }
         }
 
@@ -625,7 +733,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 Assert.AreNotEqual(prevStopPrice, updatedStopPrice);
                 var orderCurrentStopPrice = ((TrailingStopOrder)algorithm.Transactions.GetOpenOrders().Single()).StopPrice;
                 Assert.AreEqual(updatedStopPrice, orderCurrentStopPrice);
-            };
+            }
 
             Assert.IsTrue(stopPriceUpdated);
 
@@ -1669,6 +1777,15 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
             var request = new SubmitOrderRequest(orderType, symbol.SecurityType, symbol, legRatio * group.Quantity, 0,
                 limitPrice, 0, DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
+            securityTransactionManager.SetOrderId(request);
+            return Order.CreateOrder(request);
+        }
+
+        private Order BuildOneCancelsTheOtherLimitLeg(Symbol symbol, decimal quantity, decimal limitPrice,
+            GroupOrderManager group, IOrderProperties orderProperties, SecurityTransactionManager securityTransactionManager)
+        {
+            var request = new SubmitOrderRequest(OrderType.Limit, symbol.SecurityType, symbol, quantity, 0, limitPrice, 0,
+                DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
             securityTransactionManager.SetOrderId(request);
             return Order.CreateOrder(request);
         }
