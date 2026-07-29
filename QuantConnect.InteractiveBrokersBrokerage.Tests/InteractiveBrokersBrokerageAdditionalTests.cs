@@ -127,6 +127,40 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Config.Set("ib-user-name", originalUserName);
         }
 
+        // An order for a symbol IB cannot resolve is rejected with error 200 "No security definition",
+        // which must invalidate the order right away instead of stalling until the response timeout.
+        // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/25
+        [Test]
+        public void InvalidatesOrderRejectedWithNoSecurityDefinition()
+        {
+            var algo = new AlgorithmStub();
+            var orderProvider = new OrderProvider();
+            using var brokerage = new InteractiveBrokersBrokerage(algo, orderProvider, algo.Portfolio);
+            brokerage.Connect();
+
+            // a well-formed ticker with no contract at IB
+            var symbol = Symbol.Create("ZZZZZZ", SecurityType.Equity, Market.USA);
+            var order = new MarketOrder(symbol, 1, DateTime.UtcNow);
+            orderProvider.Add(order);
+
+            using var invalidatedEvent = new ManualResetEvent(false);
+            OrderEvent invalidOrderEvent = null;
+            brokerage.OrdersStatusChanged += (_, orderEvents) =>
+            {
+                invalidOrderEvent ??= orderEvents.FirstOrDefault(orderEvent => orderEvent.OrderId == order.Id && orderEvent.Status == OrderStatus.Invalid);
+                if (invalidOrderEvent != null)
+                {
+                    invalidatedEvent.Set();
+                }
+            };
+
+            Assert.IsTrue(brokerage.PlaceOrder(order));
+
+            // IB answers within milliseconds, well before the response timeout
+            Assert.IsTrue(invalidatedEvent.WaitOne(TimeSpan.FromSeconds(30)));
+            StringAssert.StartsWith("200 - No security definition", invalidOrderEvent.Message);
+        }
+
         [TestCase(OrderType.ComboMarket, 0, OrderDirection.Buy, OrderDirection.Buy, OrderDirection.Buy, true, SecurityType.Option)]
         [TestCase(OrderType.ComboLimit, 10, OrderDirection.Buy, OrderDirection.Buy, OrderDirection.Buy, false, SecurityType.Option)]
 
