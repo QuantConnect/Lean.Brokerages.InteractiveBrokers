@@ -2067,6 +2067,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 brokerageMessageType = BrokerageMessageType.Warning;
             }
 
+            // set by the error 200 handling below when the message was already surfaced for the symbol, note
+            // that it can't just return in that case: the order invalidation must run for every rejected
+            // order, even a repeated rejection of an asset we already reported as unsupported
+            var alreadyReportedUnsupportedAsset = false;
+
             // code 1100 is a connection failure, we'll wait a minute before exploding gracefully
             if (errorCode == 1100)
             {
@@ -2162,10 +2167,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         {
                             lock (_unsupportedAssets)
                             {
-                                if (!_unsupportedAssets.Add($"{requestInfo.AssociatedSymbol.Value}-{requestInfo.AssociatedSymbol.SecurityType}"))
-                                {
-                                    return;
-                                }
+                                alreadyReportedUnsupportedAsset = !_unsupportedAssets.Add($"{requestInfo.AssociatedSymbol.Value}-{requestInfo.AssociatedSymbol.SecurityType}");
                             }
                         }
 
@@ -2178,7 +2180,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _competingSessionErrorHandler.Value.Handle(DateTime.UtcNow, errorCode, errorMsg);
             }
 
-            if (InvalidatingCodes.Contains(errorCode))
+            // error 200 is not an invalidating code: unlike the codes in the collection it answers any request
+            // type (e.g. contract details or market data), so it's only an order rejection when we know it is
+            // answering an order request
+            if (InvalidatingCodes.Contains(errorCode) || (errorCode == 200 && requestInfo?.IsOrderRequest == true))
             {
                 // let's unblock the waiting thread right away
                 if (_pendingOrderResponse.TryRemove(requestId, out var eventSlim))
@@ -2205,7 +2210,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            if (!FilteredCodes.Contains(errorCode) && errorCode != -1)
+            if (!alreadyReportedUnsupportedAsset && !FilteredCodes.Contains(errorCode) && errorCode != -1)
             {
                 OnMessage(new BrokerageMessageEvent(brokerageMessageType, errorCode, errorMsg));
             }
@@ -5830,7 +5835,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // these are fatal errors from IB
         private static readonly HashSet<int> ErrorCodes = new HashSet<int>
         {
-            100, 101, 103, 138, 139, 142, 143, 144, 145, 200, 203, 300,301,302,306,308,309,310,311,316,317,320,321,322,323,324,326,327,330,331,332,333,344,346,354,357,365,366,381,384,401,414,431,432,438,501,502,503,504,505,506,507,508,510,511,512,513,514,515,516,517,518,519,520,521,522,523,524,525,526,527,528,529,530,531,10000,10001,10005,10013,10015,10016,10021,10022,10023,10024,10025,10026,10027,1300
+            100, 101, 103, 138, 139, 142, 143, 144, 145, 200, 203, 300,301,302,306,308,309,310,311,316,317,320,321,322,323,324,326,327,330,331,332,333,344,346,354,357,365,366,381,384,401,414,431,432,438,460,501,502,503,504,505,506,507,508,510,511,512,513,514,515,516,517,518,519,520,521,522,523,524,525,526,527,528,529,530,531,10000,10001,10005,10013,10015,10016,10021,10022,10023,10024,10025,10026,10027,1300
         };
 
         // these are warning messages from IB
@@ -5844,6 +5849,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             104, // Can't modify a filled order
             10148, // OrderId <OrderId> that needs to be cancelled can not be cancelled, state:
+            460, // No trading permissions
             105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 129, 131, 132, 133, 134, 135, 136, 137, 140, 141, 146, 147, 148, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 163, 167, 168, 201,312,313,314,315,325,328,329,334,335,336,337,338,339,340,341,342,343,345,347,348,349,350,352,353,355,356,358,359,360,361,362,363,364,367,368,369,370,371,372,373,374,375,376,377,378,379,380,382,383,387,388,389,390,391,392,393,394,395,396,397,398,400,401,402,403,405,406,407,408,409,410,411,412,413,417,418,419,421,423,424,427,428,429,433,434,435,436,437,439,440,441,442,443,444,445,446,447,448,449,463,10002,10006,10007,10008,10009,10010,10011,10012,10014,10020,10058,2102
         };
 
@@ -5885,6 +5891,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             public string Message { get; set; }
 
             public HistoryRequest? HistoryRequest { get; set; }
+
+            /// <summary>
+            /// Whether the request was placing, updating or cancelling an order, so its request id is an
+            /// order id and an error answering it can be reported as an order rejection
+            /// </summary>
+            public bool IsOrderRequest => RequestType is RequestType.PlaceOrder or RequestType.UpdateOrder or RequestType.CancelOrder;
         }
     }
 }
