@@ -172,6 +172,37 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(BrokerageMessageType.Warning, messages.Single(m => m.Code == "200").Type);
         }
 
+        // error 200 is the only invalidating code that is also returned for requests that are not orders, so
+        // it is the only one for which the invalidation is skipped: any other invalidating code answering a
+        // non order request keeps invalidating, as it did before the request type was taken into account
+        [TestCase(200, false, TestName = "HandleError_Code200_OnNonOrderRequest_DoesNotInvalidate")]
+        [TestCase(201, true, TestName = "HandleError_Code201_OnNonOrderRequest_StillInvalidates")]
+        public void HandleErrorScopesTheOrderRequestCheckToError200(int errorCode, bool expectedInvalidation)
+        {
+            const int requestId = 7;
+
+            using var brokerage = new InteractiveBrokersBrokerage();
+
+            var orderProvider = new OrderProvider();
+            var order = new MarketOrder(Symbols.SPY, 1, DateTime.UtcNow);
+            order.BrokerId.Add(requestId.ToStringInvariant());
+            orderProvider.Add(order);
+            SetPrivateFieldValue(brokerage, "_orderProvider", orderProvider);
+
+            using var pendingResponseEvent = new ManualResetEventSlim(false);
+            var pendingOrderResponses = (IDictionary)GetPrivateFieldValue(brokerage, "_pendingOrderResponse");
+            pendingOrderResponses[requestId] = pendingResponseEvent;
+            SeedRequestInformation(brokerage, requestId, "Subscription", Symbols.SPY);
+
+            List<OrderEvent> orderEvents = [];
+            brokerage.OrdersStatusChanged += (_, events) => orderEvents.AddRange(events);
+
+            brokerage.HandleError(this, new IB.ErrorEventArgs(id: requestId, time: 0, code: errorCode, message: "some rejection"));
+
+            Assert.AreEqual(expectedInvalidation, pendingResponseEvent.IsSet);
+            Assert.AreEqual(expectedInvalidation ? 1 : 0, orderEvents.Count(e => e.Status == OrderStatus.Invalid));
+        }
+
         // with 'IgnoreUnknownAssetHoldings' disabled the 200 is not downgraded to a warning, so on top of
         // invalidating the order the rejection is surfaced with Error severity, which stops the algorithm
         [Test]

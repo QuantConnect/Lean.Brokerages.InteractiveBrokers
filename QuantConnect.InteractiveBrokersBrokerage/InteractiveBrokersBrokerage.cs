@@ -2058,9 +2058,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // figure out the message type based on our code collections below
             var brokerageMessageType = BrokerageMessageType.Information;
-            // whether the message was already surfaced to the user, note that we can't just return in that case:
-            // the order invalidation below must run for every rejected order, even a repeated rejection
-            var alreadyReportedMessage = false;
             if (ErrorCodes.Contains(errorCode))
             {
                 brokerageMessageType = BrokerageMessageType.Error;
@@ -2069,6 +2066,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 brokerageMessageType = BrokerageMessageType.Warning;
             }
+
+            // set by the error 200 handling below when the message was already surfaced for the symbol, note
+            // that it can't just return in that case: the order invalidation must run for every rejected
+            // order, even a repeated rejection of an asset we already reported as unsupported
+            var alreadyReportedUnsupportedAsset = false;
 
             // code 1100 is a connection failure, we'll wait a minute before exploding gracefully
             if (errorCode == 1100)
@@ -2165,7 +2167,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         {
                             lock (_unsupportedAssets)
                             {
-                                alreadyReportedMessage = !_unsupportedAssets.Add($"{requestInfo.AssociatedSymbol.Value}-{requestInfo.AssociatedSymbol.SecurityType}");
+                                alreadyReportedUnsupportedAsset = !_unsupportedAssets.Add($"{requestInfo.AssociatedSymbol.Value}-{requestInfo.AssociatedSymbol.SecurityType}");
                             }
                         }
 
@@ -2178,14 +2180,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _competingSessionErrorHandler.Value.Handle(DateTime.UtcNow, errorCode, errorMsg);
             }
 
-            // some invalidating codes, like 200, are also returned for requests that are not orders
-            // (e.g. contract details or market data), in which case there is no order to invalidate
-            var isOrderRequest = requestInfo == null
-                || requestInfo.RequestType == RequestType.PlaceOrder
-                || requestInfo.RequestType == RequestType.UpdateOrder
-                || requestInfo.RequestType == RequestType.CancelOrder;
+            // error 200 is the only invalidating code that is also returned for requests that are not orders
+            // (e.g. contract details or market data), in which case there is no order to invalidate. Every
+            // other invalidating code keeps the original unconditional behavior
+            var isNonOrderError200 = errorCode == 200 && requestInfo?.IsOrderRequest == false;
 
-            if (isOrderRequest && InvalidatingCodes.Contains(errorCode))
+            if (!isNonOrderError200 && InvalidatingCodes.Contains(errorCode))
             {
                 // let's unblock the waiting thread right away
                 if (_pendingOrderResponse.TryRemove(requestId, out var eventSlim))
@@ -2212,7 +2212,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            if (!alreadyReportedMessage && !FilteredCodes.Contains(errorCode) && errorCode != -1)
+            if (!alreadyReportedUnsupportedAsset && !FilteredCodes.Contains(errorCode) && errorCode != -1)
             {
                 OnMessage(new BrokerageMessageEvent(brokerageMessageType, errorCode, errorMsg));
             }
@@ -5894,6 +5894,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             public string Message { get; set; }
 
             public HistoryRequest? HistoryRequest { get; set; }
+
+            /// <summary>
+            /// Whether the request was placing, updating or cancelling an order, so its request id is an
+            /// order id and an error answering it can be reported as an order rejection
+            /// </summary>
+            public bool IsOrderRequest => RequestType is RequestType.PlaceOrder or RequestType.UpdateOrder or RequestType.CancelOrder;
         }
     }
 }
