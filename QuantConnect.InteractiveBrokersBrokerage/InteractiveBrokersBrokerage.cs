@@ -2180,12 +2180,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _competingSessionErrorHandler.Value.Handle(DateTime.UtcNow, errorCode, errorMsg);
             }
 
-            // error 200 is the only invalidating code that is also returned for requests that are not orders
-            // (e.g. contract details or market data), in which case there is no order to invalidate. Every
-            // other invalidating code keeps the original unconditional behavior
-            var isNonOrderError200 = errorCode == 200 && requestInfo?.IsOrderRequest == false;
-
-            if (!isNonOrderError200 && InvalidatingCodes.Contains(errorCode))
+            // an error answering a request that is not an order (e.g. error 200 for contract details or market
+            // data, or the market data and history codes in the collection) is not an order rejection, there is
+            // no order to invalidate. If we are not tracking the request we assume it is an order, like before
+            if (InvalidatingCodes.Contains(errorCode) && requestInfo?.IsOrderRequest != false)
             {
                 // let's unblock the waiting thread right away
                 if (_pendingOrderResponse.TryRemove(requestId, out var eventSlim))

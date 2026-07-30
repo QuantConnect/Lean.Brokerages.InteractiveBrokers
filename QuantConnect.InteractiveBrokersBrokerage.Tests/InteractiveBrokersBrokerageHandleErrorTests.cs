@@ -172,12 +172,18 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(BrokerageMessageType.Warning, messages.Single(m => m.Code == "200").Type);
         }
 
-        // error 200 is the only invalidating code that is also returned for requests that are not orders, so
-        // it is the only one for which the invalidation is skipped: any other invalidating code answering a
-        // non order request keeps invalidating, as it did before the request type was taken into account
-        [TestCase(200, false, TestName = "HandleError_Code200_OnNonOrderRequest_DoesNotInvalidate")]
-        [TestCase(201, true, TestName = "HandleError_Code201_OnNonOrderRequest_StillInvalidates")]
-        public void HandleErrorScopesTheOrderRequestCheckToError200(int errorCode, bool expectedInvalidation)
+        // an error answering a request that is not an order cannot be an order rejection, so it must not
+        // invalidate anything: that covers error 200 for contract details or market data requests, and the
+        // market data and history codes that are in InvalidatingCodes too (10002, 10006-10012, 10014, ...).
+        // An error for a request we are not tracking (e.g. an order reconstructed from IB's open orders, whose
+        // id was assigned in a previous session) is still invalidated, as it was before.
+        [TestCase(200, "Subscription", false, TestName = "HandleError_Code200_OnNonOrderRequest_DoesNotInvalidate")]
+        [TestCase(201, "Subscription", false, TestName = "HandleError_Code201_OnNonOrderRequest_DoesNotInvalidate")]
+        [TestCase(10008, "History", false, TestName = "HandleError_Code10008_OnHistoryRequest_DoesNotInvalidate")]
+        [TestCase(200, "PlaceOrder", true, TestName = "HandleError_Code200_OnOrderRequest_Invalidates")]
+        [TestCase(201, "CancelOrder", true, TestName = "HandleError_Code201_OnCancelRequest_Invalidates")]
+        [TestCase(201, null, true, TestName = "HandleError_Code201_WithoutRequestInformation_Invalidates")]
+        public void HandleErrorInvalidatesOnlyErrorsAnsweringOrderRequests(int errorCode, string requestType, bool expectedInvalidation)
         {
             const int requestId = 7;
 
@@ -192,7 +198,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             using var pendingResponseEvent = new ManualResetEventSlim(false);
             var pendingOrderResponses = (IDictionary)GetPrivateFieldValue(brokerage, "_pendingOrderResponse");
             pendingOrderResponses[requestId] = pendingResponseEvent;
-            SeedRequestInformation(brokerage, requestId, "Subscription", Symbols.SPY);
+            if (requestType != null)
+            {
+                SeedRequestInformation(brokerage, requestId, requestType, Symbols.SPY);
+            }
 
             List<OrderEvent> orderEvents = [];
             brokerage.OrdersStatusChanged += (_, events) => orderEvents.AddRange(events);
