@@ -2058,6 +2058,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // figure out the message type based on our code collections below
             var brokerageMessageType = BrokerageMessageType.Information;
+            // whether the message was already surfaced to the user, note that we can't just return in that case:
+            // the order invalidation below must run for every rejected order, even a repeated rejection
+            var alreadyReportedMessage = false;
             if (ErrorCodes.Contains(errorCode))
             {
                 brokerageMessageType = BrokerageMessageType.Error;
@@ -2162,10 +2165,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         {
                             lock (_unsupportedAssets)
                             {
-                                if (!_unsupportedAssets.Add($"{requestInfo.AssociatedSymbol.Value}-{requestInfo.AssociatedSymbol.SecurityType}"))
-                                {
-                                    return;
-                                }
+                                alreadyReportedMessage = !_unsupportedAssets.Add($"{requestInfo.AssociatedSymbol.Value}-{requestInfo.AssociatedSymbol.SecurityType}");
                             }
                         }
 
@@ -2178,7 +2178,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _competingSessionErrorHandler.Value.Handle(DateTime.UtcNow, errorCode, errorMsg);
             }
 
-            if (InvalidatingCodes.Contains(errorCode))
+            // some invalidating codes, like 200, are also returned for requests that are not orders
+            // (e.g. contract details or market data), in which case there is no order to invalidate
+            var isOrderRequest = requestInfo == null
+                || requestInfo.RequestType == RequestType.PlaceOrder
+                || requestInfo.RequestType == RequestType.UpdateOrder
+                || requestInfo.RequestType == RequestType.CancelOrder;
+
+            if (isOrderRequest && InvalidatingCodes.Contains(errorCode))
             {
                 // let's unblock the waiting thread right away
                 if (_pendingOrderResponse.TryRemove(requestId, out var eventSlim))
@@ -2205,7 +2212,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
-            if (!FilteredCodes.Contains(errorCode) && errorCode != -1)
+            if (!alreadyReportedMessage && !FilteredCodes.Contains(errorCode) && errorCode != -1)
             {
                 OnMessage(new BrokerageMessageEvent(brokerageMessageType, errorCode, errorMsg));
             }
