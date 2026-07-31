@@ -117,6 +117,51 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(1, messages.Count(m => m.Code == errorCode.ToStringInvariant() && m.Type == BrokerageMessageType.Error));
         }
 
+        // IB answers a cancellation it cannot honor with one of two sibling codes: 10147 ("OrderId <id> that
+        // needs to be cancelled is not found.") when the id is not in its open order book at all, and 10148
+        // ("...can not be cancelled, state: <state>") when it is but is already in a terminal state. Both
+        // answer the CancelOrder request within milliseconds and both leave nothing left to wait for, so both
+        // must release the thread parked in CancelOrder and invalidate the order. Only 10148 did: a 10147 was
+        // merely surfaced as a warning, so the wait expired 'ib-response-timeout' later and stopped the
+        // algorithm with 'Timeout waiting for brokerage response'.
+        // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/93
+        [TestCase(10147, "OrderId 141 that needs to be cancelled is not found.")]
+        [TestCase(10148, "OrderId 141 that needs to be cancelled can not be cancelled, state: Cancelled.")]
+        public void HandleErrorCancellationRejectionInvalidatesOrderAndReleasesPendingResponse(int errorCode, string errorMessage)
+        {
+            using var brokerage = new InteractiveBrokersBrokerage();
+            const int ibOrderId = 141;
+
+            var orderProvider = new OrderProvider();
+            var order = new MarketOrder(Symbols.SPY, 1, DateTime.UtcNow);
+            order.BrokerId.Add(ibOrderId.ToStringInvariant());
+            orderProvider.Add(order);
+            SetPrivateFieldValue(brokerage, "_orderProvider", orderProvider);
+
+            using var pendingResponseEvent = new ManualResetEventSlim(false);
+            var pendingOrderResponses = (IDictionary)GetPrivateFieldValue(brokerage, "_pendingOrderResponse");
+            pendingOrderResponses[ibOrderId] = pendingResponseEvent;
+            SeedRequestInformation(brokerage, ibOrderId, "CancelOrder", Symbols.SPY);
+
+            List<BrokerageMessageEvent> messages = [];
+            List<OrderEvent> orderEvents = [];
+            brokerage.Message += (_, message) => messages.Add(message);
+            brokerage.OrdersStatusChanged += (_, events) => orderEvents.AddRange(events);
+
+            brokerage.HandleError(this, new IB.ErrorEventArgs(
+                id: ibOrderId,
+                time: 0,
+                code: errorCode,
+                message: errorMessage));
+
+            Assert.IsTrue(pendingResponseEvent.IsSet, "the thread waiting in CancelOrder was not released");
+            Assert.IsFalse(pendingOrderResponses.Contains(ibOrderId));
+            Assert.AreEqual(1, orderEvents.Count(e => e.OrderId == order.Id && e.Status == OrderStatus.Invalid));
+            StringAssert.StartsWith($"{errorCode} - {errorMessage}", orderEvents.Single().Message);
+            // both are filtered codes: the rejection reaches the user as the order event above, not as a message
+            Assert.IsEmpty(messages.Where(m => m.Code == errorCode.ToStringInvariant()));
+        }
+
         // the 200 message is deduped per symbol when 'IgnoreUnknownAssetHoldings' is enabled (the default), for
         // instance the market data subscription of a delisted symbol is rejected with a 200 before any order for
         // it is placed. That dedup must not skip the order invalidation: it left the pending order response
@@ -185,6 +230,9 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [TestCase(201, "Subscription", true, TestName = "HandleError_Code201_OnNonOrderRequest_StillInvalidates")]
         [TestCase(10008, "History", true, TestName = "HandleError_Code10008_OnHistoryRequest_StillInvalidates")]
         [TestCase(460, null, true, TestName = "HandleError_Code460_WithoutRequestInformation_Invalidates")]
+        // the cancellation of an order whose id was assigned in a previous session, the case the gateway
+        // auto-restart creates, is answered with a 10147 for a request we may no longer be tracking
+        [TestCase(10147, null, true, TestName = "HandleError_Code10147_WithoutRequestInformation_Invalidates")]
         public void HandleErrorInvalidatesError200OnlyWhenItAnswersAnOrderRequest(int errorCode, string requestType, bool expectedInvalidation)
         {
             const int requestId = 7;
