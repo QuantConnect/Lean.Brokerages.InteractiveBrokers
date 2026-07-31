@@ -24,6 +24,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
     {
         private volatile bool _disconnected1100Fired;
         private volatile bool _previouslyInResetTime;
+        private volatile bool _disconnectReported;
         private readonly ManualResetEvent _connectingInProgress = new ManualResetEvent(false);
 
         /// <summary>
@@ -81,12 +82,31 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
+        /// Gets/sets whether the current disconnection was already reported. The message handler restarts its
+        /// countdown to stop the algorithm on every disconnect, so it is raised once per disconnection.
+        /// </summary>
+        public bool DisconnectReported
+        {
+            get
+            {
+                return _disconnectReported;
+            }
+
+            set
+            {
+                _disconnectReported = value;
+            }
+        }
+
+        /// <summary>
         /// Resets the state to the default values
         /// </summary>
         public void Reset()
         {
             _disconnected1100Fired = false;
             _previouslyInResetTime = false;
+            // _disconnectReported is not cleared here, only a reconnection re-arms it: this runs on every
+            // gateway exit, and one disconnect per restart cycle would keep deferring the shutdown
             _connectingInProgress.Reset();
         }
     }

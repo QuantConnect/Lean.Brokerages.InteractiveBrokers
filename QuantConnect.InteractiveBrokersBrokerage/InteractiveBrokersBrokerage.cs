@@ -254,6 +254,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private DateTime _lastIBAutomaterExitTime;
         private readonly object _lastIBAutomaterExitTimeLock = new object();
 
+        // the wait before restarting a gateway that exited, minutes or hours. IsRestartInProgress() cannot
+        // speak for it, StopGatewayRestartTask() cancels the token it reads before the wait begins
+        private volatile bool _gatewayRestartPending;
+
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
         private bool _pastFirstConnection;
@@ -435,19 +439,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns>True if the request for a new order has been placed, false otherwise</returns>
         public override bool PlaceOrder(Order order)
         {
+            // outside of the try below on purpose: the transaction handler appends the exception message to its
+            // generic "Brokerage failed to place orders: [id]", catching it here would lose the reason
+            if (!IsConnected)
+            {
+                const string message = "Orders cannot be submitted when disconnected.";
+
+                Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): {message} Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}");
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "PlaceOrderWhenDisconnected", message));
+
+                throw new InvalidOperationException(message);
+            }
+
             try
             {
-                if (!IsConnected)
-                {
-                    Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}");
-                    OnMessage(
-                        new BrokerageMessageEvent(
-                            BrokerageMessageType.Warning,
-                            "PlaceOrderWhenDisconnected",
-                            "Orders cannot be submitted when disconnected."));
-                    return false;
-                }
-
                 IBPlaceOrder(order, true);
                 return true;
             }
@@ -1047,7 +1052,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 RestoreDataSubscriptions();
 
                 // we need to tell the DefaultBrokerageMessageHandler we are connected else he will kill us
-                OnMessage(BrokerageMessageEvent.Reconnected("Connect() finished successfully"));
+                OnReconnected("Connect() finished successfully");
             }
             else
             {
@@ -1063,26 +1068,77 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return true;
             }
 
-            if (!_isDisposeCalled &&
-                !_ibAutomater.IsWithinScheduledServerResetTimes() &&
-                IsConnected &&
-                // do not run heart beat if we are close to daily restarts
-                DateTime.Now.TimeOfDay < _heartBeatTimeLimit &&
-                // do not run heart beat if we are restarting
-                !IsRestartInProgress())
+            // why being disconnected would be expected, null when nothing accounts for it. Most specific
+            // first, several hold at once during a nightly restart and the narrow one is worth more in a log
+            var expected = true switch
             {
-                _currentTimeEvent.Reset();
-                // request current time to the server
-                _client.ClientSocket.reqCurrentTime();
-                var result = _currentTimeEvent.WaitOne(Time.GetSecondUnevenWait(waitTimeMs), _cancellationTokenSource.Token);
-                if (!result)
+                _ when _isDisposeCalled => "we are disposed",
+                _ when _gatewayRestartPending => "waiting for the scheduled restart after the gateway exited",
+                // a connection attempt takes minutes when it needs a 2FA confirmation
+                _ when _stateManager.IsConnecting => "a connection attempt is in progress",
+                // do not run heart beat if we are restarting
+                _ when IsRestartInProgress() => "a gateway restart is in progress",
+                // do not run heart beat if we are close to daily restarts
+                _ when DateTime.Now.TimeOfDay >= _heartBeatTimeLimit => "close to the gateway daily restart",
+                _ when _ibAutomater.IsWithinScheduledServerResetTimes() => "within the IB scheduled server reset times",
+                _ => null
+            };
+
+            if (expected != null)
+            {
+                if (!IsConnected)
                 {
-                    Log.Error("InteractiveBrokersBrokerage.HeartBeat(): failed!", overrideMessageFloodProtection: true);
+                    // says which reason answered, so a quiet beat can be told from one hiding a real loss
+                    Log.Trace($"InteractiveBrokersBrokerage.HeartBeat(): not connected, but it is expected: {expected}");
                 }
-                return result;
+                // a probe this close to a restart fails whether or not anything is wrong, so skip it
+                return true;
             }
-            // expected
-            return true;
+
+            if (!IsConnected)
+            {
+                // a dropped connection with nothing to account for it is a real loss, reporting it as a healthy
+                // beat is what kept a gateway restart that never came back unnoticed for three days
+                Log.Error("InteractiveBrokersBrokerage.HeartBeat(): not connected!", overrideMessageFloodProtection: true);
+                return false;
+            }
+
+            _currentTimeEvent.Reset();
+            // request current time to the server
+            _client.ClientSocket.reqCurrentTime();
+            var result = _currentTimeEvent.WaitOne(Time.GetSecondUnevenWait(waitTimeMs), _cancellationTokenSource.Token);
+            if (!result)
+            {
+                Log.Error("InteractiveBrokersBrokerage.HeartBeat(): failed!", overrideMessageFloodProtection: true);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Tells the brokerage message handler the connection was lost, once per disconnection: it restarts its
+        /// countdown to stop the algorithm on every disconnect message, so repeating it would defer the shutdown.
+        /// </summary>
+        private void OnDisconnected(string message)
+        {
+            if (_stateManager.DisconnectReported)
+            {
+                return;
+            }
+            _stateManager.DisconnectReported = true;
+
+            OnMessage(BrokerageMessageEvent.Disconnected(message));
+        }
+
+        /// <summary>
+        /// Tells the brokerage message handler the connection was restored, cancelling any pending shutdown.
+        /// </summary>
+        private void OnReconnected(string message)
+        {
+            _stateManager.DisconnectReported = false;
+            // whatever we were waiting for is over, being disconnected from here on is not accounted for
+            _gatewayRestartPending = false;
+
+            OnMessage(BrokerageMessageEvent.Reconnected(message));
         }
 
         private void RunHeartBeatThread()
@@ -1101,15 +1157,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             if (!HeartBeat(waitTimeMs * 3))
                             {
                                 // we emit the disconnected event so that if the re connection below fails it will kill the algorithm
-                                OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. Heart beat failed."));
-                                try
+                                OnDisconnected("Connection with Interactive Brokers lost. Heart beat failed.");
+
+                                // only a socket that is up but not answering is rebuilt here, when we are already
+                                // down the gateway restart owns the recovery and racing it would fight for the socket
+                                if (IsConnected)
                                 {
-                                    Disconnect();
+                                    try
+                                    {
+                                        Disconnect();
+                                    }
+                                    catch (Exception)
+                                    {
+                                    }
+                                    Connect();
                                 }
-                                catch (Exception)
-                                {
-                                }
-                                Connect();
                             }
                             else
                             {
@@ -2094,7 +2156,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (errorCode == 1102)
             {
                 // Connectivity between IB and TWS has been restored - data maintained.
-                OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
+                OnReconnected(errorMsg);
 
                 _stateManager.Disconnected1100Fired = false;
                 return;
@@ -2102,7 +2164,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (errorCode == 1101)
             {
                 // Connectivity between IB and TWS has been restored - data lost.
-                OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
+                OnReconnected(errorMsg);
 
                 _stateManager.Disconnected1100Fired = false;
 
@@ -2253,9 +2315,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (!_stateManager.PreviouslyInResetTime)
                 {
                     // if we were disconnected and we're not within the reset times, send the error event
-                    OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. " +
-                                                                 "This could be because of internet connectivity issues or a log in from another location."
-                        ));
+                    OnDisconnected("Connection with Interactive Brokers lost. " +
+                                   "This could be because of internet connectivity issues or a log in from another location.");
                 }
             }
             else
@@ -5216,7 +5277,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     _ibAutomater.Stop();
                     var message = "2FA authentication confirmation required to reconnect.";
-                    OnMessage(BrokerageMessageEvent.Disconnected(message));
+                    OnDisconnected(message);
                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.ActionRequired, "2FAAuthRequired", message));
                 });
             }
@@ -5434,10 +5495,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Delay before restart: {delay:d'd 'h'h 'm'm 's's'}");
 
+                // being disconnected until the restart below runs is expected
+                _gatewayRestartPending = true;
+
                 Task.Delay(delay).ContinueWith(_ =>
                 {
                     try
                     {
+                        _gatewayRestartPending = false;
+
                         // We won't trigger a restart if the automater was already started in the meantime
                         // or if there was an error starting it. If it's recoverable, it will be restarted
                         // by the user action somewhere else
