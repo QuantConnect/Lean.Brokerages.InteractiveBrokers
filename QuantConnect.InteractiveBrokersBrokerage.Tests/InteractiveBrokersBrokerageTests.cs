@@ -43,8 +43,6 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [SetUp]
         public void InitializeBrokerage()
         {
-            Log.LogHandler = new NUnitLogHandler();
-
             _interactiveBrokersBrokerage = CreateBrokerage();
         }
 

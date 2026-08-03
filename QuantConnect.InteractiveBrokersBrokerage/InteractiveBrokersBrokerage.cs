@@ -662,9 +662,40 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     "Interactive Brokers does not provide the original submission time for open orders; their time is set to when they were fetched."));
             }
 
+            // orders that share a non-empty OcaGroup string are one Lean one-cancels-the-other group; rebuild
+            // one shared GroupOrderManager per distinct tag so the reconstructed legs stay linked after a
+            // restart, the same way TWS itself treats them as one group
+            var ocaGroupManagers = new Dictionary<string, GroupOrderManager>();
+
             // convert results to Lean Orders outside the eventhandler to avoid nesting requests, as conversion may request
             // contract details
-            return orders.Select(orderContract => ConvertOrders(orderContract.Order, orderContract.Contract, orderContract.OrderState)).SelectMany(orders => orders).ToList();
+            var result = new List<Order>();
+            foreach (var orderContract in orders)
+            {
+                GroupOrderManager groupOrderManager = null;
+                var ocaGroup = orderContract.Order.OcaGroup;
+                if (!string.IsNullOrEmpty(ocaGroup))
+                {
+                    if (!ocaGroupManagers.TryGetValue(ocaGroup, out groupOrderManager))
+                    {
+                        var legCount = orders.Count(o => o.Order.OcaGroup == ocaGroup);
+                        if (legCount > 1)
+                        {
+                            var direction = ConvertOrderDirection(orderContract.Order.Action) == OrderDirection.Sell ? -1 : 1;
+                            var quantity = direction * Convert.ToInt32(orderContract.Order.TotalQuantity);
+                            groupOrderManager = new GroupOrderManager(_algorithm.Transactions.GetIncrementGroupOrderManagerId(), legCount, quantity)
+                            {
+                                ComboType = ComboType.OneCancelsTheOther
+                            };
+                            ocaGroupManagers[ocaGroup] = groupOrderManager;
+                        }
+                    }
+                }
+
+                result.AddRange(ConvertOrders(orderContract.Order, orderContract.Contract, orderContract.OrderState, groupOrderManager));
+            }
+
+            return result;
         }
 
         private Contract GetOpenOrderContract(int orderId)
@@ -1535,11 +1566,36 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="exchange">The exchange to send the order to, defaults to "Smart" to use IB's smart routing</param>
         private void IBPlaceOrder(Order order, bool needsNewId, string exchange = null)
         {
-            if (!_groupOrderCacheManager.TryGetGroupCachedOrders(order, out var orders))
+            List<Order> orders;
+            if (!needsNewId && order.GroupOrderManager?.ComboType == ComboType.OneCancelsTheOther)
+            {
+                // an update to one leg of a one-cancels-the-other group does not wait for a sibling update
+                // to arrive too: unlike a ratio combo, OCO legs update independently of each other
+                orders = new List<Order> { order };
+            }
+            else if (!_groupOrderCacheManager.TryGetGroupCachedOrders(order, out orders))
             {
                 return;
             }
 
+            if (orders.Count > 1 && order.GroupOrderManager.ComboType == ComboType.OneCancelsTheOther)
+            {
+                // every leg of a one-cancels-the-other group is its own independent IB order (linked only by
+                // OcaGroup), not one shared combo order, so each leg needs its own id, contract and placeOrder
+                // call. The group is formed as the legs arrive, and OcaType 1 routes only one leg at a time,
+                // which is what prevents an overfill: https://interactivebrokers.github.io/tws-api/oca.html
+                foreach (var leg in orders)
+                {
+                    PlaceSingleOrder(leg, new List<Order> { leg }, needsNewId, exchange);
+                }
+                return;
+            }
+
+            PlaceSingleOrder(order, orders, needsNewId, exchange);
+        }
+
+        private void PlaceSingleOrder(Order order, List<Order> orders, bool needsNewId, string exchange)
+        {
             // MOO/MOC require directed option orders.
             // We resolve non-equity markets in the `CreateContract` method.
             if (exchange == null &&
@@ -2337,8 +2393,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 var status = ConvertOrderStatus(update.Status);
 
-                // Let's remove the contract for combo orders when they are canceled or filled
-                if (firstOrder.GroupOrderManager != null && (status == OrderStatus.Filled || status == OrderStatus.Canceled))
+                // Let's remove the contract for combo orders when they are canceled or filled. Other kinds of
+                // groups (e.g. one-cancels-the-other) never cache a shared contract here, each leg has its own
+                if (firstOrder.GroupOrderManager != null && firstOrder.GroupOrderManager.ComboType == ComboType.Combo &&
+                    (status == OrderStatus.Filled || status == OrderStatus.Canceled))
                 {
                     _comboOrdersContracts.TryRemove(firstOrder.GroupOrderManager.Id, out _);
                 }
@@ -2433,7 +2491,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                if (orders[0].GroupOrderManager != null)
+                if (orders[0].GroupOrderManager != null && orders[0].GroupOrderManager.ComboType == ComboType.Combo)
                 {
                     _comboOrdersContracts[orders[0].GroupOrderManager.Id] = e.Contract;
                     return;
@@ -2774,8 +2832,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
                     pendingFillsForOrder.Add(new PendingFillEvent { Order = order, ExecutionDetails = executionDetails, CommissionReport = commissionReport });
 
-                    // if this is a combo order, we will try to wait for all orders to fill before emitting the events
-                    if (!order.TryGetGroupOrders(TryGetOrderForFilling, out _))
+                    // if this is a ratio combo, we will try to wait for all orders to fill before emitting the events.
+                    // any other kind of group (e.g. one-cancels-the-other) never waits for every leg to fill: only
+                    // one leg of an OCO group can ever fill, so waiting for the rest would just run into the combo
+                    // fill timeout below
+                    if (order.GroupOrderManager != null && order.GroupOrderManager.ComboType == ComboType.Combo &&
+                        !order.TryGetGroupOrders(TryGetOrderForFilling, out _))
                     {
                         _comboOrdersFillTimeoutMonitor.AddPendingFill(order, executionDetails, commissionReport);
                         return;
@@ -2917,7 +2979,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             decimal quantity;
 
             var order = orders[0];
-            if (order.GroupOrderManager != null)
+            // ratio combo legs share the group's quantity/direction; every other grouped order (e.g. a
+            // one-cancels-the-other leg) keeps its own real quantity/direction, there is no ratio math
+            if (order.GroupOrderManager != null && order.GroupOrderManager.ComboType == ComboType.Combo)
             {
                 quantity = order.GroupOrderManager.Quantity;
                 direction = order.GroupOrderManager.Direction;
@@ -3094,14 +3158,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
 
+            if (order.GroupOrderManager != null && order.GroupOrderManager.ComboType == ComboType.OneCancelsTheOther)
+            {
+                // every order carrying the same OcaGroup string forms one group; OcaType 1 cancels every
+                // other open leg (with overfill block) once one leg executes: https://interactivebrokers.github.io/tws-api/oca.html
+                ibOrder.OcaGroup = $"lean-oco-{order.GroupOrderManager.Id}";
+                ibOrder.OcaType = 1;
+            }
+
             // not yet supported
             //ibOrder.ParentId =
-            //ibOrder.OcaGroup =
 
             return ibOrder;
         }
 
-        private List<Order> ConvertOrders(IBApi.Order ibOrder, Contract contract, OrderState orderState)
+        private List<Order> ConvertOrders(IBApi.Order ibOrder, Contract contract, OrderState orderState, GroupOrderManager groupOrderManager = null)
         {
             var result = new List<Order>();
             var quantitySign = ConvertOrderDirection(ibOrder.Action) == OrderDirection.Sell ? -1 : 1;
@@ -3147,7 +3218,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
             else if (TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState, out var leanOrder))
+                ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, groupOrderManager, orderState, out var leanOrder))
             {
                 result.Add(leanOrder);
             }
@@ -3311,6 +3382,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 default:
                     throw new InvalidEnumArgumentException("orderType", (int)orderType, typeof(OrderType));
+            }
+
+            // attach the group manager to a leg that doesn't carry one yet from its own constructor, e.g. a
+            // reconstructed one-cancels-the-other Limit/StopMarket leg (the combo order types above already
+            // received it as a constructor argument)
+            if (order.GroupOrderManager == null && groupOrderManager != null)
+            {
+                order.GroupOrderManager = groupOrderManager;
             }
 
             order.BrokerId.Add(ibOrderId.ToStringInvariant());

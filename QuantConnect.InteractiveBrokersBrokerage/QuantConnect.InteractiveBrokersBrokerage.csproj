@@ -30,7 +30,9 @@
   </ItemGroup>
 
   <ItemGroup>
-	  <PackageReference Include="QuantConnect.Brokerages" Version="2.5.*" />
+	  <!--Debug builds use the local Lean checkout (not-yet-published OCO changes); Release builds use the published package.-->
+	  <ProjectReference Include="..\..\Lean\Brokerages\QuantConnect.Brokerages.csproj" Condition=" '$(Configuration)' == 'Debug' " />
+	  <PackageReference Include="QuantConnect.Brokerages" Version="2.5.*" Condition=" '$(Configuration)' == 'Release' " />
 	  <PackageReference Include="QuantConnect.Lean.Engine" Version="2.5.*" />
 	  <PackageReference Include="QuantConnect.IBAutomater" Version="2.0.90">
 		  <!--
