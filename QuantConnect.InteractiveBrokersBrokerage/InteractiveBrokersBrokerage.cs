@@ -251,8 +251,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         // The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)
         private TimeSpan _weeklyRestartUtcTime;
-        private DateTime _lastIBAutomaterExitTime;
-        private readonly object _lastIBAutomaterExitTimeLock = new object();
+
+        // when the gateway last logged in from zero, which is when a 2FA confirmation is requested. Not the same
+        // as when it last exited: the nightly restart brings it back on the session token and asks for nothing
+        private DateTime _lastGatewayAuthenticationTime;
+        private readonly object _lastGatewayAuthenticationTimeLock = new object();
 
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
@@ -860,7 +863,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var lastAutomaterStartResult = _ibAutomater.GetLastStartResult();
             if (lastAutomaterStartResult.HasError)
             {
-                lastAutomaterStartResult = _ibAutomater.Start(false);
+                lastAutomaterStartResult = StartGateway();
                 CheckIbAutomaterError(lastAutomaterStartResult);
                 // There was an error but we did not throw, must be another 2FA timeout, we can't continue
                 if (lastAutomaterStartResult.HasError)
@@ -1549,7 +1552,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             try
             {
-                CheckIbAutomaterError(_ibAutomater.Start(false));
+                CheckIbAutomaterError(StartGateway());
             }
             catch
             {
@@ -5441,16 +5444,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 var restart = false;
 
-                lock (_lastIBAutomaterExitTimeLock)
+                lock (_lastGatewayAuthenticationTimeLock)
                 {
-                    // if the gateway hasn't yet exited today, we restart manually
-                    if (_lastIBAutomaterExitTime.Date < DateTime.UtcNow.Date)
+                    restart = ShouldRunWeeklyRestart(_lastGatewayAuthenticationTime, DateTime.UtcNow);
+                    if (!restart)
                     {
-                        restart = true;
-                    }
-                    else
-                    {
-                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: gateway already exited today and should have been automatically restarted.");
+                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: the gateway already authenticated today, at {_lastGatewayAuthenticationTime:u}.");
                     }
                 }
 
@@ -5471,7 +5470,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         {
                             // if the gateway is not running, we start it. Starting it is not connecting to it,
                             // and nothing else will: the exit event that usually does is not coming
-                            var result = _ibAutomater.Start(false);
+                            var result = StartGateway();
                             CheckIbAutomaterError(result);
 
                             if (!result.HasError)
@@ -5501,6 +5500,39 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (e.Data == null) return;
 
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterErrorDataReceived(): {e.Data}");
+        }
+
+        /// <summary>
+        /// Whether the weekly restart still has to run. It exists to get the 2FA confirmation requested at a time
+        /// the user picked, so what it skips on is having authenticated today. Skipping on having exited today is
+        /// what broke: the gateway comes back from a nightly exit on the session token, asking for nothing, and
+        /// reading that as the weekly confirmation pushed the real one a week out, every Sunday.
+        /// </summary>
+        private static bool ShouldRunWeeklyRestart(DateTime lastAuthenticationTimeUtc, DateTime utcNow)
+        {
+            return lastAuthenticationTimeUtc.Date < utcNow.Date;
+        }
+
+        /// <summary>
+        /// Starts the gateway, recording when it logs in from zero. IBAutomater returns success without doing
+        /// anything when the gateway is already running, and that is not a login, so only a start that had one
+        /// to do counts as the authentication the weekly restart is scheduled around.
+        /// </summary>
+        private StartResult StartGateway()
+        {
+            var loginRequired = !_ibAutomater.IsRunning();
+
+            var result = _ibAutomater.Start(false);
+
+            if (loginRequired && !result.HasError)
+            {
+                lock (_lastGatewayAuthenticationTimeLock)
+                {
+                    _lastGatewayAuthenticationTime = DateTime.UtcNow;
+                }
+            }
+
+            return result;
         }
 
         private enum GatewayRestartAction
@@ -5542,11 +5574,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private void OnIbAutomaterExited(object sender, ExitedEventArgs e)
         {
-            lock (_lastIBAutomaterExitTimeLock)
-            {
-                _lastIBAutomaterExitTime = DateTime.UtcNow;
-            }
-
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Exit code: {e.ExitCode}");
 
             _stateManager.Reset();
@@ -5620,7 +5647,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                             Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");
 
-                            var result = _ibAutomater.Start(false);
+                            var result = StartGateway();
                             CheckIbAutomaterError(result);
 
                             // Has error but we are still running, we might be waiting for 2FA user required action after timeout, let's not connect in that case

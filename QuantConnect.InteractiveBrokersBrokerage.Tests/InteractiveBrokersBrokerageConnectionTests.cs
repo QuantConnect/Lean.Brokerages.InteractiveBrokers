@@ -249,6 +249,24 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(expectedAction, action.ToString());
         }
 
+        // The weekly restart is what gets the 2FA confirmation requested at the time the user picked. It used to
+        // skip on the gateway having exited that day, but a gateway that exits comes back on the session token
+        // and asks for nothing: on the two Sundays reported the token expiry exit at 23:45 made the 23:54 check
+        // skip, the confirmation was pushed a week out and the deployment traded on a session nobody renewed.
+        [Test]
+        public void TheWeeklyRestartRunsUntilTheGatewayHasAuthenticatedToday()
+        {
+            // the 23:54 check of the Sunday in the report, five minutes before the configured 23:59
+            var utcNow = new DateTime(2026, 8, 2, 23, 54, 0, DateTimeKind.Utc);
+
+            Assert.IsTrue(ShouldRunWeeklyRestart(default, utcNow), "a gateway that never authenticated must restart");
+            // the deployment logged in on the Friday, two days before: this is the case that was being skipped
+            Assert.IsTrue(ShouldRunWeeklyRestart(new DateTime(2026, 7, 31, 20, 51, 0, DateTimeKind.Utc), utcNow),
+                "the last login was on Friday, the weekly confirmation is due");
+            // and once it has logged in today there is nothing left for the weekly restart to ask for
+            Assert.IsFalse(ShouldRunWeeklyRestart(new DateTime(2026, 8, 2, 23, 46, 0, DateTimeKind.Utc), utcNow));
+        }
+
         // The transaction handler invalidates the order itself when PlaceOrder fails, but only with a generic
         // "Brokerage failed to place orders: [20]" that never says why. It appends the exception message to it,
         // so throwing is what carries the actual cause without reporting success for a rejected order.
@@ -349,6 +367,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         private static void InvokeOnReconnected(InteractiveBrokersBrokerage brokerage, string message)
         {
             InvokePrivate(brokerage, "OnReconnected", new object[] { message });
+        }
+
+        private static bool ShouldRunWeeklyRestart(DateTime lastAuthenticationTimeUtc, DateTime utcNow)
+        {
+            return (bool)typeof(InteractiveBrokersBrokerage)
+                .GetMethod("ShouldRunWeeklyRestart", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { lastAuthenticationTimeUtc, utcNow });
         }
 
         private static void BeginGatewayRestart(InteractiveBrokersBrokerage brokerage)
