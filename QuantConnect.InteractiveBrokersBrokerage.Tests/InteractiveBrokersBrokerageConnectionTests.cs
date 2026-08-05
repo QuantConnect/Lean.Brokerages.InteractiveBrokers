@@ -85,7 +85,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         // killed nightly.
         [TestCase("_isDisposeCalled", TestName = "HeartBeatStaysQuietWhileDisposing")]
         [TestCase("IsConnecting", TestName = "HeartBeatStaysQuietWhileConnecting")]
-        [TestCase("_gatewayRestartPending", TestName = "HeartBeatStaysQuietWhileWaitingForTheGatewayRestart")]
+        [TestCase("BeginGatewayRestart", TestName = "HeartBeatStaysQuietWhileTheGatewayRestartIsRunning")]
         public void HeartBeatDoesNotReportAnExpectedDisconnection(string expectedReasonField)
         {
             using var brokerage = new InteractiveBrokersBrokerage();
@@ -97,6 +97,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 // it needs a 2FA confirmation
                 GetStateManager(brokerage).IsConnecting = true;
             }
+            else if (expectedReasonField == "BeginGatewayRestart")
+            {
+                BeginGatewayRestart(brokerage);
+            }
             else
             {
                 SetPrivateField(brokerage, expectedReasonField, true);
@@ -104,6 +108,72 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.IsFalse(InvokeIsConnected(brokerage));
             Assert.IsTrue(InvokeHeartBeat(brokerage), "an expected disconnection must not be reported as a failed beat");
+        }
+
+        // A restart is accounted for until it finishes, not until its wait is over: the minutes a cold start
+        // spends waiting for the weekly 2FA confirmation used to be reported as a lost connection.
+        [Test]
+        public void HeartBeatStaysQuietUntilTheGatewayRestartFinishes()
+        {
+            using var brokerage = new InteractiveBrokersBrokerage();
+            var automater = CreateInertAutomater();
+            SetPrivateField(brokerage, "_ibAutomater", automater);
+
+            if (automater.IsWithinScheduledServerResetTimes())
+            {
+                Assert.Ignore("within the IB scheduled server reset times, a disconnection would be expected right now");
+            }
+
+            BeginGatewayRestart(brokerage);
+            Assert.IsTrue(InvokeHeartBeat(brokerage), "a restart that has not finished accounts for the disconnection");
+
+            EndGatewayRestart(brokerage);
+            Assert.IsFalse(InvokeHeartBeat(brokerage),
+                "once the restart is finished a lost connection is a real loss again");
+        }
+
+        // The weekly restart stops the gateway, which makes the exit handler start its own while the weekly one
+        // is still running. A flag would be cleared by whichever finished first, leaving the other unaccounted.
+        [Test]
+        public void OverlappingGatewayRestartsAreAccountedForUntilTheLastOneFinishes()
+        {
+            using var brokerage = new InteractiveBrokersBrokerage();
+            var automater = CreateInertAutomater();
+            SetPrivateField(brokerage, "_ibAutomater", automater);
+
+            if (automater.IsWithinScheduledServerResetTimes())
+            {
+                Assert.Ignore("within the IB scheduled server reset times, a disconnection would be expected right now");
+            }
+
+            BeginGatewayRestart(brokerage);
+            BeginGatewayRestart(brokerage);
+
+            EndGatewayRestart(brokerage);
+            Assert.IsTrue(InvokeHeartBeat(brokerage), "the restart still running must keep accounting for the disconnection");
+
+            EndGatewayRestart(brokerage);
+            Assert.IsFalse(InvokeHeartBeat(brokerage), "with both finished the lost connection is a real loss again");
+        }
+
+        // A reconnection ends every restart in flight at once, so the ones still running would push the count
+        // negative and the next restart would be one short of accounting for itself.
+        [Test]
+        public void AGatewayRestartAfterAReconnectionIsStillAccountedFor()
+        {
+            using var brokerage = new InteractiveBrokersBrokerage();
+            var automater = CreateInertAutomater();
+            SetPrivateField(brokerage, "_ibAutomater", automater);
+
+            BeginGatewayRestart(brokerage);
+            InvokeOnReconnected(brokerage, "back");
+            // the restart that was in flight finishes after the reconnection already ended it
+            EndGatewayRestart(brokerage);
+
+            BeginGatewayRestart(brokerage);
+
+            Assert.IsFalse(InvokeIsConnected(brokerage));
+            Assert.IsTrue(InvokeHeartBeat(brokerage), "the new restart must account for its own disconnection");
         }
 
         // DefaultBrokerageMessageHandler disposes its pending countdown and starts a new one every time it
@@ -260,6 +330,16 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         private static void InvokeOnReconnected(InteractiveBrokersBrokerage brokerage, string message)
         {
             InvokePrivate(brokerage, "OnReconnected", new object[] { message });
+        }
+
+        private static void BeginGatewayRestart(InteractiveBrokersBrokerage brokerage)
+        {
+            InvokePrivate(brokerage, "BeginGatewayRestart", Array.Empty<object>());
+        }
+
+        private static void EndGatewayRestart(InteractiveBrokersBrokerage brokerage)
+        {
+            InvokePrivate(brokerage, "EndGatewayRestart", Array.Empty<object>());
         }
 
         private static bool InvokeIsConnected(InteractiveBrokersBrokerage brokerage)

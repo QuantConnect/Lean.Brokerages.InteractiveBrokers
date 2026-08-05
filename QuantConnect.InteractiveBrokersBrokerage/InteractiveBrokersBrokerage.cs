@@ -254,10 +254,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private DateTime _lastIBAutomaterExitTime;
         private readonly object _lastIBAutomaterExitTimeLock = new object();
 
-        // the wait before restarting a gateway that exited, minutes or hours. IsRestartInProgress() cannot
-        // speak for it, StopGatewayRestartTask() cancels the token it reads before the wait begins
-        private volatile bool _gatewayRestartPending;
-
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
         private bool _pastFirstConnection;
@@ -1073,7 +1069,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var expected = true switch
             {
                 _ when _isDisposeCalled => "we are disposed",
-                _ when _gatewayRestartPending => "waiting for the scheduled restart after the gateway exited",
+                _ when GatewayRestartPending => "a gateway restart we started has not finished yet",
                 // a connection attempt takes minutes when it needs a 2FA confirmation
                 _ when _stateManager.IsConnecting => "a connection attempt is in progress",
                 // do not run heart beat if we are restarting
@@ -1114,6 +1110,43 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return result;
         }
 
+        // a count and not a flag because gateway restarts overlap: the weekly one stops the gateway, which starts
+        // the exit driven one, and whichever finished first would stop accounting for the other
+        private int _gatewayRestartPendingCount;
+
+        /// <summary>
+        /// True while a gateway restart we started is still running, which is why being disconnected is expected.
+        /// </summary>
+        private bool GatewayRestartPending => Volatile.Read(ref _gatewayRestartPendingCount) > 0;
+
+        /// <summary>
+        /// Marks the start of a gateway restart we drive: the disconnection it begins with, the wait before it,
+        /// the start, minutes when it needs a 2FA confirmation, and the connection that follows.
+        /// </summary>
+        private void BeginGatewayRestart()
+        {
+            Interlocked.Increment(ref _gatewayRestartPendingCount);
+        }
+
+        /// <summary>
+        /// Marks the end of a gateway restart we drive, reconnected or not: from here on a lost connection is
+        /// unaccounted for and the heart beat reports it.
+        /// </summary>
+        private void EndGatewayRestart()
+        {
+            int pending;
+            do
+            {
+                pending = Volatile.Read(ref _gatewayRestartPendingCount);
+                if (pending == 0)
+                {
+                    // a reconnection ended them all already, going negative would swallow the next restart
+                    return;
+                }
+            }
+            while (Interlocked.CompareExchange(ref _gatewayRestartPendingCount, pending - 1, pending) != pending);
+        }
+
         /// <summary>
         /// Tells the brokerage message handler the connection was lost, once per disconnection: it restarts its
         /// countdown to stop the algorithm on every disconnect message, so repeating it would defer the shutdown.
@@ -1135,8 +1168,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private void OnReconnected(string message)
         {
             _stateManager.DisconnectReported = false;
-            // whatever we were waiting for is over, being disconnected from here on is not accounted for
-            _gatewayRestartPending = false;
+            // we are back, leaving a restart accounted for would keep skipping the probe
+            Interlocked.Exchange(ref _gatewayRestartPendingCount, 0);
 
             OnMessage(BrokerageMessageEvent.Reconnected(message));
         }
@@ -5420,6 +5453,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
 
+                    // the stop below takes the connection down and the start waits for the weekly 2FA confirmation
+                    BeginGatewayRestart();
                     try
                     {
                         if (_ibAutomater.IsRunning())
@@ -5436,6 +5471,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     catch (Exception ex)
                     {
                         Log.Error(ex);
+                    }
+                    finally
+                    {
+                        // the exit event begins its own restart before this one ends, hence the count
+                        EndGatewayRestart();
                     }
                 }
 
@@ -5481,61 +5521,74 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // IBGateway was closed by IBAutomater because the auto-restart token expired or it was closed manually (less likely)
                 Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): IBGateway close detected, restarting IBAutomater...");
 
+                // before the Disconnect() below, which waits for the message processing thread while the
+                // connection is already gone
+                BeginGatewayRestart();
                 try
-                {
-                    // disconnect immediately so orders will not be submitted to the API while waiting for reconnection
-                    Disconnect();
-                }
-                catch (Exception exception)
-                {
-                    Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): error in Disconnect(): {exception}");
-                }
-
-                var delay = GetWeeklyRestartDelay();
-
-                Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Delay before restart: {delay:d'd 'h'h 'm'm 's's'}");
-
-                // being disconnected until the restart below runs is expected
-                _gatewayRestartPending = true;
-
-                Task.Delay(delay).ContinueWith(_ =>
                 {
                     try
                     {
-                        _gatewayRestartPending = false;
-
-                        // We won't trigger a restart if the automater was already started in the meantime
-                        // or if there was an error starting it. If it's recoverable, it will be restarted
-                        // by the user action somewhere else
-                        if (_ibAutomater.IsRunning())
-                        {
-                            Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): IBAutomater is already running, skipping restart.");
-                            return;
-                        }
-
-                        var lastResult = _ibAutomater.GetLastStartResult();
-                        if (lastResult.HasError)
-                        {
-                            Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): last IBAutomater start had error, skipping restart.");
-                            return;
-                        }
-
-                        Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");
-
-                        var result = _ibAutomater.Start(false);
-                        CheckIbAutomaterError(result);
-
-                        // Has error but we are still running, we might be waiting for 2FA user required action after timeout, let's not connect in that case
-                        if (!result.HasError)
-                        {
-                            Connect();
-                        }
+                        // disconnect immediately so orders will not be submitted to the API while waiting for reconnection
+                        Disconnect();
                     }
                     catch (Exception exception)
                     {
-                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterRestartError", exception.ToString()));
+                        Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): error in Disconnect(): {exception}");
                     }
-                }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+
+                    var delay = GetWeeklyRestartDelay();
+
+                    Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): Delay before restart: {delay:d'd 'h'h 'm'm 's's'}");
+
+                    Task.Delay(delay).ContinueWith(_ =>
+                    {
+                        try
+                        {
+                            // We won't trigger a restart if the automater was already started in the meantime
+                            // or if there was an error starting it. If it's recoverable, it will be restarted
+                            // by the user action somewhere else
+                            if (_ibAutomater.IsRunning())
+                            {
+                                Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): IBAutomater is already running, skipping restart.");
+                                return;
+                            }
+
+                            var lastResult = _ibAutomater.GetLastStartResult();
+                            if (lastResult.HasError)
+                            {
+                                Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): last IBAutomater start had error, skipping restart.");
+                                return;
+                            }
+
+                            Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");
+
+                            var result = _ibAutomater.Start(false);
+                            CheckIbAutomaterError(result);
+
+                            // Has error but we are still running, we might be waiting for 2FA user required action after timeout, let's not connect in that case
+                            if (!result.HasError)
+                            {
+                                Connect();
+                            }
+                        }
+                        catch (Exception exception)
+                        {
+                            OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterRestartError", exception.ToString()));
+                        }
+                        finally
+                        {
+                            // when the start is done, not when the wait is: the cold start above spends minutes
+                            // waiting for the 2FA confirmation and ending here would report it as a lost connection
+                            EndGatewayRestart();
+                        }
+                    }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+                }
+                catch
+                {
+                    // nothing was scheduled, so nothing is going to end it
+                    EndGatewayRestart();
+                    throw;
+                }
             }
             else
             {
