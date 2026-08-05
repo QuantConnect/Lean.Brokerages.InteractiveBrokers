@@ -1119,6 +1119,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private bool GatewayRestartPending => Volatile.Read(ref _gatewayRestartPendingCount) > 0;
 
+        // whether we already replaced a running but unconnected gateway for the current outage, cleared by a
+        // reconnection: replacing it again and again would keep a restart pending and the loss unreported
+        private volatile bool _disconnectedGatewayReplaced;
+
         /// <summary>
         /// Marks the start of a gateway restart we drive: the disconnection it begins with, the wait before it,
         /// the start, minutes when it needs a 2FA confirmation, and the connection that follows.
@@ -1170,6 +1174,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _stateManager.DisconnectReported = false;
             // we are back, leaving a restart accounted for would keep skipping the probe
             Interlocked.Exchange(ref _gatewayRestartPendingCount, 0);
+            _disconnectedGatewayReplaced = false;
 
             OnMessage(BrokerageMessageEvent.Reconnected(message));
         }
@@ -5464,8 +5469,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         }
                         else
                         {
-                            // if the gateway is not running, we start it
-                            CheckIbAutomaterError(_ibAutomater.Start(false));
+                            // if the gateway is not running, we start it. Starting it is not connecting to it,
+                            // and nothing else will: the exit event that usually does is not coming
+                            var result = _ibAutomater.Start(false);
+                            CheckIbAutomaterError(result);
+
+                            if (!result.HasError)
+                            {
+                                Connect();
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -5489,6 +5501,43 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (e.Data == null) return;
 
             Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterErrorDataReceived(): {e.Data}");
+        }
+
+        private enum GatewayRestartAction
+        {
+            /// <summary>
+            /// Nothing to do, the gateway is running and connected, or we already replaced it once for this outage
+            /// </summary>
+            Skip,
+
+            /// <summary>
+            /// Start the gateway, it is not running
+            /// </summary>
+            Start,
+
+            /// <summary>
+            /// Stop the gateway so it is started from zero, it is running but takes no connection
+            /// </summary>
+            Replace
+        }
+
+        /// <summary>
+        /// What to do with a gateway once its restart is due. A running gateway is not a working one: answering
+        /// "is the process alive?" when the question is "is the brokerage connected?" is what left a deployment
+        /// disconnected for three days. Replaced at most once per outage, the second time the connection is lost
+        /// for a reason a restart does not fix and the heart beat has to be allowed to report it.
+        /// </summary>
+        private static GatewayRestartAction GetGatewayRestartAction(bool isRunning, bool isConnected, bool alreadyReplaced)
+        {
+            if (!isRunning)
+            {
+                return GatewayRestartAction.Start;
+            }
+            if (isConnected || alreadyReplaced)
+            {
+                return GatewayRestartAction.Skip;
+            }
+            return GatewayRestartAction.Replace;
         }
 
         private void OnIbAutomaterExited(object sender, ExitedEventArgs e)
@@ -5544,20 +5593,29 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     {
                         try
                         {
-                            // We won't trigger a restart if the automater was already started in the meantime
-                            // or if there was an error starting it. If it's recoverable, it will be restarted
+                            // if there was an error starting it and it's recoverable, it will be restarted
                             // by the user action somewhere else
-                            if (_ibAutomater.IsRunning())
-                            {
-                                Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): IBAutomater is already running, skipping restart.");
-                                return;
-                            }
-
                             var lastResult = _ibAutomater.GetLastStartResult();
                             if (lastResult.HasError)
                             {
                                 Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): last IBAutomater start had error, skipping restart.");
                                 return;
+                            }
+
+                            var isRunning = _ibAutomater.IsRunning();
+                            switch (GetGatewayRestartAction(isRunning, IsConnected, _disconnectedGatewayReplaced))
+                            {
+                                case GatewayRestartAction.Skip:
+                                    Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): skipping restart. IBAutomater running: {isRunning}, connected: {IsConnected}");
+                                    return;
+
+                                case GatewayRestartAction.Replace:
+                                    // stopping it makes the exit event restart it from zero, which is what
+                                    // requests the 2FA confirmation this gateway never got
+                                    Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): IBAutomater is running but not connected, stopping it.");
+                                    _disconnectedGatewayReplaced = true;
+                                    _ibAutomater.Stop();
+                                    return;
                             }
 
                             Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");

@@ -230,6 +230,25 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(1, messages.Count(x => x.Type == BrokerageMessageType.Disconnect));
         }
 
+        // A running gateway is not a working one. The restart that is due after a gateway exit used to skip on
+        // "IBAutomater is already running", which answers whether the process is alive when the question is
+        // whether the brokerage is connected: the gateway left up but unauthenticated by a failed weekly restart
+        // answered yes, the restart was skipped, and the deployment sat disconnected for three days.
+        [TestCase(false, false, false, "Start", TestName = "AGatewayThatIsNotRunningIsStarted")]
+        [TestCase(false, true, false, "Start", TestName = "AGatewayThatIsNotRunningIsStartedEvenIfWeAreConnected")]
+        [TestCase(true, true, false, "Skip", TestName = "ARunningAndConnectedGatewayIsLeftAlone")]
+        [TestCase(true, false, false, "Replace", TestName = "ARunningGatewayThatTakesNoConnectionIsReplaced")]
+        [TestCase(true, false, true, "Skip", TestName = "AGatewayIsOnlyReplacedOncePerOutage")]
+        public void TheRestartActionFollowsTheConnectionAndNotTheProcess(bool isRunning, bool isConnected,
+            bool alreadyReplaced, string expectedAction)
+        {
+            var action = typeof(InteractiveBrokersBrokerage)
+                .GetMethod("GetGatewayRestartAction", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { isRunning, isConnected, alreadyReplaced });
+
+            Assert.AreEqual(expectedAction, action.ToString());
+        }
+
         // The transaction handler invalidates the order itself when PlaceOrder fails, but only with a generic
         // "Brokerage failed to place orders: [20]" that never says why. It appends the exception message to it,
         // so throwing is what carries the actual cause without reporting success for a rejected order.
