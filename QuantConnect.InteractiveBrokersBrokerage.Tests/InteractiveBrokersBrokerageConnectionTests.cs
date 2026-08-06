@@ -234,17 +234,21 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         // "IBAutomater is already running", which answers whether the process is alive when the question is
         // whether the brokerage is connected: the gateway left up but unauthenticated by a failed weekly restart
         // answered yes, the restart was skipped, and the deployment sat disconnected for three days.
-        [TestCase(false, false, false, "Start", TestName = "AGatewayThatIsNotRunningIsStarted")]
-        [TestCase(false, true, false, "Start", TestName = "AGatewayThatIsNotRunningIsStartedEvenIfWeAreConnected")]
-        [TestCase(true, true, false, "Skip", TestName = "ARunningAndConnectedGatewayIsLeftAlone")]
-        [TestCase(true, false, false, "Replace", TestName = "ARunningGatewayThatTakesNoConnectionIsReplaced")]
-        [TestCase(true, false, true, "Skip", TestName = "AGatewayIsOnlyReplacedOncePerOutage")]
+        [TestCase(false, false, false, false, "Start", TestName = "AGatewayThatIsNotRunningIsStarted")]
+        [TestCase(false, true, false, false, "Start", TestName = "AGatewayThatIsNotRunningIsStartedEvenIfWeAreConnected")]
+        [TestCase(true, true, false, false, "Skip", TestName = "ARunningAndConnectedGatewayIsLeftAlone")]
+        [TestCase(true, false, false, false, "Replace", TestName = "ARunningGatewayThatTakesNoConnectionIsReplaced")]
+        [TestCase(true, false, true, false, "Skip", TestName = "AGatewayIsOnlyReplacedOncePerOutage")]
+        // ...and a gateway under another restart is left alone: replacing one waiting on its weekly 2FA
+        // confirmation would kill that login to request a second one
+        [TestCase(true, false, false, true, "Skip", TestName = "AGatewayUnderAnotherRestartIsLeftAlone")]
+        [TestCase(false, false, false, true, "Skip", TestName = "AGatewayUnderAnotherRestartIsLeftAloneEvenIfItIsNotRunning")]
         public void TheRestartActionFollowsTheConnectionAndNotTheProcess(bool isRunning, bool isConnected,
-            bool alreadyReplaced, string expectedAction)
+            bool alreadyReplaced, bool anotherRestartPending, string expectedAction)
         {
             var action = typeof(InteractiveBrokersBrokerage)
                 .GetMethod("GetGatewayRestartAction", BindingFlags.NonPublic | BindingFlags.Static)
-                .Invoke(null, new object[] { isRunning, isConnected, alreadyReplaced });
+                .Invoke(null, new object[] { isRunning, isConnected, alreadyReplaced, anotherRestartPending });
 
             Assert.AreEqual(expectedAction, action.ToString());
         }

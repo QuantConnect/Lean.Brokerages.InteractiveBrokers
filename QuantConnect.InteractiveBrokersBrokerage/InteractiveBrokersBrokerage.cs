@@ -5538,7 +5538,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private enum GatewayRestartAction
         {
             /// <summary>
-            /// Nothing to do, the gateway is running and connected, or we already replaced it once for this outage
+            /// Nothing to do, the gateway is running and connected, we already replaced it once for this outage,
+            /// or another restart still running owns it
             /// </summary>
             Skip,
 
@@ -5557,10 +5558,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// What to do with a gateway once its restart is due. A running gateway is not a working one: answering
         /// "is the process alive?" when the question is "is the brokerage connected?" is what left a deployment
         /// disconnected for three days. Replaced at most once per outage, the second time the connection is lost
-        /// for a reason a restart does not fix and the heart beat has to be allowed to report it.
+        /// for a reason a restart does not fix and the heart beat has to be allowed to report it. Never acts
+        /// under another restart still running, which may be waiting on its 2FA confirmation.
         /// </summary>
-        private static GatewayRestartAction GetGatewayRestartAction(bool isRunning, bool isConnected, bool alreadyReplaced)
+        private static GatewayRestartAction GetGatewayRestartAction(bool isRunning, bool isConnected, bool alreadyReplaced,
+            bool anotherRestartPending)
         {
+            if (anotherRestartPending)
+            {
+                return GatewayRestartAction.Skip;
+            }
             if (!isRunning)
             {
                 return GatewayRestartAction.Start;
@@ -5630,10 +5637,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             }
 
                             var isRunning = _ibAutomater.IsRunning();
-                            switch (GetGatewayRestartAction(isRunning, IsConnected, _disconnectedGatewayReplaced))
+                            // more than this restart's own pending count means the weekly restart is mid-flight
+                            var anotherRestartPending = Volatile.Read(ref _gatewayRestartPendingCount) > 1;
+                            switch (GetGatewayRestartAction(isRunning, IsConnected, _disconnectedGatewayReplaced, anotherRestartPending))
                             {
                                 case GatewayRestartAction.Skip:
-                                    Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): skipping restart. IBAutomater running: {isRunning}, connected: {IsConnected}");
+                                    Log.Trace($"InteractiveBrokersBrokerage.OnIbAutomaterExited(): skipping restart. IBAutomater running: {isRunning}, connected: {IsConnected}, another restart pending: {anotherRestartPending}");
                                     return;
 
                                 case GatewayRestartAction.Replace:
