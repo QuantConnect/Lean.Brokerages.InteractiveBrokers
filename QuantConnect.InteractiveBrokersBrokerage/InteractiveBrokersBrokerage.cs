@@ -252,7 +252,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)
         private TimeSpan _weeklyRestartUtcTime;
         private DateTime _lastIBAutomaterExitTime;
+        // when the gateway last logged in from zero: a nightly exit comes back on the session token without a login
+        private DateTime _lastGatewayLoginTime;
         private readonly object _lastIBAutomaterExitTimeLock = new object();
+
+        // every restart we drive begins with a gateway exit; within this window a disconnection is the restart at work
+        private static TimeSpan _gatewayRecoveryGracePeriod = TimeSpan.FromMinutes(30);
+        // serializes the weekly and the exit driven restarts, so neither stops a gateway the other is logging into
+        private readonly object _gatewayRestartLock = new object();
+        // the message handler restarts its shutdown countdown on every disconnect message, so it is raised once per disconnection
+        private volatile bool _disconnectReported;
 
         private volatile bool _isDisposeCalled;
         private bool _isInitialized;
@@ -859,7 +868,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var lastAutomaterStartResult = _ibAutomater.GetLastStartResult();
             if (lastAutomaterStartResult.HasError)
             {
-                lastAutomaterStartResult = _ibAutomater.Start(false);
+                lastAutomaterStartResult = StartGateway();
                 CheckIbAutomaterError(lastAutomaterStartResult);
                 // There was an error but we did not throw, must be another 2FA timeout, we can't continue
                 if (lastAutomaterStartResult.HasError)
@@ -1047,7 +1056,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 RestoreDataSubscriptions();
 
                 // we need to tell the DefaultBrokerageMessageHandler we are connected else he will kill us
-                OnMessage(BrokerageMessageEvent.Reconnected("Connect() finished successfully"));
+                OnReconnected("Connect() finished successfully");
             }
             else
             {
@@ -1065,12 +1074,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             if (!_isDisposeCalled &&
                 !_ibAutomater.IsWithinScheduledServerResetTimes() &&
-                IsConnected &&
                 // do not run heart beat if we are close to daily restarts
                 DateTime.Now.TimeOfDay < _heartBeatTimeLimit &&
                 // do not run heart beat if we are restarting
-                !IsRestartInProgress())
+                !IsRestartInProgress() &&
+                // nor while a restart we drive is still recovering, see OnIbAutomaterExited
+                !IsWithinGatewayRecoveryGracePeriod())
             {
+                if (!IsConnected)
+                {
+                    // a lost connection that nothing accounts for: reporting it as a healthy beat is
+                    // what kept a gateway restart that never came back unnoticed for days
+                    Log.Error("InteractiveBrokersBrokerage.HeartBeat(): not connected!", overrideMessageFloodProtection: true);
+                    return false;
+                }
+
                 _currentTimeEvent.Reset();
                 // request current time to the server
                 _client.ClientSocket.reqCurrentTime();
@@ -1083,6 +1101,44 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             }
             // expected
             return true;
+        }
+
+        /// <summary>
+        /// True while the gateway is still recovering from an exit: covers the delay before the
+        /// restart, the login with its 2FA confirmation and the connect that follows.
+        /// </summary>
+        private bool IsWithinGatewayRecoveryGracePeriod()
+        {
+            lock (_lastIBAutomaterExitTimeLock)
+            {
+                return DateTime.UtcNow - _lastIBAutomaterExitTime < _gatewayRecoveryGracePeriod;
+            }
+        }
+
+        /// <summary>
+        /// Tells the brokerage message handler the connection was lost, once per disconnection: it
+        /// restarts its countdown to stop the algorithm on every disconnect message, so repeating
+        /// it while still down would defer the shutdown forever.
+        /// </summary>
+        private void OnDisconnected(string message)
+        {
+            if (_disconnectReported)
+            {
+                return;
+            }
+            _disconnectReported = true;
+
+            OnMessage(BrokerageMessageEvent.Disconnected(message));
+        }
+
+        /// <summary>
+        /// Tells the brokerage message handler the connection was restored, cancelling any pending shutdown.
+        /// </summary>
+        private void OnReconnected(string message)
+        {
+            _disconnectReported = false;
+
+            OnMessage(BrokerageMessageEvent.Reconnected(message));
         }
 
         private void RunHeartBeatThread()
@@ -1101,15 +1157,29 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                             if (!HeartBeat(waitTimeMs * 3))
                             {
                                 // we emit the disconnected event so that if the re connection below fails it will kill the algorithm
-                                OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. Heart beat failed."));
-                                try
+                                OnDisconnected("Connection with Interactive Brokers lost. Heart beat failed.");
+
+                                // only a socket that is up but not answering is rebuilt here, when we are already
+                                // down the gateway restart owns the recovery
+                                if (IsConnected)
                                 {
-                                    Disconnect();
+                                    try
+                                    {
+                                        Disconnect();
+                                    }
+                                    catch (Exception)
+                                    {
+                                    }
+                                    try
+                                    {
+                                        Connect();
+                                    }
+                                    catch (Exception exception)
+                                    {
+                                        // the monitor outlives a failed rebuild, or the next episode would go unreported
+                                        Log.Error(exception, "HeartBeat Connect");
+                                    }
                                 }
-                                catch (Exception)
-                                {
-                                }
-                                Connect();
                             }
                             else
                             {
@@ -1449,7 +1519,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             try
             {
-                CheckIbAutomaterError(_ibAutomater.Start(false));
+                CheckIbAutomaterError(StartGateway());
             }
             catch
             {
@@ -2094,7 +2164,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (errorCode == 1102)
             {
                 // Connectivity between IB and TWS has been restored - data maintained.
-                OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
+                OnReconnected(errorMsg);
 
                 _stateManager.Disconnected1100Fired = false;
                 return;
@@ -2102,7 +2172,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (errorCode == 1101)
             {
                 // Connectivity between IB and TWS has been restored - data lost.
-                OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
+                OnReconnected(errorMsg);
 
                 _stateManager.Disconnected1100Fired = false;
 
@@ -2253,9 +2323,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (!_stateManager.PreviouslyInResetTime)
                 {
                     // if we were disconnected and we're not within the reset times, send the error event
-                    OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. " +
-                                                                 "This could be because of internet connectivity issues or a log in from another location."
-                        ));
+                    OnDisconnected("Connection with Interactive Brokers lost. " +
+                                   "This could be because of internet connectivity issues or a log in from another location.");
                 }
             }
             else
@@ -5216,7 +5285,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     _ibAutomater.Stop();
                     var message = "2FA authentication confirmation required to reconnect.";
-                    OnMessage(BrokerageMessageEvent.Disconnected(message));
+                    OnDisconnected(message);
                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.ActionRequired, "2FAAuthRequired", message));
                 });
             }
@@ -5340,47 +5409,94 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                var restart = false;
-
-                lock (_lastIBAutomaterExitTimeLock)
+                try
                 {
-                    // if the gateway hasn't yet exited today, we restart manually
-                    if (_lastIBAutomaterExitTime.Date < DateTime.UtcNow.Date)
+                    lock (_gatewayRestartLock)
                     {
-                        restart = true;
-                    }
-                    else
-                    {
-                        Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: gateway already exited today and should have been automatically restarted.");
-                    }
-                }
-
-                if (restart)
-                {
-                    Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
-
-                    try
-                    {
-                        if (_ibAutomater.IsRunning())
+                        // the weekly restart exists to get the 2FA confirmation requested at the time the
+                        // user picked, so it skips on having logged in today, not on having exited: a
+                        // nightly exit comes back on the session token and asks for nothing. Checked under
+                        // the restart lock because the exit driven restart may be logging in right now
+                        if (!ShouldRunWeeklyRestart(LastGatewayLoginTime, DateTime.UtcNow))
                         {
-                            // stopping the gateway will make the IBAutomater emit the exit event, which will trigger the restart
-                            _ibAutomater?.Stop();
+                            Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): skip restart: the gateway already logged in today, at {LastGatewayLoginTime:u}.");
                         }
                         else
                         {
-                            // if the gateway is not running, we start it
-                            CheckIbAutomaterError(_ibAutomater.Start(false));
+                            Log.Trace($"InteractiveBrokersBrokerage.StartGatewayWeeklyRestartTask(): triggering weekly restart manually");
+
+                            if (_ibAutomater.IsRunning())
+                            {
+                                // stopping the gateway will make the IBAutomater emit the exit event, which will trigger the restart
+                                _ibAutomater?.Stop();
+                            }
+                            else
+                            {
+                                // if the gateway is not running, we start it. Starting is not connecting,
+                                // and the exit event that usually connects is not coming
+                                var result = StartGateway();
+                                CheckIbAutomaterError(result);
+
+                                if (!result.HasError)
+                                {
+                                    Connect();
+                                }
+                            }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Log.Error(ex);
-                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex);
                 }
 
                 // schedule the next weekly restart
                 StartGatewayWeeklyRestartTask();
             });
+        }
+
+        /// <summary>
+        /// When the gateway last logged in from zero, which is what requests a 2FA confirmation.
+        /// </summary>
+        private DateTime LastGatewayLoginTime
+        {
+            get
+            {
+                lock (_lastIBAutomaterExitTimeLock)
+                {
+                    return _lastGatewayLoginTime;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Whether the weekly restart still has to run: it skips only on the gateway having logged in
+        /// today, because a same day exit is no evidence that the weekly login happened.
+        /// </summary>
+        private static bool ShouldRunWeeklyRestart(DateTime lastLoginTimeUtc, DateTime utcNow)
+        {
+            return lastLoginTimeUtc.Date < utcNow.Date;
+        }
+
+        /// <summary>
+        /// Starts the gateway, recording when it logged in: IBAutomater returns success without doing
+        /// anything when the gateway is already running, and that is not a login.
+        /// </summary>
+        private StartResult StartGateway()
+        {
+            var loginRequired = !_ibAutomater.IsRunning();
+
+            var result = _ibAutomater.Start(false);
+
+            if (loginRequired && !result.HasError)
+            {
+                lock (_lastIBAutomaterExitTimeLock)
+                {
+                    _lastGatewayLoginTime = DateTime.UtcNow;
+                }
+            }
+
+            return result;
         }
 
         private void OnIbAutomaterErrorDataReceived(object sender, ErrorDataReceivedEventArgs e)
@@ -5438,31 +5554,45 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     try
                     {
-                        // We won't trigger a restart if the automater was already started in the meantime
-                        // or if there was an error starting it. If it's recoverable, it will be restarted
-                        // by the user action somewhere else
-                        if (_ibAutomater.IsRunning())
+                        lock (_gatewayRestartLock)
                         {
-                            Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): IBAutomater is already running, skipping restart.");
-                            return;
-                        }
+                            // if there was an error starting it and it's recoverable, it will be restarted
+                            // by the user action somewhere else
+                            var lastResult = _ibAutomater.GetLastStartResult();
+                            if (lastResult.HasError)
+                            {
+                                Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): last IBAutomater start had error, skipping restart.");
+                                return;
+                            }
 
-                        var lastResult = _ibAutomater.GetLastStartResult();
-                        if (lastResult.HasError)
-                        {
-                            Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): last IBAutomater start had error, skipping restart.");
-                            return;
-                        }
+                            // a running gateway is not a working one: the question is whether the
+                            // brokerage is connected, a gateway left up but unauthenticated answers
+                            // "running" and used to leave the deployment disconnected for days
+                            if (IsConnected)
+                            {
+                                Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): already connected, skipping restart.");
+                                return;
+                            }
 
-                        Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");
+                            if (_ibAutomater.IsRunning())
+                            {
+                                // up but takes no connection: stop it, the exit event will start it from
+                                // zero, which is what requests the 2FA confirmation it never got
+                                Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): IBAutomater is running but not connected, stopping it.");
+                                _ibAutomater.Stop();
+                                return;
+                            }
 
-                        var result = _ibAutomater.Start(false);
-                        CheckIbAutomaterError(result);
+                            Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");
 
-                        // Has error but we are still running, we might be waiting for 2FA user required action after timeout, let's not connect in that case
-                        if (!result.HasError)
-                        {
-                            Connect();
+                            var result = StartGateway();
+                            CheckIbAutomaterError(result);
+
+                            // Has error but we are still running, we might be waiting for 2FA user required action after timeout, let's not connect in that case
+                            if (!result.HasError)
+                            {
+                                Connect();
+                            }
                         }
                     }
                     catch (Exception exception)
