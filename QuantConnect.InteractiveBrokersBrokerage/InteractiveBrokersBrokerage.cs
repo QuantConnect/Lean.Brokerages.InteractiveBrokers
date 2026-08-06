@@ -1211,7 +1211,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                     catch (Exception)
                                     {
                                     }
-                                    Connect();
+                                    try
+                                    {
+                                        Connect();
+                                    }
+                                    catch (Exception exception)
+                                    {
+                                        // the monitor outlives a failed rebuild, or the next episode would go unreported
+                                        Log.Error(exception, "HeartBeat Connect");
+                                    }
                                 }
                             }
                             else
