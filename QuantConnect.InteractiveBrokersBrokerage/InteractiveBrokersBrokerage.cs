@@ -1072,35 +1072,51 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return true;
             }
 
-            if (!_isDisposeCalled &&
-                !_ibAutomater.IsWithinScheduledServerResetTimes() &&
-                // do not run heart beat if we are close to daily restarts
-                DateTime.Now.TimeOfDay < _heartBeatTimeLimit &&
+            // why being disconnected would be expected, null when nothing accounts for it. Most specific
+            // first: several hold at once during a nightly restart and the narrow one is worth more in a log
+            var expected = true switch
+            {
+                _ when _isDisposeCalled => "we are disposed",
+                // covers the wait before the exit driven restart, the login and the connect that follows
+                _ when IsWithinGatewayRecoveryGracePeriod() => "a gateway restart is still recovering",
+                // a connection attempt takes minutes when it needs a 2FA confirmation
+                _ when _stateManager.IsConnecting => "a connection attempt is in progress",
                 // do not run heart beat if we are restarting
-                !IsRestartInProgress() &&
-                // nor while a restart we drive is still recovering, see OnIbAutomaterExited
-                !IsWithinGatewayRecoveryGracePeriod())
+                _ when IsRestartInProgress() => "a gateway restart is in progress",
+                // do not run heart beat if we are close to daily restarts
+                _ when DateTime.Now.TimeOfDay >= _heartBeatTimeLimit => "close to the gateway daily restart",
+                _ when _ibAutomater.IsWithinScheduledServerResetTimes() => "within the IB scheduled server reset times",
+                _ => null
+            };
+
+            if (expected != null)
             {
                 if (!IsConnected)
                 {
-                    // a lost connection that nothing accounts for: reporting it as a healthy beat is
-                    // what kept a gateway restart that never came back unnoticed for days
-                    Log.Error("InteractiveBrokersBrokerage.HeartBeat(): not connected!", overrideMessageFloodProtection: true);
-                    return false;
+                    // says which reason answered, so a quiet beat can be told from one hiding a real loss
+                    Log.Trace($"InteractiveBrokersBrokerage.HeartBeat(): not connected, but it is expected: {expected}");
                 }
-
-                _currentTimeEvent.Reset();
-                // request current time to the server
-                _client.ClientSocket.reqCurrentTime();
-                var result = _currentTimeEvent.WaitOne(Time.GetSecondUnevenWait(waitTimeMs), _cancellationTokenSource.Token);
-                if (!result)
-                {
-                    Log.Error("InteractiveBrokersBrokerage.HeartBeat(): failed!", overrideMessageFloodProtection: true);
-                }
-                return result;
+                // a probe this close to a restart fails whether or not anything is wrong, so skip it
+                return true;
             }
-            // expected
-            return true;
+
+            if (!IsConnected)
+            {
+                // a lost connection that nothing accounts for: reporting it as a healthy beat is
+                // what kept a gateway restart that never came back unnoticed for days
+                Log.Error("InteractiveBrokersBrokerage.HeartBeat(): not connected!", overrideMessageFloodProtection: true);
+                return false;
+            }
+
+            _currentTimeEvent.Reset();
+            // request current time to the server
+            _client.ClientSocket.reqCurrentTime();
+            var result = _currentTimeEvent.WaitOne(Time.GetSecondUnevenWait(waitTimeMs), _cancellationTokenSource.Token);
+            if (!result)
+            {
+                Log.Error("InteractiveBrokersBrokerage.HeartBeat(): failed!", overrideMessageFloodProtection: true);
+            }
+            return result;
         }
 
         /// <summary>

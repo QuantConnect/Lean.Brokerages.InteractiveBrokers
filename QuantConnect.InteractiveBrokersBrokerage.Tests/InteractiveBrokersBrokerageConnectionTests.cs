@@ -93,6 +93,18 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(InvokeHeartBeat(brokerage), "disposing accounts for the disconnection");
         }
 
+        // a connection attempt holds IsConnected false for as long as it runs, which is minutes when
+        // it needs a 2FA confirmation
+        [Test]
+        public void HeartBeatStaysQuietWhileConnecting()
+        {
+            using var brokerage = new InteractiveBrokersBrokerage();
+            SetPrivateField(brokerage, "_ibAutomater", CreateInertAutomater());
+            GetStateManager(brokerage).IsConnecting = true;
+
+            Assert.IsTrue(InvokeHeartBeat(brokerage), "a connection attempt in progress accounts for the disconnection");
+        }
+
         // DefaultBrokerageMessageHandler disposes its pending countdown and starts a new one on every
         // disconnect message, so repeating it while still down would defer the shutdown forever.
         [Test]
@@ -181,6 +193,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             return (bool)typeof(InteractiveBrokersBrokerage)
                 .GetMethod("ShouldRunWeeklyRestart", BindingFlags.NonPublic | BindingFlags.Static)
                 .Invoke(null, new object[] { lastLoginTimeUtc, utcNow });
+        }
+
+        private static InteractiveBrokersStateManager GetStateManager(InteractiveBrokersBrokerage brokerage)
+        {
+            return (InteractiveBrokersStateManager)typeof(InteractiveBrokersBrokerage)
+                .GetField("_stateManager", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(brokerage);
         }
 
         private static object InvokePrivate(object instance, string name, object[] arguments)
