@@ -160,6 +160,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // tracks pending brokerage order responses. In some cases we've seen orders been placed and they never get through to IB
         private readonly ConcurrentDictionary<int, ManualResetEventSlim> _pendingOrderResponse = new();
 
+        // On a Financial Advisor account IBGateway confirms the first order of a deployment with a warning
+        // dialog and silently drops every other order that reaches it while that dialog is unanswered,
+        // so the first order goes alone
+        private readonly ManualResetEventSlim _financialAdvisorFirstOrderAnswered = new(false);
+        private int _financialAdvisorFirstOrderClaimed;
+
         // tracks the pending orders in the group before emitting the fill events
         private readonly Dictionary<int, List<PendingFillEvent>> _pendingGroupOrdersForFilling = new();
 
@@ -1423,6 +1429,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _aggregator = Composer.Instance.GetExportedValueByTypeName<IDataAggregator>(aggregatorName);
             }
             _account = account;
+            if (!IsFinancialAdvisor)
+            {
+                // no warning dialog to wait for, never hold an order back
+                _financialAdvisorFirstOrderAnswered.Set();
+            }
             _host = host;
             _port = port;
 
@@ -1574,96 +1585,134 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             CheckRateLimiting();
 
+            var isFirstFinancialAdvisorOrder = WaitForFinancialAdvisorFirstOrder();
+
             int ibOrderId;
             ManualResetEventSlim orderSubmittedEvent = null;
 
-            // Let's lock here so that getting request id and placing the order is atomic.
-            // If there are multiple threads placing orders at the same time, two threads could
-            // get ids but the one with the higher id could place the order first, making the other
-            // order request to fail, since IB will assume the previous request ID was already used.
-            lock (_nextValidIdLocker)
+            try
             {
-                if (needsNewId)
+                // Let's lock here so that getting request id and placing the order is atomic.
+                // If there are multiple threads placing orders at the same time, two threads could
+                // get ids but the one with the higher id could place the order first, making the other
+                // order request to fail, since IB will assume the previous request ID was already used.
+                lock (_nextValidIdLocker)
                 {
-                    // the order ids are generated for us by the SecurityTransactionManaer
-                    var id = GetNextId();
-                    foreach (var newOrder in orders)
+                    if (needsNewId)
                     {
-                        newOrder.BrokerId.Add(id.ToStringInvariant());
-                    }
-                    ibOrderId = id;
-                }
-                else if (order.BrokerId.Any())
-                {
-                    // this is *not* perfect code
-                    ibOrderId = Parse.Int(order.BrokerId[0]);
-                }
-                else
-                {
-                    throw new ArgumentException("Expected order with populated BrokerId for updating orders.");
-                }
-
-                Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}. BrokerId: {ibOrderId}");
-
-                _requestInformation[ibOrderId] = new RequestInformation
-                {
-                    RequestId = ibOrderId,
-                    RequestType = RequestType.PlaceOrder,
-                    AssociatedSymbol = order.Symbol,
-                    Message = $"[Id={ibOrderId}] IBPlaceOrder: {order.Symbol.Value} ({GetContractDescription(contract)} )"
-                };
-
-                if (order.Type == OrderType.OptionExercise)
-                {
-                    // IB API requires exerciseQuantity to be positive
-                    _client.ClientSocket.exerciseOptions(ibOrderId, contract, 1, decimal.ToInt32(order.AbsoluteQuantity), _account, 0,
-                        string.Empty, string.Empty, false);
-                }
-                else
-                {
-                    _pendingOrderResponse[ibOrderId] = orderSubmittedEvent = new ManualResetEventSlim(false);
-                    var ibOrder = ConvertOrder(orders, contract, ibOrderId);
-                    _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
-                }
-            }
-
-            if (order.Type != OrderType.OptionExercise)
-            {
-                var noSubmissionOrderTypes = _noSubmissionOrderTypes.Contains(order.Type);
-                if (!orderSubmittedEvent.Wait(noSubmissionOrderTypes ? _noSubmissionOrdersResponseTimeout : _responseTimeout))
-                {
-                    if (noSubmissionOrderTypes)
-                    {
-                        if (!_submissionOrdersWarningSent)
+                        // the order ids are generated for us by the SecurityTransactionManaer
+                        var id = GetNextId();
+                        foreach (var newOrder in orders)
                         {
-                            _submissionOrdersWarningSent = true;
-                            OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning,
-                                "OrderSubmissionWarning",
-                                "Interactive Brokers does not send a submission event for some order types, in these cases if no error is detected Lean will generate the submission event."));
+                            newOrder.BrokerId.Add(id.ToStringInvariant());
                         }
+                        ibOrderId = id;
+                    }
+                    else if (order.BrokerId.Any())
+                    {
+                        // this is *not* perfect code
+                        ibOrderId = Parse.Int(order.BrokerId[0]);
+                    }
+                    else
+                    {
+                        throw new ArgumentException("Expected order with populated BrokerId for updating orders.");
+                    }
 
-                        if (_pendingOrderResponse.TryRemove(ibOrderId, out var _))
+                    Log.Trace($"InteractiveBrokersBrokerage.PlaceOrder(): Symbol: {order.Symbol.Value} Quantity: {order.Quantity}. Id: {order.Id}. BrokerId: {ibOrderId}");
+
+                    _requestInformation[ibOrderId] = new RequestInformation
+                    {
+                        RequestId = ibOrderId,
+                        RequestType = RequestType.PlaceOrder,
+                        AssociatedSymbol = order.Symbol,
+                        Message = $"[Id={ibOrderId}] IBPlaceOrder: {order.Symbol.Value} ({GetContractDescription(contract)} )"
+                    };
+
+                    if (order.Type == OrderType.OptionExercise)
+                    {
+                        // IB API requires exerciseQuantity to be positive
+                        _client.ClientSocket.exerciseOptions(ibOrderId, contract, 1, decimal.ToInt32(order.AbsoluteQuantity), _account, 0,
+                            string.Empty, string.Empty, false);
+                    }
+                    else
+                    {
+                        _pendingOrderResponse[ibOrderId] = orderSubmittedEvent = new ManualResetEventSlim(false);
+                        var ibOrder = ConvertOrder(orders, contract, ibOrderId);
+                        _client.ClientSocket.placeOrder(ibOrder.OrderId, contract, ibOrder);
+                    }
+                }
+
+                if (order.Type != OrderType.OptionExercise)
+                {
+                    var noSubmissionOrderTypes = _noSubmissionOrderTypes.Contains(order.Type);
+                    if (!orderSubmittedEvent.Wait(noSubmissionOrderTypes ? _noSubmissionOrdersResponseTimeout : _responseTimeout))
+                    {
+                        if (noSubmissionOrderTypes)
                         {
-                            orderSubmittedEvent.DisposeSafely();
-
-                            var orderEvents = orders.Where(order => order != null).Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
+                            if (!_submissionOrdersWarningSent)
                             {
-                                Status = OrderStatus.Submitted,
-                                Message = "Lean Generated Interactive Brokers Order Event"
-                            }).ToList();
-                            OnOrderEvents(orderEvents);
+                                _submissionOrdersWarningSent = true;
+                                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning,
+                                    "OrderSubmissionWarning",
+                                    "Interactive Brokers does not send a submission event for some order types, in these cases if no error is detected Lean will generate the submission event."));
+                            }
+
+                            if (_pendingOrderResponse.TryRemove(ibOrderId, out var _))
+                            {
+                                orderSubmittedEvent.DisposeSafely();
+
+                                var orderEvents = orders.Where(order => order != null).Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
+                                {
+                                    Status = OrderStatus.Submitted,
+                                    Message = "Lean Generated Interactive Brokers Order Event"
+                                }).ToList();
+                                OnOrderEvents(orderEvents);
+                            }
+                        }
+                        else
+                        {
+                            OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}"));
                         }
                     }
                     else
                     {
-                        OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}"));
+                        orderSubmittedEvent.DisposeSafely();
                     }
                 }
-                else
+            }
+            finally
+            {
+                if (isFirstFinancialAdvisorOrder)
                 {
-                    orderSubmittedEvent.DisposeSafely();
+                    // release the batch even when this order timed out
+                    _financialAdvisorFirstOrderAnswered.Set();
                 }
             }
+        }
+
+        /// <summary>
+        /// Holds a Financial Advisor order back until the first order of the deployment has been answered
+        /// </summary>
+        /// <returns>True for the first order, whose caller must signal
+        /// <see cref="_financialAdvisorFirstOrderAnswered"/></returns>
+        private bool WaitForFinancialAdvisorFirstOrder()
+        {
+            if (_financialAdvisorFirstOrderAnswered.IsSet)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _financialAdvisorFirstOrderClaimed, 1, 0) == 0)
+            {
+                return true;
+            }
+
+            Log.Trace("InteractiveBrokersBrokerage.WaitForFinancialAdvisorFirstOrder(): waiting for the first order to be answered");
+
+            // cannot take longer than the first order's own timeout
+            _financialAdvisorFirstOrderAnswered.Wait(_responseTimeout, _cancellationTokenSource.Token);
+
+            return false;
         }
 
         /// <summary>
