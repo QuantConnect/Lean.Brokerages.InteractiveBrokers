@@ -94,6 +94,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 !string.IsNullOrEmpty(weeklyRestartUtcTimeStr))
             {
                 weeklyRestartUtcTime = TimeSpan.Parse(weeklyRestartUtcTimeStr);
+                // leaves room for the check 5 minutes earlier and a login with 2FA retries before 23:45 UTC
+                var maxWeeklyRestartUtcTime = new TimeSpan(23, 30, 0);
+                if (weeklyRestartUtcTime > maxWeeklyRestartUtcTime)
+                {
+                    throw new Exception($"The requested weekly restart time {weeklyRestartUtcTime:hh\\:mm} UTC is too close to the IB Gateway daily restart at 23:45 UTC and the weekly 2FA login would be skipped. " +
+                        $"Please choose any time up to {maxWeeklyRestartUtcTime:hh\\:mm} UTC.");
+                }
             }
 
             if (errors.Count != 0)
