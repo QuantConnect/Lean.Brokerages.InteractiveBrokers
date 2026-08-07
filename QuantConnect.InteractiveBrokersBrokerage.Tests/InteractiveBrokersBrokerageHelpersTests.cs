@@ -14,6 +14,10 @@
 */
 
 using System;
+using System.Linq;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 
 using NUnit.Framework;
 
@@ -66,5 +70,78 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 new DateTime(2022, 12, 4, 12, 30, 25),  // Sunday
                 new DateTime(2022, 12, 4))   // Same Sunday
         };
+
+        // IBGateway confirms the first order of a deployment on a Financial Advisor account with a warning
+        // dialog and silently drops every other order that reaches it while that dialog is unanswered, so
+        // only one order may be in flight until the first one is answered
+        [Test]
+        public void OnlyTheFirstFinancialAdvisorOrderIsLetThroughUntilItIsAnswered()
+        {
+            using var brokerage = CreateBrokerage(financialAdvisor: true);
+
+            Assert.IsTrue(WaitForFinancialAdvisorFirstOrder(brokerage), "the first order should claim the gate");
+
+            var released = 0;
+            var followers = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+            {
+                Assert.IsFalse(WaitForFinancialAdvisorFirstOrder(brokerage), "only one order may claim the gate");
+                Interlocked.Increment(ref released);
+            })).ToArray();
+
+            // the followers must stay held back while the first order is unanswered
+            Assert.IsFalse(Task.WaitAll(followers, TimeSpan.FromMilliseconds(500)));
+            Assert.AreEqual(0, released);
+
+            GetFirstOrderAnsweredEvent(brokerage).Set();
+
+            Assert.IsTrue(Task.WaitAll(followers, TimeSpan.FromSeconds(5)), "the batch should be released");
+            Assert.AreEqual(4, released);
+        }
+
+        [Test]
+        public void FinancialAdvisorOrdersAreNotHeldBackOnceTheFirstOneIsAnswered()
+        {
+            using var brokerage = CreateBrokerage(financialAdvisor: true);
+            GetFirstOrderAnsweredEvent(brokerage).Set();
+
+            // no order claims the gate anymore, so none of them waits
+            Assert.IsFalse(WaitForFinancialAdvisorFirstOrder(brokerage));
+            Assert.IsFalse(WaitForFinancialAdvisorFirstOrder(brokerage));
+        }
+
+        [Test]
+        public void NonFinancialAdvisorOrdersAreNeverHeldBack()
+        {
+            // a non advisor account opens the gate on initialization, no order ever waits
+            using var brokerage = CreateBrokerage(financialAdvisor: false);
+
+            Assert.IsFalse(WaitForFinancialAdvisorFirstOrder(brokerage));
+            Assert.IsFalse(WaitForFinancialAdvisorFirstOrder(brokerage));
+        }
+
+        private static InteractiveBrokersBrokerage CreateBrokerage(bool financialAdvisor)
+        {
+            var brokerage = new InteractiveBrokersBrokerage();
+            if (!financialAdvisor)
+            {
+                // Initialize() opens the gate for non advisor accounts, it is not run for a bare instance
+                GetFirstOrderAnsweredEvent(brokerage).Set();
+            }
+            return brokerage;
+        }
+
+        private static bool WaitForFinancialAdvisorFirstOrder(InteractiveBrokersBrokerage brokerage)
+        {
+            return (bool)typeof(InteractiveBrokersBrokerage)
+                .GetMethod("WaitForFinancialAdvisorFirstOrder", BindingFlags.NonPublic | BindingFlags.Instance)
+                .Invoke(brokerage, null);
+        }
+
+        private static ManualResetEventSlim GetFirstOrderAnsweredEvent(InteractiveBrokersBrokerage brokerage)
+        {
+            return (ManualResetEventSlim)typeof(InteractiveBrokersBrokerage)
+                .GetField("_financialAdvisorFirstOrderAnswered", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(brokerage);
+        }
     }
 }
