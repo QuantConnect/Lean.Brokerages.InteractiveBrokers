@@ -2068,6 +2068,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
 
                 _stateManager.Disconnected1100Fired = false;
+
+                // connectivity is back: cancel any gateway restart scheduled while we were disconnected
+                StopGatewayRestartTask();
                 return;
             }
             else if (errorCode == 1101)
@@ -2076,6 +2079,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
 
                 _stateManager.Disconnected1100Fired = false;
+
+                // connectivity is back: cancel any gateway restart scheduled while we were disconnected
+                StopGatewayRestartTask();
 
                 RestoreDataSubscriptions();
                 return;
@@ -2221,13 +2227,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             if (!isResetTime)
             {
-                if (!_stateManager.PreviouslyInResetTime)
-                {
-                    // if we were disconnected and we're not within the reset times, send the error event
-                    OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. " +
-                                                                 "This could be because of internet connectivity issues or a log in from another location."
-                        ));
-                }
+                // always notify the algorithm, including when a disconnection that started inside the reset
+                // window survives past its end: the previous behavior silently dropped that case, leaving the
+                // engine unaware of a dead connection until the next order failed
+                var message = _stateManager.PreviouslyInResetTime
+                    ? "Connection with Interactive Brokers was not restored after the scheduled server reset window ended. " +
+                      "A gateway restart has been scheduled to attempt recovery."
+                    : "Connection with Interactive Brokers lost. " +
+                      "This could be because of internet connectivity issues or a log in from another location. " +
+                      "A gateway restart has been scheduled to attempt recovery.";
+                OnMessage(BrokerageMessageEvent.Disconnected(message));
+
+                // the gateway can be stuck at a login window after the reset; a soft restart performs a fresh
+                // login without requesting 2FA. No-op if a restart is already scheduled; cancelled on 1101/1102.
+                StartGatewayRestartTask();
             }
             else
             {
