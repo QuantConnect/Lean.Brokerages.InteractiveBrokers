@@ -262,7 +262,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var orderProperties = new InteractiveBrokersOrderProperties();
             // a fixed id would send IB the same OcaGroup string ("lean-oco-1") on every run, which can collide
             // with a resting group left behind by a previous, aborted run
-            var group = new GroupOrderManager(unchecked((int)DateTime.UtcNow.Ticks), legCount: 2, quantity) { ComboType = ComboType.OneCancelsTheOther };
+            var group = new GroupOrderManager(unchecked((int)DateTime.UtcNow.Ticks), legCount: 2, quantity) { ExecutionType = GroupExecutionType.OneCancelsTheOther };
 
             var limitRequest = new SubmitOrderRequest(OrderType.Limit, symbol.SecurityType, symbol, quantity, 0, limitPrice, 0,
                 DateTime.UtcNow, string.Empty, orderProperties, groupOrderManager: group);
@@ -338,7 +338,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             // a fixed id would send IB the same OcaGroup string ("lean-oco-1") on every run, which can collide
             // with a resting group left behind by a previous, aborted run
 
-            var group = new GroupOrderManager(unchecked((int)DateTime.UtcNow.Ticks), legCount: 5, quantity) { ComboType = ComboType.OneCancelsTheOther };
+            var group = new GroupOrderManager(unchecked((int)DateTime.UtcNow.Ticks), legCount: 5, quantity) { ExecutionType = GroupExecutionType.OneCancelsTheOther };
 
             var limitOrder_1 = BuildOneCancelsTheOtherLimitLeg(symbol, quantity, limitPrice, group, orderProperties, algo.Transactions);
             var limitOrder_2 = BuildOneCancelsTheOtherLimitLeg(symbol, quantity, limitPrice - 0.01m, group, orderProperties, algo.Transactions);
