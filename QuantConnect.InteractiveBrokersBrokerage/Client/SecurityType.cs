@@ -81,6 +81,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         public const string ContractForDifference = "CFD";
 
         /// <summary>
+        /// Cryptocurrency
+        /// </summary>
+        public const string Crypto = "CRYPTO";
+
+        /// <summary>
         /// Undefined Security Type
         /// </summary>
         public const string Undefined = "";

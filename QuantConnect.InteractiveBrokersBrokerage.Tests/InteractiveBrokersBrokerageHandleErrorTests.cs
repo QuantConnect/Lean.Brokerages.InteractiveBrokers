@@ -75,6 +75,41 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(expectedMessageCount, messages.Count(m => m.Code == "300"));
         }
 
+        // IB holds a crypto order sent while its venue is closed and says so with 399 just before reporting it
+        // submitted: the order stays open and the user is told. Sequence from a live paper run on 2026-08-29
+        [Test]
+        public void HandleErrorWarnsAboutCryptoOrdersHeldByTheClosedVenue()
+        {
+            using var brokerage = new InteractiveBrokersBrokerage();
+            const int ibOrderId = 46;
+            var symbol = Symbol.Create("BTCUSD", SecurityType.Crypto, Market.Coinbase);
+            var orderProvider = new OrderProvider();
+            var order = new MarketOrder(symbol, 0.00026m, DateTime.UtcNow);
+            orderProvider.Add(order);
+            order.BrokerId.Add(ibOrderId.ToString());
+            SetPrivateFieldValue(brokerage, "_orderProvider", orderProvider);
+            SeedRequestInformation(brokerage, ibOrderId, "PlaceOrder", symbol);
+
+            List<BrokerageMessageEvent> messages = [];
+            List<OrderEvent> orderEvents = [];
+            brokerage.Message += (_, message) => messages.Add(message);
+            brokerage.OrdersStatusChanged += (_, events) => orderEvents.AddRange(events);
+
+            brokerage.HandleError(this, new IB.ErrorEventArgs(
+                id: ibOrderId,
+                time: 0,
+                code: 399,
+                message: "Order Message: BUY 20 USD BTC Crypto (BTC) (BTC.USD)  Warning: your order will not be placed " +
+                    "at the exchange until 2026-08-30 03:00:00 US/Eastern.  To submit the order to the exchange sooner please do so in the Crypto Plus Web-App."));
+
+            Assert.IsEmpty(orderEvents);
+            var held = messages.Single(x => x.Code == "CryptoOrderHeld");
+            Assert.AreEqual(BrokerageMessageType.Warning, held.Type);
+            StringAssert.Contains("brokerage id 46", held.Message);
+            StringAssert.Contains("Sunday 03:00 to Friday 16:00", held.Message);
+            Assert.AreEqual(1, messages.Count(x => x.Code == "399"));
+        }
+
         // errors rejecting an order request must invalidate the order and release the thread waiting
         // for the order response, otherwise the wait times out five minutes later and stops the
         // algorithm with 'Timeout waiting for brokerage response' instead of the actual reason.

@@ -16,8 +16,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using IBApi;
 using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
@@ -268,6 +270,152 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             cancelationToken.Dispose();
 
             Assert.IsTrue(tickers.Any(x => symbolsWithData.Any(symbol => symbol.Value == x)));
+        }
+
+        /// <summary>
+        /// Resolves every candidate cryptocurrency against IB and reports the trading parameters it
+        /// answers with, so the symbol properties database can be filled from measured values.
+        /// IB does not enumerate its crypto universe, so the candidates have to be probed one by one.
+        /// </summary>
+        [Test]
+        public void ProbesCryptoUniverseParameters()
+        {
+            Thread.Sleep(2000);
+
+            // IBKR's published list plus other coins commonly offered, IB rejects the ones it does not have
+            var candidates = new[]
+            {
+                "AAVE", "ADA", "ALGO", "APE", "APT", "ARB", "ATOM", "AVAX", "AXS", "BAT",
+                "BCH", "BNB", "BTC", "CANTON", "CC", "COMP", "CRV", "DOGE", "DOT", "ENA",
+                "ENJ", "ETC", "ETH", "FIL", "GRT", "HBAR", "ICP", "IMX", "INJ", "JUP",
+                "LDO", "LINK", "LTC", "MANA", "MATIC", "MKR", "MON", "NEAR", "ONDO", "OP",
+                "PAXG", "PEPE", "RNDR", "SAND", "SEI", "SHIB", "SOL", "STX", "SUI", "SUSHI",
+                "TIA", "TON", "TRX", "UNI", "VET", "WIF", "XLM", "XPL", "XRP", "XTZ", "YFI"
+            };
+
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+            ib.Connect();
+
+            List<string> resolved = [];
+            List<string> missing = [];
+
+            foreach (var baseCurrency in candidates)
+            {
+                var contract = new Contract
+                {
+                    Symbol = baseCurrency,
+                    SecType = "CRYPTO",
+                    Exchange = "PAXOS",
+                    Currency = Currencies.USD
+                };
+
+                ContractDetails details = null;
+                try
+                {
+                    details = ib.GetContractDetails(contract, baseCurrency + Currencies.USD, failIfNotFound: false);
+                }
+                catch (Exception exception)
+                {
+                    QuantConnect.Logging.Log.Trace($"CryptoUniverse: {baseCurrency} lookup failed: {exception.Message}");
+                }
+
+                if (details == null)
+                {
+                    missing.Add(baseCurrency);
+                    continue;
+                }
+
+                // ready to paste into the symbol properties database
+                resolved.Add($"interactivebrokers,{baseCurrency}{Currencies.USD},crypto,{details.LongName}," +
+                    $"{Currencies.USD},1,{details.MinTick},{details.SizeIncrement},{baseCurrency},{details.MinSize}");
+            }
+
+            QuantConnect.Logging.Log.Trace($"CryptoUniverse: resolved {resolved.Count}, missing {missing.Count} [{string.Join(",", missing)}]");
+            foreach (var row in resolved)
+            {
+                QuantConnect.Logging.Log.Trace("CryptoUniverseRow: " + row);
+            }
+        }
+
+        [Test]
+        public void CanSubscribeToCrypto()
+        {
+            // one gateway session for every pair, connecting is expensive
+            string[] tickers = ["BTCUSD", "ETHUSD", "BTCEUR", "ETHBTC"];
+
+            // Wait a bit to make sure previous tests already disconnected from IB
+            Thread.Sleep(2000);
+
+            using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
+
+            List<string> brokerageMessages = [];
+            ib.Message += (_, message) =>
+            {
+                lock (brokerageMessages)
+                {
+                    brokerageMessages.Add($"{message.Type} {message.Code}: {message.Message}");
+                }
+            };
+            ib.Connect();
+
+            var createContract = typeof(InteractiveBrokersBrokerage)
+                .GetMethod("CreateContract", BindingFlags.NonPublic | BindingFlags.Instance);
+            List<string> resolvedTickers = [];
+            List<string> tickersWithData = [];
+
+            foreach (var ticker in tickers)
+            {
+                var symbol = Symbol.Create(ticker, SecurityType.Crypto, Market.Coinbase);
+
+                // private, but it is the conversion under test
+                var contract = (Contract)createContract.Invoke(ib, [symbol, false, null, null]);
+                QuantConnect.Logging.Log.Trace($"CryptoProbe({ticker}): contract {InteractiveBrokersBrokerage.GetContractDescription(contract)}");
+
+                var details = ib.GetContractDetails(contract, symbol.Value, failIfNotFound: false);
+                if (details == null)
+                {
+                    QuantConnect.Logging.Log.Trace($"CryptoProbe({ticker}): NO CONTRACT");
+                    continue;
+                }
+
+                resolvedTickers.Add(ticker);
+                QuantConnect.Logging.Log.Trace($"CryptoProbe({ticker}): RESOLVED conId={details.Contract.ConId} minTick={details.MinTick} " +
+                    $"tradingClass={details.Contract.TradingClass} validExchanges={details.ValidExchanges} minSize={details.MinSize} sizeIncrement={details.SizeIncrement}");
+
+                var receivedData = false;
+                var loggedTicks = 0;
+                using var cancelationToken = new CancellationTokenSource();
+                ProcessFeed(
+                    ib.Subscribe(GetSubscriptionDataConfig<Tick>(symbol, Resolution.Tick), (s, e) => { receivedData = true; }),
+                    cancelationToken,
+                    (dataPoint) =>
+                    {
+                        if (dataPoint is Tick tick && loggedTicks++ < 3)
+                        {
+                            QuantConnect.Logging.Log.Trace($"CryptoProbe({ticker}): {tick.TickType} {tick.EndTime:O} " +
+                                $"price={tick.Price} bid={tick.BidPrice} ask={tick.AskPrice} quantity={tick.Quantity}");
+                        }
+                    });
+
+                Thread.Sleep(15 * 1000);
+                cancelationToken.Cancel();
+
+                if (receivedData)
+                {
+                    tickersWithData.Add(ticker);
+                }
+                QuantConnect.Logging.Log.Trace($"CryptoProbe({ticker}): receivedData={receivedData}");
+            }
+
+            QuantConnect.Logging.Log.Trace($"CryptoProbe: resolved=[{string.Join(",", resolvedTickers)}] withData=[{string.Join(",", tickersWithData)}]");
+            lock (brokerageMessages)
+            {
+                QuantConnect.Logging.Log.Trace($"CryptoProbe: brokerage messages: {(brokerageMessages.Count == 0 ? "none" : string.Join(" | ", brokerageMessages))}");
+            }
+
+            // the pair every IB crypto enabled account can trade
+            CollectionAssert.Contains(resolvedTickers, "BTCUSD");
+            CollectionAssert.Contains(tickersWithData, "BTCUSD");
         }
 
         private static TestCaseData[] GetCFDAndUnderlyingSubscriptionTestCases()

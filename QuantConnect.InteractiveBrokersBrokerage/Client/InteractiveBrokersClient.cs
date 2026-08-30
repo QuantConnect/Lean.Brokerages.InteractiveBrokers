@@ -392,8 +392,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="averageCost">The average cost of the position.</param>
         public override void positionMulti(int requestId, string account, string modelCode, Contract contract, decimal position, double averageCost)
         {
-            var positionValue = Convert.ToInt32(position);
-            OnUpdatePortfolio(new UpdatePortfolioEventArgs(contract, positionValue, 0, 0, averageCost, 0, 0, account));
+            OnUpdatePortfolio(new UpdatePortfolioEventArgs(contract, position, 0, 0, averageCost, 0, 0, account));
         }
 
         /// <summary>
@@ -452,8 +451,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         public override void updatePortfolio(Contract contract, decimal position, double marketPrice, double marketValue, double averageCost,
             double unrealisedPnl, double realisedPnl, string accountName)
         {
-            var positionValue = Convert.ToInt32(position);
-            OnUpdatePortfolio(new UpdatePortfolioEventArgs(contract, positionValue, marketPrice, marketValue, averageCost, unrealisedPnl, realisedPnl,
+            OnUpdatePortfolio(new UpdatePortfolioEventArgs(contract, position, marketPrice, marketValue, averageCost, unrealisedPnl, realisedPnl,
                 accountName));
         }
 
@@ -482,9 +480,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <param name="mktCapPrice">If an order has been capped, this indicates the current capped price. Requires TWS 967+ and API v973.04+. Python API specifically requires API v973.06+.</param>
         public override void orderStatus(int orderId, string status, decimal filled, decimal remaining, double avgFillPrice, long permId, int parentId, double lastFillPrice, int clientId, string whyHeld, double mktCapPrice)
         {
-            var filledValue = Convert.ToInt32(filled);
-            var remainingValue = Convert.ToInt32(remaining);
-            OnOrderStatus(new OrderStatusEventArgs(orderId, status, filledValue, remainingValue, avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice));
+            OnOrderStatus(new OrderStatusEventArgs(orderId, status, filled, remaining, avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice));
         }
 
         /// <summary>
