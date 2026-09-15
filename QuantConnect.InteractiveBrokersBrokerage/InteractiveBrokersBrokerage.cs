@@ -1507,8 +1507,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             DeploymentDetailsHelper.Add("ib-account", account);
             DeploymentDetailsHelper.Add("ib-user-name", userName);
             DeploymentDetailsHelper.Add("ib-trading-mode", tradingMode);
-            DeploymentDetailsHelper.Add("ib-host", host);
-            DeploymentDetailsHelper.Add("ib-port", port.ToStringInvariant());
 
             _client = new IB.InteractiveBrokersClient(_signal);
 
