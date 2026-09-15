@@ -1507,6 +1507,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             DeploymentDetailsHelper.Add("ib-account", account);
             DeploymentDetailsHelper.Add("ib-user-name", userName);
             DeploymentDetailsHelper.Add("ib-trading-mode", tradingMode);
+            DeploymentDetailsHelper.Add("ib-financial-advisors-group-filter", financialAdvisorsGroupFilter);
 
             _client = new IB.InteractiveBrokersClient(_signal);
 
