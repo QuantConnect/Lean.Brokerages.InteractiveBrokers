@@ -43,14 +43,38 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         public string AccountName { get; }
 
         /// <summary>
+        /// Gets the originating account-updates-multi request identifier, if any.
+        /// </summary>
+        public int? AccountUpdatesMultiRequestId { get; }
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="UpdateAccountValueEventArgs"/> class
         /// </summary>
         public UpdateAccountValueEventArgs(string key, string value, string currency, string accountName)
+            : this(key, value, currency, accountName, null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="UpdateAccountValueEventArgs"/> class.
+        /// </summary>
+        /// <param name="key">The account-value key.</param>
+        /// <param name="value">The account value.</param>
+        /// <param name="currency">The value currency.</param>
+        /// <param name="accountName">The account receiving the update.</param>
+        /// <param name="accountUpdatesMultiRequestId">The originating account-updates-multi request identifier.</param>
+        internal UpdateAccountValueEventArgs(
+            string key,
+            string value,
+            string currency,
+            string accountName,
+            int? accountUpdatesMultiRequestId)
         {
             Key = key;
             Value = value;
             Currency = currency;
             AccountName = accountName;
+            AccountUpdatesMultiRequestId = accountUpdatesMultiRequestId;
         }
     }
 }

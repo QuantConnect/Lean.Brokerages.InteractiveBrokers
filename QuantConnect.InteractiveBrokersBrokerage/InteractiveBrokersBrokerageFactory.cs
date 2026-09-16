@@ -51,7 +51,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             { "ib-trading-mode", Config.Get("ib-trading-mode") },
             { "ib-agent-description", Config.Get("ib-agent-description") },
             { "ib-weekly-restart-utc-time", Config.Get("ib-weekly-restart-utc-time") },
-            { "ib-financial-advisors-group-filter", Config.Get("ib-financial-advisors-group-filter") }
+            { "ib-financial-advisors-group-filter", Config.Get("ib-financial-advisors-group-filter") },
+            { "ib-financial-advisors-group-management-enabled", Config.Get("ib-financial-advisors-group-management-enabled") },
+            { "ib-financial-advisors-unified-groups-enabled", Config.Get("ib-financial-advisors-unified-groups-enabled") }
         };
 
         /// <summary>
@@ -81,7 +83,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var password = Read<string>(job.BrokerageData, "ib-password", errors);
             var tradingMode = Read<string>(job.BrokerageData, "ib-trading-mode", errors);
             var agentDescription = Read<string>(job.BrokerageData, "ib-agent-description", errors);
-            job.BrokerageData.TryGetValue("ib-financial-advisors-group-filter", out var financialAdvisorsGroupFilter);
+            ParseFinancialAdvisorSettings(
+                job.BrokerageData,
+                errors,
+                out var financialAdvisorsGroupFilter,
+                out var financialAdvisorGroupManagementEnabled,
+                out var financialAdvisorUnifiedGroupsEnabled);
 
             var loadExistingHoldings = true;
             if (job.BrokerageData.ContainsKey("load-existing-holdings"))
@@ -129,10 +136,58 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 agentDescription,
                 loadExistingHoldings,
                 weeklyRestartUtcTime,
-                financialAdvisorsGroupFilter);
+                financialAdvisorsGroupFilter,
+                financialAdvisorGroupManagementEnabled,
+                financialAdvisorUnifiedGroupsEnabled);
             Composer.Instance.AddPart<IDataQueueHandler>(ib);
 
             return ib;
+        }
+
+        internal static void ParseFinancialAdvisorSettings(
+            IReadOnlyDictionary<string, string> brokerageData,
+            ICollection<string> errors,
+            out string financialAdvisorsGroupFilter,
+            out bool financialAdvisorGroupManagementEnabled,
+            out bool financialAdvisorUnifiedGroupsEnabled)
+        {
+            brokerageData.TryGetValue(
+                "ib-financial-advisors-group-filter",
+                out financialAdvisorsGroupFilter);
+            financialAdvisorGroupManagementEnabled = ParseFinancialAdvisorBoolean(
+                brokerageData,
+                "ib-financial-advisors-group-management-enabled",
+                errors);
+            financialAdvisorUnifiedGroupsEnabled = ParseFinancialAdvisorBoolean(
+                brokerageData,
+                "ib-financial-advisors-unified-groups-enabled",
+                errors);
+            if (financialAdvisorGroupManagementEnabled &&
+                !financialAdvisorUnifiedGroupsEnabled)
+            {
+                errors.Add(
+                    "The 'ib-financial-advisors-group-management-enabled' setting requires " +
+                    "'ib-financial-advisors-unified-groups-enabled=true'.");
+            }
+        }
+
+        private static bool ParseFinancialAdvisorBoolean(
+            IReadOnlyDictionary<string, string> brokerageData,
+            string key,
+            ICollection<string> errors)
+        {
+            if (!brokerageData.TryGetValue(key, out var value) ||
+                string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+            if (bool.TryParse(value, out var parsed))
+            {
+                return parsed;
+            }
+
+            errors.Add($"The '{key}' setting must be either 'true' or 'false'.");
+            return false;
         }
 
         /// <summary>

@@ -49,7 +49,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 {
                     typeof(string), typeof(string), typeof(int), typeof(double), typeof(OrderType),
                     typeof(decimal), typeof(double), typeof(double), typeof(double), typeof(Contract),
-                    typeof(GroupOrderManager), typeof(OrderState)
+                    typeof(GroupOrderManager), typeof(OrderState), typeof(IOrderProperties)
                 },
                 modifiers: null);
 
@@ -91,7 +91,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 0.0,                  // trailingPercentage
                 contract,             // contract
                 null,                 // groupOrderManager
-                orderState            // orderState
+                orderState,           // orderState
+                null                  // properties
             });
         }
 
