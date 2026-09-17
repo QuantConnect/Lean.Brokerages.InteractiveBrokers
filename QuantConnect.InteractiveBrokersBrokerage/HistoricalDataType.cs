@@ -26,6 +26,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public const string Trades = "TRADES";
 
         /// <summary>
+        /// Return aggregated trade data, the only trade data type IB accepts for cryptocurrencies
+        /// </summary>
+        public const string AggTrades = "AGGTRADES";
+
+        /// <summary>
         /// Return the mid point between the bid and ask
         /// </summary>
         public const string Midpoint = "MIDPOINT";

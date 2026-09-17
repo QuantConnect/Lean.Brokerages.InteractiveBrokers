@@ -26,6 +26,7 @@ using QuantConnect.Orders.Fees;
 using QuantConnect.Orders.TimeInForces;
 using QuantConnect.Packets;
 using QuantConnect.Securities;
+using QuantConnect.Securities.Crypto;
 using QuantConnect.Securities.FutureOption;
 using QuantConnect.Securities.Index;
 using QuantConnect.Securities.IndexOption;
@@ -91,6 +92,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static bool _submissionOrdersWarningSent;
         private static bool _openOrderTimeWarningSent;
         private bool _sentFAOrderPropertiesWarning;
+        private bool _cryptoTimeInForceWarningSent;
+
+        // crypto buy market orders are sized by cash, so only IB knows when they are done. Keyed by IB order id
+        private readonly ConcurrentDictionary<int, CashQuantityOrderState> _cashQuantityOrders = [];
+
+        private class CashQuantityOrderState
+        {
+            // what IB reports filled once it marks the order done
+            public decimal? QuantityFilledByIb;
+            // what our fill events have reported so far
+            public decimal QuantityEmitted;
+        }
 
         private readonly HashSet<OrderType> _noSubmissionOrderTypes = new(new[] {
             OrderType.MarketOnOpen,
@@ -226,6 +239,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         };
 
         private static readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
+
+        // the pairs IB lists with the parameters it reports, keyed by ticker: the traded symbol can be on the crypto market
+        private static readonly Lazy<Dictionary<string, SymbolProperties>> _cryptoSymbolProperties = new(() =>
+            _symbolPropertiesDatabase.GetSymbolPropertiesList(Market.InteractiveBrokers, SecurityType.Crypto)
+                .ToDictionary(entry => entry.Key.Symbol, entry => entry.Value, StringComparer.InvariantCultureIgnoreCase));
 
         /// <summary>
         /// Provides primary exchange data based on LEAN map files.
@@ -1584,6 +1602,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return;
             }
 
+            if (needsNewId && order.SecurityType == SecurityType.Crypto && order.Type == OrderType.Market
+                && order.Direction == OrderDirection.Buy && !TryGetCryptoMarketBuyPrice(order, out _, out var rejection))
+            {
+                // rejected here so the reason reaches the algorithm
+                OnOrderEvents([ new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero, rejection) { Status = OrderStatus.Invalid } ]);
+                return;
+            }
+
             // MOO/MOC require directed option orders.
             // We resolve non-equity markets in the `CreateContract` method.
             if (exchange == null &&
@@ -1988,11 +2014,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <returns>The price normalized to be brokerage expected unit</returns>
         public double NormalizePriceToBrokerage(decimal price, Contract contract, Symbol symbol, OrderType? orderType = null)
         {
-            var symbolProperties = _symbolPropertiesDatabase.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType, Currencies.USD);
+            // IB's own parameters, whatever market the symbol is on
+            var symbolProperties = symbol.SecurityType == SecurityType.Crypto
+                && _cryptoSymbolProperties.Value.TryGetValue(symbol.Value, out var cryptoProperties)
+                ? cryptoProperties
+                : _symbolPropertiesDatabase.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType, Currencies.USD);
 
-            var minTick = 0m;
+            var minTick = symbolProperties.MinimumPriceVariation;
             switch (symbol.SecurityType)
             {
+                case SecurityType.Crypto:
+                    // the database holds the tick IB reports for the pair
+                    break;
                 case SecurityType.IndexOption when orderType is not (OrderType.ComboLimit or OrderType.ComboLegLimit):
                     minTick = IndexOptionSymbolProperties.MinimumPriceVariationForPrice(symbol, price);
                     break;
@@ -2269,6 +2302,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _competingSessionErrorHandler.Value.Handle(DateTime.UtcNow, errorCode, errorMsg);
             }
 
+            if (errorCode == 399
+                && requestInfo?.RequestType == RequestType.PlaceOrder
+                && requestInfo.AssociatedSymbol?.SecurityType == SecurityType.Crypto
+                && errorMsg.Contains("will not be placed at the exchange until", StringComparison.OrdinalIgnoreCase))
+            {
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "CryptoOrderHeld",
+                    $"Interactive Brokers routes cryptocurrency orders from Sunday 03:00 to Friday 16:00 New York time only: " +
+                    $"the {requestInfo.AssociatedSymbol.Value} order with brokerage id {requestId} was accepted but is held until the " +
+                    $"venue reopens, and will then be worked at the prices of that moment. Cancel it if that is not intended. IB: {errorMsg}"));
+            }
+
             // error 200 is not an invalidating code: unlike the codes in the collection it answers any request
             // type (e.g. contract details or market data), so it's only an order rejection when we know it is
             // answering an order request
@@ -2430,6 +2474,37 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 if (firstOrder.GroupOrderManager != null && (status == OrderStatus.Filled || status == OrderStatus.Canceled))
                 {
                     _comboOrdersContracts.TryRemove(firstOrder.GroupOrderManager.Id, out _);
+                }
+
+                if (_cashQuantityOrders.TryGetValue(update.OrderId, out var cashQuantityOrder))
+                {
+                    if (status == OrderStatus.Filled)
+                    {
+                        // the cash is spent, the fills close on this quantity
+                        bool fillsAlreadyEmitted;
+                        lock (cashQuantityOrder)
+                        {
+                            cashQuantityOrder.QuantityFilledByIb = update.Filled;
+                            fillsAlreadyEmitted = cashQuantityOrder.QuantityEmitted == update.Filled;
+                        }
+
+                        if (fillsAlreadyEmitted)
+                        {
+                            // the last fill was reported as partial, close the order
+                            _cashQuantityOrders.TryRemove(update.OrderId, out _);
+                            OnOrderEvents(orders.Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero, "Interactive Brokers Order Fill Event")
+                            {
+                                Status = OrderStatus.Filled,
+                                FillPrice = NormalizePriceToLean(update.AverageFillPrice, order.Symbol)
+                            }).ToList());
+                        }
+                        return;
+                    }
+
+                    if (status == OrderStatus.Canceled || status == OrderStatus.Invalid)
+                    {
+                        _cashQuantityOrders.TryRemove(update.OrderId, out _);
+                    }
                 }
 
                 if (status == OrderStatus.Filled || status == OrderStatus.PartiallyFilled)
@@ -2762,7 +2837,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 if (executionDetails.Execution.Liquidation == 1)
                 {
-                    var currentQuantityFilled = Convert.ToInt32(executionDetails.Execution.Shares);
+                    var currentQuantityFilled = executionDetails.Execution.Shares;
                     if (executionDetails.Execution.Side == "SLD")
                     {
                         // BOT for bought, SLD for sold
@@ -2885,9 +2960,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var targetOrderCommissionReport = fillDetails.CommissionReport;
 
                 var absoluteQuantity = targetOrder.AbsoluteQuantity;
-                var currentQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.Shares);
-                var totalQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.CumQty);
-                var remainingQuantity = Convert.ToInt32(absoluteQuantity - totalQuantityFilled);
+                var currentQuantityFilled = targetOrderExecutionDetails.Execution.Shares;
+                var totalQuantityFilled = targetOrderExecutionDetails.Execution.CumQty;
+                var remainingQuantity = absoluteQuantity - totalQuantityFilled;
                 var price = NormalizePriceToLean(targetOrderExecutionDetails.Execution.Price, targetOrder.Symbol);
                 var orderFee = new OrderFee(new CashAmount(
                     Convert.ToDecimal(targetOrderCommissionReport.CommissionAndFees),
@@ -2895,6 +2970,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 // set order status based on remaining quantity
                 var status = remainingQuantity > 0 ? OrderStatus.PartiallyFilled : OrderStatus.Filled;
+                if (_cashQuantityOrders.TryGetValue(targetOrderExecutionDetails.Execution.OrderId, out var cashQuantityOrder))
+                {
+                    // sized by cash, the order is done when IB says so
+                    lock (cashQuantityOrder)
+                    {
+                        cashQuantityOrder.QuantityEmitted = totalQuantityFilled;
+                        status = cashQuantityOrder.QuantityFilledByIb == totalQuantityFilled ? OrderStatus.Filled : OrderStatus.PartiallyFilled;
+                    }
+                    remainingQuantity = 0;
+
+                    if (status == OrderStatus.Filled)
+                    {
+                        _cashQuantityOrders.TryRemove(targetOrderExecutionDetails.Execution.OrderId, out _);
+                    }
+                }
 
                 // mark sells as negative quantities
                 var fillQuantity = targetOrder.Direction == OrderDirection.Buy ? currentQuantityFilled : -currentQuantityFilled;
@@ -3026,7 +3116,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 OrderId = ibOrderId,
                 Account = _account,
                 Action = ConvertOrderDirection(direction),
-                TotalQuantity = (int)Math.Abs(quantity),
+                // already rounded to the lot size, which is 1 for everything but crypto
+                TotalQuantity = Math.Abs(quantity),
                 OrderType = ConvertOrderType(order.Type),
                 AllOrNone = false,
                 Tif = ConvertTimeInForce(order),
@@ -3125,6 +3216,21 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 AddGuaranteedTag(ibOrder, orders.All(x => x.SecurityType == SecurityType.Equity));
             }
 
+            if (order.SecurityType == SecurityType.Crypto)
+            {
+                if (order.Type == OrderType.Market)
+                {
+                    ApplyCryptoMarketOrderProperties(ibOrder, order, direction, quantity);
+                }
+                else if (!_cryptoTimeInForceWarningSent)
+                {
+                    _cryptoTimeInForceWarningSent = true;
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "CryptoTimeInForce",
+                        "Interactive Brokers does not keep cryptocurrency orders working, the requested time in force is " +
+                        "replaced by its five minute expiry and the order is cancelled if it has not filled by then."));
+                }
+            }
+
             // add financial advisor properties
             if (IsFinancialAdvisor)
             {
@@ -3190,11 +3296,66 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return ibOrder;
         }
 
+        /// <summary>
+        /// Sizes a cryptocurrency buy market order by the cash amount to spend, which is what IB expects
+        /// instead of a quantity. See https://interactivebrokers.github.io/tws-api/cryptocurrency.html
+        /// </summary>
+        private void ApplyCryptoMarketOrderProperties(IBApi.Order ibOrder, Order order, OrderDirection direction, decimal quantity)
+        {
+            if (direction != OrderDirection.Buy)
+            {
+                return;
+            }
+
+            if (!TryGetCryptoMarketBuyPrice(order, out var price, out var reason))
+            {
+                // IBPlaceOrder rejects these before getting here
+                throw new InvalidOperationException($"InteractiveBrokersBrokerage.ConvertOrder(): {reason}");
+            }
+
+            // whole cents, never more than the requested quantity is worth
+            var absoluteQuantity = Math.Abs(quantity);
+            var cashQuantity = Math.Truncate(absoluteQuantity * price * 100m) / 100m;
+            ibOrder.CashQty = (double)cashQuantity;
+            ibOrder.TotalQuantity = 0;
+            _cashQuantityOrders[ibOrder.OrderId] = new CashQuantityOrderState();
+
+            var quoteCurrency = GetSymbolProperties(order.Symbol).QuoteCurrency;
+            OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "CryptoCashQuantity",
+                $"Interactive Brokers sizes cryptocurrency buy market orders by the cash amount to spend instead of by quantity: " +
+                $"order {order.Id} for {absoluteQuantity} {order.Symbol.Value} was submitted as {cashQuantity} {quoteCurrency}, " +
+                $"converted at the last known price of {price} {quoteCurrency}. The filled quantity can differ from the requested " +
+                $"one, use a limit order to avoid this."));
+        }
+
+        /// <summary>
+        /// Gets the price a cryptocurrency buy market order is sized with, IB expects the cash amount to spend
+        /// </summary>
+        private bool TryGetCryptoMarketBuyPrice(Order order, out decimal price, out string reason)
+        {
+            price = 0m;
+            reason = null;
+            if (_algorithm != null && _algorithm.Securities.TryGetValue(order.Symbol, out var security))
+            {
+                price = security.Price;
+            }
+
+            if (price > 0)
+            {
+                return true;
+            }
+
+            reason = $"A known price for {order.Symbol.Value} is required to place a crypto buy market order, because IB expects " +
+                "the cash amount to spend instead of the quantity. Use a limit order instead or make sure the security is subscribed and has data.";
+            return false;
+        }
+
         private List<Order> ConvertOrders(IBApi.Order ibOrder, Contract contract, OrderState orderState)
         {
             var result = new List<Order>();
             var quantitySign = ConvertOrderDirection(ibOrder.Action) == OrderDirection.Sell ? -1 : 1;
-            var quantity = Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign;
+            // crypto quantities are fractional
+            var quantity = ibOrder.TotalQuantity * quantitySign;
 
             if (contract.SecType == IB.SecurityType.Bag)
             {
@@ -3441,6 +3602,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 contract.Exchange = "IDEALPRO";
                 contract.Symbol = ibSymbol.Substring(0, 3);
                 contract.Currency = ibSymbol.Substring(3);
+            }
+            else if (symbol.ID.SecurityType == SecurityType.Crypto)
+            {
+                // the base currency is not always 3 characters long
+                Crypto.DecomposeCurrencyPair(symbol, symbolProperties, out var baseCurrency, out _);
+                contract.Symbol = baseCurrency;
             }
             else if (symbol.ID.SecurityType == SecurityType.Cfd)
             {
@@ -3718,6 +3885,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private static string ConvertTimeInForce(Order order)
         {
+            if (order.SecurityType == SecurityType.Crypto)
+            {
+                // anything else is rejected with error 201, Minutes is IB's five minute expiry
+                return order.Type == OrderType.Market
+                    ? IB.TimeInForce.ImmediateOrCancel
+                    : IB.TimeInForce.Minutes;
+            }
+
             if (order.Type == OrderType.MarketOnOpen)
             {
                 return IB.TimeInForce.MarketOnOpen;
@@ -3823,6 +3998,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 case SecurityType.Cfd:
                     return IB.SecurityType.ContractForDifference;
 
+                case SecurityType.Crypto:
+                    return IB.SecurityType.Crypto;
+
                 default:
                     throw new ArgumentException($"The {type} security type is not currently supported.");
             }
@@ -3865,6 +4043,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 case IB.SecurityType.ContractForDifference:
                     return SecurityType.Cfd;
+
+                case IB.SecurityType.Crypto:
+                    return SecurityType.Crypto;
 
                 default:
                     throw new NotSupportedException(
@@ -4027,8 +4208,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var securityType = ConvertSecurityType(contract);
 
                 var ibSymbol = contract.Symbol;
-                if (securityType == SecurityType.Forex)
+                if (securityType == SecurityType.Forex || securityType == SecurityType.Crypto)
                 {
+                    // IB splits the pair into symbol and currency
                     ibSymbol += contract.Currency;
                 }
                 else if (securityType == SecurityType.Cfd)
@@ -4426,7 +4608,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 (securityType == SecurityType.Index && (market == Market.USA || market == Market.EUREX || market == Market.OSE || market == Market.HKFE || market == Market.KRX)) ||
                 (securityType == SecurityType.FutureOption) ||
                 (securityType == SecurityType.Future) ||
-                (securityType == SecurityType.Cfd && market == Market.InteractiveBrokers);
+                (securityType == SecurityType.Cfd && market == Market.InteractiveBrokers) ||
+                (securityType == SecurityType.Crypto && _cryptoSymbolProperties.Value.ContainsKey(symbol.Value));
         }
 
         /// <summary>
@@ -4997,7 +5180,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else
             {
                 // other assets will have TradeBars
-                history = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, resolution, HistoricalDataType.Trades);
+                // TRADES is rejected for crypto with error 10299
+                var tradeDataType = request.Symbol.SecurityType == SecurityType.Crypto
+                    ? HistoricalDataType.AggTrades
+                    : HistoricalDataType.Trades;
+                history = GetHistory(request, contract, startTime, endTime, exchangeTimeZone, resolution, tradeDataType);
             }
 
             return FilterHistory(history, request, startTimeLocal, endTimeLocal, contract);
@@ -5213,6 +5400,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 case SecurityType.Forex:
                     return "IDEALPRO"; // IB's Forex market is always IDEALPRO
+                case SecurityType.Crypto:
+                    return "PAXOS"; // IB executes and custodies cryptocurrencies through Paxos
                 case SecurityType.Option:
                 case SecurityType.IndexOption:
                     // Regular equity options uses default, in this case "Smart"

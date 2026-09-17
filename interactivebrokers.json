@@ -14,7 +14,7 @@
 		}
 	],
   	"order-types": ["Market", "Limit", "Limit-If-Touched", "Stop Market",  "Stop Limit", "Trailing", "Market On Open", "Market On Close", "Combo Market", "Combo Limit", "Combo Leg Limit", "Exercise"],
-	"assets": ["Equity", "Equity Options", "Futures", "Future Options", "Index Options", "Forex"], 
+	"assets": ["Equity", "Equity Options", "Futures", "Future Options", "Index Options", "Forex", "Crypto"], 
 	"brokerage-url": "https://www.interactivebrokers.com/",
 	"landing-page-url": "/brokerages/interactive",
   	"documentation": "/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers",
@@ -36,6 +36,7 @@
 				"Forex",
 				"Future",
 				"Cfd",
+				"Crypto",
 				"FutureOption",
 				"Index",
 				"IndexOption"
@@ -53,6 +54,7 @@
 				"CFE",
 				"NYSELIFFE",
 				"Oanda",
+				"Coinbase",
 				"InteractiveBrokers"
 			]
 		}

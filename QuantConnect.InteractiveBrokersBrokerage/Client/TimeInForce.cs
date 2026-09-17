@@ -51,6 +51,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         public const string MarketOnOpen = "OPG";
 
         /// <summary>
+        /// Cancels the order if it is not filled within five minutes
+        /// </summary>
+        public const string Minutes = "Minutes";
+
+        /// <summary>
         /// Undefined
         /// </summary>
         public const string Undefined = "";

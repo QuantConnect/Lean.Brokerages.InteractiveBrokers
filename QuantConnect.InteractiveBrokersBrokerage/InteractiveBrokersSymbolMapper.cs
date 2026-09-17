@@ -96,7 +96,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 symbol.ID.SecurityType != SecurityType.IndexOption &&
                 symbol.ID.SecurityType != SecurityType.FutureOption &&
                 symbol.ID.SecurityType != SecurityType.Future &&
-                symbol.ID.SecurityType != SecurityType.Cfd)
+                symbol.ID.SecurityType != SecurityType.Cfd &&
+                symbol.ID.SecurityType != SecurityType.Crypto)
             {
                 throw new ArgumentException("Invalid security type: " + symbol.ID.SecurityType);
             }
@@ -138,7 +139,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 securityType != SecurityType.IndexOption &&
                 securityType != SecurityType.Future &&
                 securityType != SecurityType.FutureOption &&
-                securityType != SecurityType.Cfd)
+                securityType != SecurityType.Cfd &&
+                securityType != SecurityType.Crypto)
                 throw new ArgumentException("Invalid security type: " + securityType);
 
             try
