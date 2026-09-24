@@ -71,6 +71,12 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             base.ContingentOrdersUpdate(parameters);
         }
 
+        [Test, TestCaseSource(nameof(RestingOrders))]
+        public override void ContingentOrdersGetOpenOrders(ContingentOrderTestParameters parameters)
+        {
+            base.ContingentOrdersGetOpenOrders(parameters);
+        }
+
         [Test, TestCaseSource(nameof(TriggeredOrders))]
         public override void ContingentOrdersTrigger(ContingentOrderTestParameters parameters)
         {
