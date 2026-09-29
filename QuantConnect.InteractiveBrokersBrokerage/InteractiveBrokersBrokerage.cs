@@ -2996,7 +2996,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 if (executionDetails.Execution.Liquidation == 1)
                 {
-                    var currentQuantityFilled = Convert.ToInt32(executionDetails.Execution.Shares);
+                    var currentQuantityFilled = executionDetails.Execution.Shares;
                     if (executionDetails.Execution.Side == "SLD")
                     {
                         // BOT for bought, SLD for sold
@@ -3119,9 +3119,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var targetOrderCommissionReport = fillDetails.CommissionReport;
 
                 var absoluteQuantity = targetOrder.AbsoluteQuantity;
-                var currentQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.Shares);
-                var totalQuantityFilled = Convert.ToInt32(targetOrderExecutionDetails.Execution.CumQty);
-                var remainingQuantity = Convert.ToInt32(absoluteQuantity - totalQuantityFilled);
+                var currentQuantityFilled = targetOrderExecutionDetails.Execution.Shares;
+                var totalQuantityFilled = targetOrderExecutionDetails.Execution.CumQty;
+                var remainingQuantity = absoluteQuantity - totalQuantityFilled;
                 var price = NormalizePriceToLean(targetOrderExecutionDetails.Execution.Price, targetOrder.Symbol);
                 var orderFee = new OrderFee(new CashAmount(
                     Convert.ToDecimal(targetOrderCommissionReport.CommissionAndFees),
@@ -3439,7 +3439,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             var result = new List<Order>();
             var quantitySign = ConvertOrderDirection(ibOrder.Action) == OrderDirection.Sell ? -1 : 1;
-            var quantity = Convert.ToInt32(ibOrder.TotalQuantity) * quantitySign;
+            var quantity = ibOrder.TotalQuantity * quantitySign;
 
             if (contract.SecType == IB.SecurityType.Bag)
             {
