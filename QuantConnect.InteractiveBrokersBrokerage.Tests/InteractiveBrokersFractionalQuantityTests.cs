@@ -20,37 +20,48 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using IBApi;
 using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Brokerages.InteractiveBrokers;
+using QuantConnect.Interfaces;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
 using QuantConnect.Tests.Brokerages;
+using QuantConnect.Util;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 using Order = QuantConnect.Orders.Order;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
     /// <summary>
-    /// Live tests for fractional share quantities coming from outside Lean. IB refuses to place or modify fractional orders
-    /// from the API (10243, 10242), so they are placed by hand in TWS before the run:
+    /// Fractional share quantities coming from outside Lean keep the exact IB value.
+    /// IB refuses to place or modify fractional orders from the API (10243, 10242), so the live tests need the positions
+    /// and orders placed by hand in TWS before the run, and TWS logged out during it (the gateway uses the same IB user):
     /// - <see cref="FractionalPositionIsLoadedExactly"/>: hold exactly <see cref="AaplPosition"/> AAPL
     /// - <see cref="FractionalOpenOrderIsRebuiltExactly"/>: one open AAPL buy limit of <see cref="FractionalQuantity"/> below the market
     /// - <see cref="FractionalOpenOrderFillIsExact"/>: open AAPL limit orders with fractional quantities near the market, filled during the run
-    /// TWS must be logged out during the run: the gateway uses the same IB user. <see cref="InteractiveBrokersFractionalFillTests"/> covers the fill without a gateway.
     /// </summary>
-    [TestFixture, Explicit("Live: needs AAPL fractional position and order placed by hand in TWS")]
+    [TestFixture]
     public class InteractiveBrokersFractionalQuantityTests
     {
         private const decimal FractionalQuantity = 0.4m;
 
-        // the AAPL position held in the account before the run, bought in TWS
+        // the AAPL position held in the account before the live run, bought in TWS
         private const decimal AaplPosition = 0.8m;
+
+        private const string LiveTestReason = "Live: needs AAPL fractional positions and orders placed by hand in TWS";
 
         private static readonly TimeSpan FillTimeout = TimeSpan.FromMinutes(10);
 
         private static readonly FieldInfo ClientField =
             typeof(InteractiveBrokersBrokerage).GetField("_client", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        private static readonly FieldInfo SymbolMapperField =
+            typeof(InteractiveBrokersBrokerage).GetField("_symbolMapper", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        private static readonly MethodInfo EmitOrderFillMethod =
+            typeof(InteractiveBrokersBrokerage).GetMethod("EmitOrderFill", BindingFlags.Instance | BindingFlags.NonPublic);
 
         private readonly List<Order> _orders = new();
         private OrderProvider _orderProvider;
@@ -62,11 +73,79 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             _orderProvider = new OrderProvider(_orders);
         }
 
+        [TestCase(0.4, false)]
+        [TestCase(10.6, false)]
+        [TestCase(-2.5, false)]
+        [TestCase(100, false)]
+        [TestCase(0.4, true)]
+        [TestCase(10.6, true)]
+        [TestCase(-2.5, true)]
+        [TestCase(100, true)]
+        public void PortfolioUpdateKeepsExactPosition(decimal position, bool isPositionMulti)
+        {
+            var client = new IB.InteractiveBrokersClient(new EReaderMonitorSignal());
+            IB.UpdatePortfolioEventArgs update = null;
+            client.UpdatePortfolio += (_, e) => update = e;
+
+            var contract = new Contract { Symbol = "AAPL", SecType = "STK", Currency = "USD" };
+            if (isPositionMulti)
+            {
+                client.positionMulti(requestId: 1, account: "DU123456", modelCode: string.Empty, contract, position, averageCost: 150);
+            }
+            else
+            {
+                client.updatePortfolio(contract, position, marketPrice: 150, marketValue: 0, averageCost: 150, unrealisedPnl: 0, realisedPnl: 0, accountName: "DU123456");
+            }
+
+            Assert.IsNotNull(update);
+            Assert.AreEqual(position, update.Position);
+        }
+
+        /// <summary>
+        /// The IB execution is fed to the private <c>EmitOrderFill</c>, as a live fill can't be driven by a test.
+        /// </summary>
+        [TestCase(0.4, 0.4, 0.4, 0.4, OrderStatus.Filled)]
+        [TestCase(1, 0.4, 0.4, 0.4, OrderStatus.PartiallyFilled)]
+        [TestCase(1, 0.6, 1, 0.6, OrderStatus.Filled)]
+        [TestCase(10.6, 10.6, 10.6, 10.6, OrderStatus.Filled)]
+        [TestCase(-0.4, 0.4, 0.4, -0.4, OrderStatus.Filled)]
+        public void FractionalFillKeepsExactQuantity(decimal orderQuantity, decimal shares, decimal cumulativeQuantity, decimal expectedFillQuantity, OrderStatus expectedStatus)
+        {
+            var brokerage = new InteractiveBrokersBrokerage();
+            SymbolMapperField.SetValue(brokerage, new InteractiveBrokersSymbolMapper(Composer.Instance.GetPart<IMapFileProvider>()));
+
+            var order = new LimitOrder(Symbols.AAPL, orderQuantity, 300m, new DateTime(2026, 9, 29));
+            // assigns the Lean order id
+            _orderProvider.Add(order);
+            order.BrokerId.Add("-3");
+
+            var contract = new Contract { Symbol = "AAPL", SecType = IB.SecurityType.Stock, Exchange = "SMART", Currency = "USD" };
+            var execution = new Execution
+            {
+                OrderId = -3,
+                ExecId = "0001",
+                Side = orderQuantity > 0 ? "BOT" : "SLD",
+                Shares = shares,
+                CumQty = cumulativeQuantity,
+                Price = 330.75
+            };
+            var commissionReport = new CommissionAndFeesReport { ExecId = "0001", CommissionAndFees = 1, Currency = "USD" };
+
+            var orderEvents = new List<OrderEvent>();
+            brokerage.OrdersStatusChanged += (_, events) => orderEvents.AddRange(events);
+
+            EmitOrderFillMethod.Invoke(brokerage, new object[] { order, new IB.ExecutionDetailsEventArgs(1, contract, execution), commissionReport, false });
+
+            Assert.AreEqual(1, orderEvents.Count);
+            Assert.AreEqual(expectedFillQuantity, orderEvents[0].FillQuantity);
+            Assert.AreEqual(expectedStatus, orderEvents[0].Status);
+        }
+
         /// <summary>
         /// A fractional position bought outside Lean is loaded with its exact quantity when the algorithm starts.
         /// Covers <c>updatePortfolio</c> / <c>positionMulti</c> -> <c>UpdatePortfolioEventArgs.Position</c> -> <c>CreateHolding</c>.
         /// </summary>
-        [Test]
+        [Test, Explicit(LiveTestReason)]
         public void FractionalPositionIsLoadedExactly()
         {
             using var brokerage = CreateBrokerage();
@@ -83,7 +162,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         /// A fractional order placed outside Lean is rebuilt with its exact quantity when the algorithm starts.
         /// Covers <c>ConvertOrders</c> (<c>ibOrder.TotalQuantity</c>).
         /// </summary>
-        [Test]
+        [Test, Explicit(LiveTestReason)]
         public void FractionalOpenOrderIsRebuiltExactly()
         {
             using var brokerage = CreateBrokerage();
@@ -102,7 +181,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         /// The expected quantities are the exact ones IB sends for each order.
         /// Covers <c>ConvertOrders</c> and the fill (<c>Execution.Shares</c>, <c>Execution.CumQty</c>).
         /// </summary>
-        [Test]
+        [Test, Explicit(LiveTestReason)]
         public void FractionalOpenOrderFillIsExact()
         {
             using var brokerage = CreateBrokerage();
