@@ -2909,9 +2909,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                // For financial advisor group orders, IB sends executions only for the master account.
-                // The client account allocations come only in a reqExecutions answer, with order id 0, so they match no order.
-
+                // For financial advisor group orders, IB sends executions only for the master account, for the whole order quantity.
+                // IB splits the shares into the client accounts on its side, and Lean tracks the group total, so the master executions are enough.
+// The client account allocations come only in a reqExecutions answer, with order id 0, so they match no order.
                 if (_commissionReports.TryGetValue(executionDetails.Execution.ExecId, out var commissionReport))
                 {
                     if (CanEmitFill(order, executionDetails.Execution))
