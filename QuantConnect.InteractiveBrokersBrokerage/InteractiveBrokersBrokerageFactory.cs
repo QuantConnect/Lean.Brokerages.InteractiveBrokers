@@ -48,7 +48,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             { "ib-account", Config.Get("ib-account") },
             { "ib-user-name", Config.Get("ib-user-name") },
             { "ib-password", Config.Get("ib-password") },
-            { "ib-trading-mode", Config.Get("ib-trading-mode") },
             { "ib-agent-description", Config.Get("ib-agent-description") },
             { "ib-weekly-restart-utc-time", Config.Get("ib-weekly-restart-utc-time") },
             { "ib-financial-advisors-group-filter", Config.Get("ib-financial-advisors-group-filter") }
@@ -79,7 +78,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var account = Read<string>(job.BrokerageData, "ib-account", errors);
             var userId = Read<string>(job.BrokerageData, "ib-user-name", errors);
             var password = Read<string>(job.BrokerageData, "ib-password", errors);
-            var tradingMode = Read<string>(job.BrokerageData, "ib-trading-mode", errors);
             var agentDescription = Read<string>(job.BrokerageData, "ib-agent-description", errors);
             job.BrokerageData.TryGetValue("ib-financial-advisors-group-filter", out var financialAdvisorsGroupFilter);
 
@@ -109,11 +107,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 throw new Exception(string.Join(Environment.NewLine, errors));
             }
 
-            if (tradingMode.IsNullOrEmpty())
-            {
-                throw new Exception("No trading mode selected. Please select either 'paper' or 'live' trading.");
-            }
-
             var ib = new InteractiveBrokersBrokerage(
                 algorithm,
                 algorithm.Transactions,
@@ -125,7 +118,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ibVersion,
                 userId,
                 password,
-                tradingMode,
                 agentDescription,
                 loadExistingHoldings,
                 weeklyRestartUtcTime,

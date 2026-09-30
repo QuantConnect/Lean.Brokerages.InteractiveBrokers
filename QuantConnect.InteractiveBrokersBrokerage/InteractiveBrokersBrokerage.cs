@@ -374,7 +374,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Config.Get("ib-version", DefaultVersion),
                 Config.Get("ib-user-name"),
                 Config.Get("ib-password"),
-                Config.Get("ib-trading-mode"),
                 Config.GetValue("ib-agent-description", IB.AgentDescription.Individual),
                 financialAdvisorsGroupFilter: Config.Get("ib-financial-advisors-group-filter")
                 )
@@ -394,7 +393,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="ibVersion">The IB Gateway version</param>
         /// <param name="userName">The login user name</param>
         /// <param name="password">The login password</param>
-        /// <param name="tradingMode">The trading mode: 'live' or 'paper'</param>
         /// <param name="agentDescription">Used for Rule 80A describes the type of trader.</param>
         /// <param name="loadExistingHoldings">False will ignore existing security holdings from being loaded.</param>
         /// <param name="weeklyRestartUtcTime">The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)</param>
@@ -410,7 +408,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string ibVersion,
             string userName,
             string password,
-            string tradingMode,
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
             TimeSpan? weeklyRestartUtcTime = null,
@@ -428,7 +425,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ibVersion,
                 userName,
                 password,
-                tradingMode,
                 agentDescription,
                 loadExistingHoldings,
                 weeklyRestartUtcTime,
@@ -1441,7 +1437,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="ibVersion">The IB Gateway version</param>
         /// <param name="userName">The login user name</param>
         /// <param name="password">The login password</param>
-        /// <param name="tradingMode">The trading mode: 'live' or 'paper'</param>
         /// <param name="agentDescription">Used for Rule 80A describes the type of trader.</param>
         /// <param name="loadExistingHoldings">False will ignore existing security holdings from being loaded.</param>
         /// <param name="weeklyRestartUtcTime">The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)</param>
@@ -1457,7 +1452,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string ibVersion,
             string userName,
             string password,
-            string tradingMode,
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
             TimeSpan? weeklyRestartUtcTime = null,
@@ -1521,6 +1515,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // the automater instance is always created, it also provides the IB server reset times schedule
             var exportIbGatewayLogs = true; // Config.GetBool("ib-export-ibgateway-logs");
+            // IB paper account ids start with a 'D' (DU..., DF...)
+            var tradingMode = account.StartsWith("d", StringComparison.InvariantCultureIgnoreCase) ? "paper" : "live";
             _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, exportIbGatewayLogs);
             _ibAutomater.OutputDataReceived += OnIbAutomaterOutputDataReceived;
             _ibAutomater.ErrorDataReceived += OnIbAutomaterErrorDataReceived;
@@ -4410,7 +4406,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var account = job.BrokerageData["ib-account"];
             var userId = job.BrokerageData["ib-user-name"];
             var password = job.BrokerageData["ib-password"];
-            var tradingMode = job.BrokerageData["ib-trading-mode"];
             var agentDescription = job.BrokerageData["ib-agent-description"];
 
             var loadExistingHoldings = Config.GetBool("load-existing-holdings", true);
@@ -4429,7 +4424,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 ibVersion,
                 userId,
                 password,
-                tradingMode,
                 agentDescription,
                 loadExistingHoldings);
 
