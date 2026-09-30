@@ -30,10 +30,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         public Contract Contract { get; }
 
         /// <summary>
-        /// The number of positions held.
+        /// The number of positions held. Crypto is held in fractional units.
         /// If the position is 0, it means the position has just cleared.
         /// </summary>
-        public int Position { get; }
+        public decimal Position { get; }
 
         /// <summary>
         /// The unit price of the instrument.
@@ -68,7 +68,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <summary>
         /// Initializes a new instance of the <see cref="UpdatePortfolioEventArgs"/> class
         /// </summary>
-        public UpdatePortfolioEventArgs(Contract contract, int position, double marketPrice, double marketValue, double averageCost, double unrealisedPnl, double realisedPnl, string accountName)
+        public UpdatePortfolioEventArgs(Contract contract, decimal position, double marketPrice, double marketValue, double averageCost, double unrealisedPnl, double realisedPnl, string accountName)
         {
             Contract = contract;
             Position = position;

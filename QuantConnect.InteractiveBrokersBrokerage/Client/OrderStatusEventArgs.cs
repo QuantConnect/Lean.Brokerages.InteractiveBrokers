@@ -35,12 +35,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <summary>
         /// Specifies the number of shares that have been executed.
         /// </summary>
-        public int Filled { get; }
+        public decimal Filled { get; }
 
         /// <summary>
         /// Specifies the number of shares still outstanding.
         /// </summary>
-        public int Remaining { get; }
+        public decimal Remaining { get; }
 
         /// <summary>
         /// The average price of the shares that have been executed.
@@ -87,7 +87,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <summary>
         /// Initializes a new instance of the <see cref="OrderStatusEventArgs"/> class
         /// </summary>
-        public OrderStatusEventArgs(int orderId, string status, int filled, int remaining, double averageFillPrice, long permId, int parentId, double lastFillPrice, int clientId, string whyHeld, double mktCapPrice)
+        public OrderStatusEventArgs(int orderId, string status, decimal filled, decimal remaining, double averageFillPrice, long permId, int parentId, double lastFillPrice, int clientId, string whyHeld, double mktCapPrice)
         {
             OrderId = orderId;
             Status = status;

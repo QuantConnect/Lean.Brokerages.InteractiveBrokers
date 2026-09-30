@@ -21,7 +21,7 @@ This repository hosts the Interactive Brokers (IB) Brokerage Plugin Integration 
 </picture>
 <p>
 
-IB was founded by Thomas Peterffy in 1993 with the goal to "create technology to provide liquidity on better terms. Compete on price, speed, size, diversity of global products and advanced trading tools". IB provides access to trading Equities, ETFs, Options, Futures, Future Options, Forex, Gold, Warrants, Bonds, and Mutual Funds for clients in over [200 countries and territories](https://www.interactivebrokers.com/en/index.php?f=7021) with no minimum deposit. IB also provides paper trading, a trading platform, and educational services.
+IB was founded by Thomas Peterffy in 1993 with the goal to "create technology to provide liquidity on better terms. Compete on price, speed, size, diversity of global products and advanced trading tools". IB provides access to trading Equities, ETFs, Options, Futures, Future Options, Forex, Cryptocurrencies, Gold, Warrants, Bonds, and Mutual Funds for clients in over [200 countries and territories](https://www.interactivebrokers.com/en/index.php?f=7021) with no minimum deposit. IB also provides paper trading, a trading platform, and educational services.
 
 For more information about the IB brokerage, see the [QuantConnect-IB Integration Page](https://www.quantconnect.com/docs/v2/cloud-platform/live-trading/brokerages/interactive-brokers).
 
@@ -145,6 +145,22 @@ The following table describes the order types that IB supports. For specific det
 | `MarketOnCloseOrder` | [Market-on-Close (MOC) Orders](https://www.interactivebrokers.com/en/index.php?f=599) |
 | `ExerciseOption` | [Options Exercise](https://www.interactivebrokers.ca/en/trading/exerciseCloseout.php) |
 
+Cryptocurrencies only support `MarketOrder` and `LimitOrder`, see [Cryptocurrency](https://interactivebrokers.github.io/tws-api/cryptocurrency.html).
+IB accepts crypto market orders as immediate-or-cancel only, and sizes buy market orders by the cash amount to
+spend, which Lean estimates from the last known price, so the filled quantity can differ from the requested one.
+Use limit orders to avoid that. Limit orders get IB's five minute expiry, and IB cancels a buy limit priced
+further than 10 dollars or 0.25% from the best ask. Short sales are rejected: IB does not lend against
+cryptocurrencies. IB routes API crypto orders from Sunday 03:00 to Friday 16:00 New York time only and holds
+anything placed outside those hours until it reopens, so the brokerage model rejects such orders instead.
+
+Crypto pairs keep the `Market.Coinbase` market, where the backtest data lives, so the same algorithm runs in
+both modes. IB lists only US dollar quoted pairs, recorded as `interactivebrokers` / `crypto` entries of Lean's
+symbol properties database with the tick and lot sizes IB reports, and the brokerage model rejects orders for
+any other pair before they are sent:
+
+    AddCrypto("BTCUSD", Resolution.Minute);
+
+Orders are routed to Paxos, which executes and custodies cryptocurrencies for IB.
 
 ## Downloading Data
 
