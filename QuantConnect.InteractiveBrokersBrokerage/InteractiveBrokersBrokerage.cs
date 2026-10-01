@@ -3501,29 +3501,39 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private InteractiveBrokersOrderProperties ConvertOrderProperties(IBApi.Order ibOrder)
         {
-            var orderProperties = new InteractiveBrokersOrderProperties { OutsideRegularTradingHours = ibOrder.OutsideRth };
-
-            if (!string.IsNullOrWhiteSpace(ibOrder.FaGroup))
+            try
             {
-                // order for an account group
-                orderProperties.FaGroup = ibOrder.FaGroup;
-                // https://interactivebrokers.github.io/tws-api/financial_advisor.html#groups_merge
-                // IB has no such field: "openOrder callback will report Profile in place of Group if order was for profile"
-                // orderProperties.FaProfile = ibOrder.FaGroup;
-                orderProperties.FaMethod = ibOrder.FaMethod;
-                if (IsPercentChangeAllocationMethod(ibOrder.FaMethod)
-                    && int.TryParse(ibOrder.FaPercentage, NumberStyles.Integer, CultureInfo.InvariantCulture, out var faPercentage))
+                var orderProperties = new InteractiveBrokersOrderProperties { OutsideRegularTradingHours = ibOrder.OutsideRth };
+
+                if (!string.IsNullOrWhiteSpace(ibOrder.FaGroup))
                 {
-                    orderProperties.FaPercentage = faPercentage;
+                    // order for an account group
+                    orderProperties.FaGroup = ibOrder.FaGroup;
+                    // https://interactivebrokers.github.io/tws-api/financial_advisor.html#groups_merge
+                    // IB has no such field: "openOrder callback will report Profile in place of Group if order was for profile"
+                    // orderProperties.FaProfile = ibOrder.FaGroup;
+                    orderProperties.FaMethod = ibOrder.FaMethod;
+                    if (IsPercentChangeAllocationMethod(ibOrder.FaMethod)
+                        && int.TryParse(ibOrder.FaPercentage, NumberStyles.Integer, CultureInfo.InvariantCulture, out var faPercentage))
+                    {
+                        orderProperties.FaPercentage = faPercentage;
+                    }
                 }
-            }
-            else if (!string.IsNullOrWhiteSpace(ibOrder.Account) && ibOrder.Account != _account)
-            {
-                // order for a single managed account
-                orderProperties.Account = ibOrder.Account;
-            }
+                else if (!string.IsNullOrWhiteSpace(ibOrder.Account) && ibOrder.Account != _account)
+                {
+                    // order for a single managed account
+                    orderProperties.Account = ibOrder.Account;
+                }
 
-            return orderProperties;
+                return orderProperties;
+            }
+            catch (Exception err)
+            {
+                // the order is rebuilt with the default order properties, like before
+                Log.Error(err, $"Failed to convert the order properties of the open order {ibOrder.OrderId}: Account: {ibOrder.Account}, " +
+                    $"FaGroup: {ibOrder.FaGroup}, FaMethod: {ibOrder.FaMethod}, FaPercentage: {ibOrder.FaPercentage}, OutsideRth: {ibOrder.OutsideRth}");
+                return null;
+            }
         }
 
         /// <summary>
