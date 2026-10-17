@@ -48,6 +48,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // In those cases we make sure we don't replace dots with spaces when converting from Lean to IB symbols.
         private static HashSet<string> _ibEquityTickersWithDot = new();
 
+        // IB lists some futures under their underlying's symbol and tells the products apart by trading class,
+        // which is the exchange product code LEAN uses as the root: Eurex DAX -> FDAX (25), FDXM (5), FDXS (1).
+        // The symbol map above is keyed by IB symbol and can hold only one of them (FDAX), so the others are mapped here.
+        private static readonly Dictionary<string, string> _ibSymbolByFutureTradingClass = new()
+        {
+            { "FDXM", "DAX" },
+            { "FDXS", "DAX" }
+        };
+
         /// <summary>
         /// Constructs InteractiveBrokersSymbolMapper. Default parameters are used.
         /// </summary>
@@ -213,6 +222,48 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
+        /// Gets the IB symbol and trading class of a future that IB lists under a symbol shared with other products,
+        /// for example the Eurex Mini-DAX (FDXM) and Micro-DAX (FDXS), listed under "DAX" with the standard FDAX
+        /// </summary>
+        /// <param name="leanRootSymbol">LEAN future root symbol</param>
+        /// <param name="brokerageSymbol">The IB symbol the products share</param>
+        /// <param name="tradingClass">The IB trading class of this product</param>
+        /// <returns>True if the future is identified by trading class at IB</returns>
+        public static bool TryGetFutureTradingClassContract(string leanRootSymbol, out string brokerageSymbol, out string tradingClass)
+        {
+            if (!string.IsNullOrEmpty(leanRootSymbol) && _ibSymbolByFutureTradingClass.TryGetValue(leanRootSymbol, out brokerageSymbol))
+            {
+                tradingClass = leanRootSymbol;
+                return true;
+            }
+
+            brokerageSymbol = null;
+            tradingClass = null;
+            return false;
+        }
+
+        /// <summary>
+        /// IB specific versions of the symbol mapping (GetLeanRootSymbol) for future root symbols, using the contract's
+        /// trading class for the futures IB lists under a shared symbol (see <see cref="TryGetFutureTradingClassContract"/>)
+        /// </summary>
+        /// <param name="brokerageRootSymbol">IB Brokerage root symbol</param>
+        /// <param name="securityType">The security type</param>
+        /// <param name="tradingClass">The IB contract's trading class</param>
+        /// <returns></returns>
+        public string GetLeanRootSymbol(string brokerageRootSymbol, SecurityType securityType, string tradingClass)
+        {
+            if ((securityType == SecurityType.Future || securityType == SecurityType.FutureOption)
+                && !string.IsNullOrEmpty(tradingClass)
+                && _ibSymbolByFutureTradingClass.TryGetValue(tradingClass, out var sharedBrokerageSymbol)
+                && sharedBrokerageSymbol == brokerageRootSymbol)
+            {
+                return tradingClass;
+            }
+
+            return GetLeanRootSymbol(brokerageRootSymbol, securityType);
+        }
+
+        /// <summary>
         /// IB specific versions of the symbol mapping (GetLeanRootSymbol) for future root symbols
         /// </summary>
         /// <param name="brokerageRootSymbol">IB Brokerage root symbol</param>
@@ -265,7 +316,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var contractMonthExpiration = DateTime.ParseExact(match[2].Value, "MMM", CultureInfo.CurrentCulture).Month;
             var contractYearExpiration = match[3].Value;
 
-            var leanSymbol = GetLeanRootSymbol(contractSymbol, SecurityType.Future);
+            var leanSymbol = GetLeanRootSymbol(contractSymbol, SecurityType.Future, malformedContract.TradingClass);
             string market;
             if (!symbolPropertiesDatabase.TryGetMarket(leanSymbol, SecurityType.Future, out market))
             {
@@ -279,6 +330,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return new Contract
             {
                 Symbol = contractSymbol,
+                TradingClass = malformedContract.TradingClass,
                 Multiplier = malformedContract.Multiplier,
                 LastTradeDateOrContractMonth = $"{contractExpirationDate:yyyyMMdd}",
                 Exchange = malformedContract.Exchange,
