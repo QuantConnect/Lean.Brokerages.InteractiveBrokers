@@ -2155,6 +2155,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     break;
             }
 
+            if (minTick <= 0)
+            {
+                Log.Trace($"InteractiveBrokersBrokerage.NormalizePriceToBrokerage(): minimum tick size unavailable for {symbol.Value}, sending price {price.ToStringInvariant()} unrounded");
+            }
+
             var roundedPrice = RoundPrice(price, minTick);
             roundedPrice *= symbolProperties.PriceMagnifier;
 
@@ -4433,7 +4438,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static decimal RoundPrice(decimal input, decimal minTick)
         {
-            if (minTick == 0) return minTick;
+            // an unknown minimum tick (0 when the contract details could not be fetched) must not turn the price into 0:
+            // send the price as the algorithm set it and let IB validate the increment
+            if (minTick <= 0) return input;
             return Math.Round(input / minTick) * minTick;
         }
 
