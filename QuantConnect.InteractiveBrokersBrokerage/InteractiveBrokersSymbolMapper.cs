@@ -49,12 +49,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private static HashSet<string> _ibEquityTickersWithDot = new();
 
         // IB lists some futures under their underlying's symbol and tells the products apart by trading class,
-        // which is the exchange product code LEAN uses as the root: Eurex DAX -> FDAX (25), FDXM (5), FDXS (1).
-        // The symbol map above is keyed by IB symbol and can hold only one of them (FDAX), so the others are mapped here.
+        // which is the exchange product code LEAN uses as the root: Eurex DAX -> FDAX (25), FDXM (5), FDXS (1);
+        // COMEX SI -> SI (5000), SIL (1000). The symbol map above is keyed by IB symbol and can hold only one of them,
+        // so the others are mapped here.
         private static readonly Dictionary<string, string> _ibSymbolByFutureTradingClass = new()
         {
             { "FDXM", "DAX" },
-            { "FDXS", "DAX" }
+            { "FDXS", "DAX" },
+            { "SIL", "SI" }
         };
 
         /// <summary>

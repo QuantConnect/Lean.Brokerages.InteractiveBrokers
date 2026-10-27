@@ -3831,7 +3831,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 contract.Symbol = ibSymbol;
                 if (InteractiveBrokersSymbolMapper.TryGetFutureTradingClassContract(symbol.ID.Symbol, out var sharedIbSymbol, out var tradingClass))
                 {
-                    // IB lists this product under a symbol shared with others (DAX: FDAX, FDXM, FDXS) and identifies it by trading class
+                    // IB lists this product under a symbol shared with others (DAX: FDAX, FDXM, FDXS; SI: SI, SIL) and identifies it by trading class
                     contract.Symbol = sharedIbSymbol;
                     contract.TradingClass = tradingClass;
                 }
@@ -4377,7 +4377,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Handle future options as a Future, up until we actually return the future.
                 if (isFutureOption || securityType == SecurityType.Future)
                 {
-                    // the trading class tells apart the futures IB lists under a shared symbol (DAX: FDAX, FDXM, FDXS)
+                    // the trading class tells apart the futures IB lists under a shared symbol (DAX: FDAX, FDXM, FDXS; SI: SI, SIL)
                     var leanSymbol = _symbolMapper.GetLeanRootSymbol(ibSymbol, securityType, contract.TradingClass);
                     var defaultMarket = market;
 
@@ -5047,7 +5047,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (symbol.SecurityType == SecurityType.Future
                 && InteractiveBrokersSymbolMapper.TryGetFutureTradingClassContract(lookupName, out var sharedIbSymbol, out var tradingClass))
             {
-                // IB lists this product under a symbol shared with others (DAX: FDAX, FDXM, FDXS) and identifies it by trading class
+                // IB lists this product under a symbol shared with others (DAX: FDAX, FDXM, FDXS; SI: SI, SIL) and identifies it by trading class
                 contract.Symbol = sharedIbSymbol;
                 contract.TradingClass = tradingClass;
             }
