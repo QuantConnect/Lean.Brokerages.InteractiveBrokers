@@ -359,6 +359,14 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(expectedLeanRoot, mapper.GetLeanRootSymbol(ibSymbol, SecurityType.Future, tradingClass));
         }
 
+        // futures options keep their option trading class, so their underlying root resolves as before: SI options trade as SO
+        [TestCase("SI", "SO", "SI")]
+        public void MapsLeanFutureOptionRootFromTradingClass(string ibSymbol, string tradingClass, string expectedLeanRoot)
+        {
+            var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
+            Assert.AreEqual(expectedLeanRoot, mapper.GetLeanRootSymbol(ibSymbol, SecurityType.FutureOption, tradingClass));
+        }
+
         [TestCase("FDXM", true, "DAX")]
         [TestCase("FDXS", true, "DAX")]
         [TestCase("SIL", true, "SI")]
