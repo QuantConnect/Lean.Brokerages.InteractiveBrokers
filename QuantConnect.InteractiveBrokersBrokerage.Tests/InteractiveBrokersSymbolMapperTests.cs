@@ -226,6 +226,29 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(expectedContract.Currency, actualContract.Currency);
         }
 
+        [TestCase("DAX      DEC2026", "FDXM", "5", "EUREX", "20261218")]
+        [TestCase("SI       DEC2026", "SIL", "1000", "COMEX", "20261229")]
+        public void MalformedContractSymbolKeepsTradingClass(string symbol, string tradingClass, string multiplier, string exchange, string expectedLastTradeDate)
+        {
+            var malformedContract = new Contract
+            {
+                Symbol = symbol,
+                SecType = IB.SecurityType.Future,
+                TradingClass = tradingClass,
+                Multiplier = multiplier,
+                Exchange = exchange,
+                LastTradeDateOrContractMonth = "0"
+            };
+
+            var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
+            var contract = mapper.ParseMalformedContractFutureSymbol(malformedContract, SymbolPropertiesDatabase.FromDataFolder());
+
+            Assert.AreEqual(symbol.Split(' ')[0], contract.Symbol);
+            Assert.AreEqual(tradingClass, contract.TradingClass);
+            Assert.AreEqual(multiplier, contract.Multiplier);
+            Assert.AreEqual(expectedLastTradeDate, contract.LastTradeDateOrContractMonth);
+        }
+
         [TestCase(2021, 2, 23)]
         [TestCase(2021, 3, 25)]
         public void FuturesOptionsWithUnderlyingContractMonthMappedByRuleResolvesUnderlyingGetLeanSymbol(int year, int month, int day)
@@ -378,7 +401,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(expected, InteractiveBrokersSymbolMapper.TryGetFutureTradingClassContract(leanRoot, out var ibSymbol, out var tradingClass));
             Assert.AreEqual(expectedIbSymbol, ibSymbol);
             Assert.AreEqual(expected ? leanRoot : null, tradingClass);
-            // the shared root mapper is unchanged: the FIX brokerage queries the IB futures list by this root
+            // GetBrokerageRootSymbol is unchanged for every root
             Assert.AreEqual(leanRoot == "FDAX" ? "DAX" : leanRoot, new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider).GetBrokerageRootSymbol(leanRoot, SecurityType.Future));
         }
 

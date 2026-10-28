@@ -3829,12 +3829,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // we convert Market.* markets into IB exchanges if we have them in our map
 
                 contract.Symbol = ibSymbol;
-                if (InteractiveBrokersSymbolMapper.TryGetFutureTradingClassContract(symbol.ID.Symbol, out var sharedIbSymbol, out var tradingClass))
-                {
-                    // IB lists this product under a symbol shared with others (DAX: FDAX, FDXM, FDXS; SI: SI, SIL) and identifies it by trading class
-                    contract.Symbol = sharedIbSymbol;
-                    contract.TradingClass = tradingClass;
-                }
+                SetSharedSymbolTradingClass(contract, symbol.ID.Symbol);
                 contract.LastTradeDateOrContractMonth = symbol.ID.Date.ToStringInvariant(DateFormat.EightCharacter);
                 contract.Exchange = GetSymbolExchange(symbol);
 
@@ -4377,7 +4372,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // Handle future options as a Future, up until we actually return the future.
                 if (isFutureOption || securityType == SecurityType.Future)
                 {
-                    // the trading class tells apart the futures IB lists under a shared symbol (DAX: FDAX, FDXM, FDXS; SI: SI, SIL)
+                    // the trading class tells apart the futures IB lists under a shared symbol
                     var leanSymbol = _symbolMapper.GetLeanRootSymbol(ibSymbol, securityType, contract.TradingClass);
                     var defaultMarket = market;
 
@@ -5044,12 +5039,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 IncludeExpired = includeExpired,
                 Multiplier = GetContractMultiplier(symbolProperties.ContractMultiplier)
             };
-            if (symbol.SecurityType == SecurityType.Future
-                && InteractiveBrokersSymbolMapper.TryGetFutureTradingClassContract(lookupName, out var sharedIbSymbol, out var tradingClass))
+            if (symbol.SecurityType == SecurityType.Future)
             {
-                // IB lists this product under a symbol shared with others (DAX: FDAX, FDXM, FDXS; SI: SI, SIL) and identifies it by trading class
-                contract.Symbol = sharedIbSymbol;
-                contract.TradingClass = tradingClass;
+                SetSharedSymbolTradingClass(contract, lookupName);
             }
 
             Log.Trace($"InteractiveBrokersBrokerage.LookupSymbols(): Requesting symbol list for {contract.Symbol} ...");
@@ -5106,6 +5098,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             Log.Trace($"InteractiveBrokersBrokerage.LookupSymbols(): Returning {symbols.Count} contract(s) for {contract.Symbol}");
 
             return symbols;
+        }
+
+        /// <summary>
+        /// Sets the shared IB symbol and the trading class on the contract of a future that IB lists under a symbol
+        /// shared with other products, see <see cref="InteractiveBrokersSymbolMapper.TryGetFutureTradingClassContract"/>
+        /// </summary>
+        private static void SetSharedSymbolTradingClass(Contract contract, string leanRootSymbol)
+        {
+            if (InteractiveBrokersSymbolMapper.TryGetFutureTradingClassContract(leanRootSymbol, out var sharedIbSymbol, out var tradingClass))
+            {
+                contract.Symbol = sharedIbSymbol;
+                contract.TradingClass = tradingClass;
+            }
         }
 
         private static string GetContractMultiplier(decimal contractMultiplier)
