@@ -2155,15 +2155,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     break;
             }
 
+            var roundedPrice = RoundPrice(price, minTick);
+            roundedPrice *= symbolProperties.PriceMagnifier;
+
             if (minTick <= 0)
             {
                 Log.Trace($"InteractiveBrokersBrokerage.NormalizePriceToBrokerage(): minimum tick size unavailable for {symbol.Value}, sending price {price.ToStringInvariant()} unrounded");
             }
-
-            var roundedPrice = RoundPrice(price, minTick);
-            roundedPrice *= symbolProperties.PriceMagnifier;
-
-            if (!price.Equals(roundedPrice))
+            else if (!price.Equals(roundedPrice))
             {
                 var message = $"To meet brokerage precision requirements, price was rounded to {roundedPrice.ToStringInvariant()} from {price.ToStringInvariant()} due to minimum tick size constraint ({minTick}).";
 

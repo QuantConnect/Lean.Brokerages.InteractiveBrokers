@@ -69,6 +69,25 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         }
 
         [Test]
+        public void MagnifiedPriceIsSentUnroundedWithoutWarningWhenTheContractDetailsAreUnavailable()
+        {
+            // ZC has a price magnifier of 100: the price sent is magnified but not rounded
+            var cornFuture = Symbol.CreateFuture("ZC", Market.CBOT, new DateTime(2027, 3, 12));
+            var cornContract = new Contract
+            {
+                Symbol = "ZC", SecType = IB.SecurityType.Future, Exchange = "CBOT", Currency = "USD", LastTradeDateOrContractMonth = "20270312"
+            };
+            var brokerage = CreateOfflineBrokerage(details: null);
+            var messages = new List<BrokerageMessageEvent>();
+            brokerage.Message += (_, e) => messages.Add(e);
+
+            var price = brokerage.NormalizePriceToBrokerage(4.5025m, cornContract, cornFuture);
+
+            Assert.AreEqual(450.25, price);
+            Assert.IsEmpty(messages, "no PriceRounding warning: the tick size is unknown");
+        }
+
+        [Test]
         public void PriceIsRoundedToTheMinTickWhenTheContractDetailsAreAvailable()
         {
             var brokerage = CreateOfflineBrokerage(details: new ContractDetails { Contract = PlatinumContract, MinTick = 0.1 });
