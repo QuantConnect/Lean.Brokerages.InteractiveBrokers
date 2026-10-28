@@ -2158,7 +2158,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var roundedPrice = RoundPrice(price, minTick);
             roundedPrice *= symbolProperties.PriceMagnifier;
 
-            if (!price.Equals(roundedPrice))
+            if (minTick <= 0)
+            {
+                Log.Trace($"InteractiveBrokersBrokerage.NormalizePriceToBrokerage(): minimum tick size unavailable for {symbol.Value}, sending price {price.ToStringInvariant()} unrounded");
+            }
+            else if (!price.Equals(roundedPrice))
             {
                 var message = $"To meet brokerage precision requirements, price was rounded to {roundedPrice.ToStringInvariant()} from {price.ToStringInvariant()} due to minimum tick size constraint ({minTick}).";
 
@@ -4433,7 +4437,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static decimal RoundPrice(decimal input, decimal minTick)
         {
-            if (minTick == 0) return minTick;
+            // unknown min tick (contract details unavailable): keep the price, which LEAN already rounded to the
+            // symbol properties tick, a good guess of IB's tick that is likely to avoid an invalid price rejection
+            if (minTick <= 0) return input;
             return Math.Round(input / minTick) * minTick;
         }
 
