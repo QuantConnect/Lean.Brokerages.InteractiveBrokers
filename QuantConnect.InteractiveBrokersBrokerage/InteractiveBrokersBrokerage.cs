@@ -5876,9 +5876,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             try
             {
                 var result = _ibAutomater.Start(false);
-                CheckIbAutomaterError(result);
+                CheckIbAutomaterError(result, false);
 
-                // Has error but we are still running, we might be waiting for 2FA user required action after timeout, let's not connect in that case
+                // the error was raised above, or we are waiting for the 2FA user required action after a timeout: no gateway to connect to
                 if (!result.HasError)
                 {
                     Connect();

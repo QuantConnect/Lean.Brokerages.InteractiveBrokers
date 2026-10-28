@@ -86,9 +86,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
             InvokeMethod(_brokerage, "StartGatewayAndConnect");
 
-            // the start was attempted again instead of returning the stored timeout, and its failure is raised
+            // the start was attempted again instead of returning the stored timeout, and its failure is raised once
             Assert.IsTrue(_automaterOutput.Any(x => x.StartsWith("Loading IBGateway")));
-            Assert.IsTrue(_messages.Any(m => m.Type == BrokerageMessageType.Error && m.Code == nameof(ErrorCode.JavaNotFound)));
+            var error = _messages.Single(m => m.Type == BrokerageMessageType.Error);
+            Assert.AreEqual(nameof(ErrorCode.JavaNotFound), error.Code);
         }
 
         private static void SetField(object instance, string name, object value)
