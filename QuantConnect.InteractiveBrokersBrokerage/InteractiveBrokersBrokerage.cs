@@ -4437,8 +4437,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private static decimal RoundPrice(decimal input, decimal minTick)
         {
-            // an unknown minimum tick (0 when the contract details could not be fetched) must not turn the price into 0:
-            // send the price as the algorithm set it and let IB validate the increment
+            // unknown min tick (contract details unavailable): keep the price, which LEAN already rounded to the
+            // symbol properties tick, a good guess of IB's tick that is likely to avoid an invalid price rejection
             if (minTick <= 0) return input;
             return Math.Round(input / minTick) * minTick;
         }
