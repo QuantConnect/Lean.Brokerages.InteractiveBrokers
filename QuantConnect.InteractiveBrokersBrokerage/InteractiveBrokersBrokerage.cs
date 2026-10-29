@@ -4728,8 +4728,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                                 Client.ClientSocket.cancelMktData(id);
 
-                                SubscriptionEntry entry;
-                                return _subscribedTickers.TryRemove(id, out entry);
+                                // taking the symbol is what unsubscribes it: its ticker is already gone when a CFD
+                                // re-route moved the subscription meanwhile, which then cancels its own request
+                                _subscribedTickers.TryRemove(id, out _);
+                                return true;
                             }
                         }
                     }

@@ -22,6 +22,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using IBApi;
 using NUnit.Framework;
 using QuantConnect.Brokerages;
@@ -358,6 +359,32 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsEmpty(subscribedSymbols);
             Assert.IsEmpty(subscribedTickers);
             Assert.IsEmpty((IDictionary)GetPrivateFieldValue(brokerage, "_subscriptionTimes"));
+        }
+
+        // the same race as above, with the re-route coming in while Unsubscribe waits out the minimum subscription
+        // time: Unsubscribe must still report success, else the subscription manager keeps the symbol as subscribed
+        // and adding it again never reaches the brokerage
+        [Test]
+        public void UnsubscribeRacedByAMarketDataReRouteSucceeds()
+        {
+            const int cfdTickerId = 40;
+            const int nextValidId = 41;
+            using var brokerage = CreateReRouteBrokerage(cfdTickerId, nextValidId, out var socket, out var symbol, out _);
+
+            var unsubscribe = typeof(InteractiveBrokersBrokerage).GetMethod("Unsubscribe", BindingFlags.NonPublic | BindingFlags.Instance,
+                [typeof(IEnumerable<Symbol>)]);
+            var unsubscribeTask = Task.Run(() => (bool)unsubscribe.Invoke(brokerage, [new[] { symbol }]));
+
+            // the CFD was subscribed just now, so Unsubscribe took the symbol and is waiting before it cancels
+            Assert.IsTrue(SpinWait.SpinUntil(() => ((IDictionary)GetPrivateFieldValue(brokerage, "_subscribedSymbols")).Count == 0, 1000));
+            InvokeHandleMarketDataReRoute(brokerage, new IB.RerouteMarketDataRequestEventArgs(cfdTickerId, 123456, "NASDAQ"));
+
+            Assert.IsTrue(unsubscribeTask.Wait(TimeSpan.FromSeconds(10)));
+            Assert.IsTrue(unsubscribeTask.Result);
+            CollectionAssert.AreEqual(
+                new[] { (CancelMarketData, cfdTickerId), (RequestMarketData, nextValidId), (CancelMarketData, nextValidId), (CancelMarketData, cfdTickerId) },
+                socket.Requests);
+            Assert.IsEmpty((IDictionary)GetPrivateFieldValue(brokerage, "_subscribedTickers"));
         }
 
         private const int RequestMarketData = 1;
