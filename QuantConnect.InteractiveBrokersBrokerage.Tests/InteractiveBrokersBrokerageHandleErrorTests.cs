@@ -19,6 +19,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using IBApi;
 using NUnit.Framework;
 using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.InteractiveBrokers;
@@ -299,6 +300,47 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(pendingResponseEvent.IsSet);
             Assert.AreEqual(1, orderEvents.Count(e => e.Status == OrderStatus.Invalid));
             Assert.AreEqual(BrokerageMessageType.Error, messages.Single(m => m.Code == "200").Type);
+        }
+
+        // IB answers a CFD market data request it serves from the underlying with a re-route. Requesting the
+        // underlying with the CFD request's id is rejected with a fatal 322 ("Duplicate ticker id") whenever IB
+        // still holds the CFD request open, as it did after a gateway restart, so the re-routed request must
+        // take a new id, carrying the subscription over to it, and a repeated re-route must be ignored.
+        [Test]
+        public void MarketDataReRouteRequestsTheUnderlyingWithANewTickerId()
+        {
+            const int cfdTickerId = 40;
+            const int nextValidId = 41;
+
+            using var brokerage = new InteractiveBrokersBrokerage();
+            SetPrivateFieldValue(brokerage, "_client", new IB.InteractiveBrokersClient(new EReaderMonitorSignal()));
+            SetPrivateFieldValue(brokerage, "_nextValidId", nextValidId);
+
+            var symbol = Symbol.Create("SMH", SecurityType.Cfd, Market.InteractiveBrokers);
+            var subscriptionEntryType = typeof(InteractiveBrokersBrokerage).GetNestedType("SubscriptionEntry", BindingFlags.NonPublic);
+            var subscriptionEntry = Activator.CreateInstance(subscriptionEntryType);
+            subscriptionEntryType.GetProperty("Symbol").SetValue(subscriptionEntry, symbol);
+            var subscribedTickers = (IDictionary)GetPrivateFieldValue(brokerage, "_subscribedTickers");
+            var subscribedSymbols = (IDictionary)GetPrivateFieldValue(brokerage, "_subscribedSymbols");
+            subscribedTickers[cfdTickerId] = subscriptionEntry;
+            subscribedSymbols[symbol] = cfdTickerId;
+            SeedRequestInformation(brokerage, cfdTickerId, "Subscription", symbol);
+
+            var handleMarketDataReRoute = typeof(InteractiveBrokersBrokerage).GetMethod("HandleMarketDataReRoute", BindingFlags.NonPublic | BindingFlags.Instance);
+            var reRoute = new IB.RerouteMarketDataRequestEventArgs(cfdTickerId, 123456, "NASDAQ");
+            handleMarketDataReRoute.Invoke(brokerage, [this, reRoute]);
+
+            Assert.AreEqual(nextValidId, subscribedSymbols[symbol]);
+            Assert.IsFalse(subscribedTickers.Contains(cfdTickerId));
+            Assert.AreSame(subscriptionEntry, subscribedTickers[nextValidId]);
+            Assert.IsTrue(((IDictionary)GetPrivateFieldValue(brokerage, "_requestInformation")).Contains(nextValidId));
+
+            // IB re-routing the same CFD request again doesn't request the underlying a second time
+            handleMarketDataReRoute.Invoke(brokerage, [this, reRoute]);
+
+            Assert.AreEqual(nextValidId + 1, GetPrivateFieldValue(brokerage, "_nextValidId"));
+            Assert.AreEqual(nextValidId, subscribedSymbols[symbol]);
+            Assert.AreEqual(1, subscribedTickers.Count);
         }
 
         private static void SeedRequestInformation(InteractiveBrokersBrokerage brokerage, int requestId, string requestType, Symbol symbol)

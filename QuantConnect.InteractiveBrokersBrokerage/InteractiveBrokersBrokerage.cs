@@ -4543,17 +4543,44 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void HandleMarketDataReRoute(object sender, IB.RerouteMarketDataRequestEventArgs e)
         {
-            var requestInformation = _requestInformation.GetValueOrDefault(e.RequestId);
-            Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Re-routing {requestInformation?.AssociatedSymbol} CFD data request to underlying");
-
-            // re-route the request to the underlying
-            var underlyingContract = new Contract
+            lock (_sync)
             {
-                ConId = e.ContractId,
-                Exchange = e.UnderlyingPrimaryExchange,
-            };
+                // the subscription was removed meanwhile or its request was already re-routed
+                if (!_subscribedTickers.TryRemove(e.RequestId, out var entry))
+                {
+                    return;
+                }
 
-            RequestMarketData(underlyingContract, e.RequestId);
+                var requestInformation = _requestInformation.GetValueOrDefault(e.RequestId);
+                Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Re-routing {requestInformation?.AssociatedSymbol} CFD data request to underlying");
+
+                // re-route the request to the underlying
+                var underlyingContract = new Contract
+                {
+                    ConId = e.ContractId,
+                    Exchange = e.UnderlyingPrimaryExchange,
+                };
+
+                // IB may still hold the CFD request open, after a gateway restart for instance, and reusing its id
+                // would be rejected as a duplicate ticker id, so the re-routed request takes a new one
+                var id = GetNextId();
+                _requestInformation[id] = new RequestInformation
+                {
+                    RequestId = id,
+                    RequestType = RequestType.Subscription,
+                    AssociatedSymbol = requestInformation?.AssociatedSymbol,
+                    Message = $"[Id={id}] Re-routed subscription [Id={e.RequestId}]: {entry.Symbol.Value} ({GetContractDescription(underlyingContract)})"
+                };
+                if (_subscriptionTimes.Remove(e.RequestId, out var subscriptionTime))
+                {
+                    _subscriptionTimes[id] = subscriptionTime;
+                }
+
+                RequestMarketData(underlyingContract, id);
+
+                _subscribedSymbols[entry.Symbol] = id;
+                _subscribedTickers[id] = entry;
+            }
         }
 
         /// <summary>
