@@ -1773,28 +1773,50 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                     "Interactive Brokers does not send a submission event for some order types, in these cases if no error is detected Lean will generate the submission event."));
                             }
 
-                            if (_pendingOrderResponse.TryRemove(ibOrderId, out var _))
+                            if (!_pendingOrderResponse.TryRemove(ibOrderId, out var _))
                             {
-                                orderSubmittedEvent.DisposeSafely();
-
-                                var orderEvents = orders.Where(order => order != null).Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
-                                {
-                                    Status = OrderStatus.Submitted,
-                                    Message = "Lean Generated Interactive Brokers Order Event"
-                                }).ToList();
-                                OnOrderEvents(orderEvents);
+                                return;
                             }
+                            orderSubmittedEvent.DisposeSafely();
                         }
                         else
                         {
                             var reason = $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}";
-                            if (_lastGatewayRestartTimeUtc >= requestTimeUtc || IsRestartInProgress())
+
+                            // IB can hold back the response to an order it accepted, like a MarketOnClose order placed near the close.
+                            // A new order IB lists as open is live: its updates still arrive, so stopping the algorithm would leave it unmanaged
+                            Contract openOrderContract = null;
+                            try
                             {
-                                reason += ". An IB Gateway restart overlapped the request, which likely never reached IB. " +
-                                    "Consider avoiding order requests around the gateway's scheduled restart time.";
+                                openOrderContract = needsNewId ? GetOpenOrderContract(ibOrderId) : null;
                             }
-                            OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", reason));
+                            catch (Exception e)
+                            {
+                                Log.Error($"InteractiveBrokersBrokerage.IBPlaceOrder(): Failed to look up order {ibOrderId} in the open orders: {e.Message}");
+                            }
+                            if (openOrderContract == null)
+                            {
+                                if (_lastGatewayRestartTimeUtc >= requestTimeUtc || IsRestartInProgress())
+                                {
+                                    reason += ". An IB Gateway restart overlapped the request, which likely never reached IB. " +
+                                        "Consider avoiding order requests around the gateway's scheduled restart time.";
+                                }
+                                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "NoBrokerageResponse", reason));
+                                return;
+                            }
+                            OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Warning, "NoBrokerageResponse",
+                                $"{reason}. The order is open at Interactive Brokers, its updates will be applied as they arrive."));
                         }
+
+                        // IB lists an open order it didn't acknowledge as pending submission, which leaves the Lean order New and so impossible
+                        // to cancel. The order is at IB: it's submitted, the status open orders loaded at start get too
+                        var orderEvents = orders.Where(order => order != null && (noSubmissionOrderTypes || _orderProvider.GetOrderById(order.Id)?.Status == OrderStatus.New))
+                            .Select(order => new OrderEvent(order, DateTime.UtcNow, OrderFee.Zero)
+                            {
+                                Status = OrderStatus.Submitted,
+                                Message = "Lean Generated Interactive Brokers Order Event"
+                            }).ToList();
+                        OnOrderEvents(orderEvents);
                     }
                     else
                     {
