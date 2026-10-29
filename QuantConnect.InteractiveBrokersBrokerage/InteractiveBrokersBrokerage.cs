@@ -260,7 +260,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         // when unsubscribing symbols immediately after subscribing IB returns an error (Can't find EId with tickerId:nnn),
         // so we track subscription times to ensure symbols are not unsubscribed before a minimum time span has elapsed
-        private readonly Dictionary<int, DateTime> _subscriptionTimes = new Dictionary<int, DateTime>();
+        private readonly ConcurrentDictionary<int, DateTime> _subscriptionTimes = new ConcurrentDictionary<int, DateTime>();
 
         private readonly TimeSpan _minimumTimespanBeforeUnsubscribe = TimeSpan.FromSeconds(5);
 
@@ -4543,43 +4543,50 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void HandleMarketDataReRoute(object sender, IB.RerouteMarketDataRequestEventArgs e)
         {
-            lock (_sync)
+            // this runs on the IB message thread, so it doesn't take _sync, which Unsubscribe holds while it waits:
+            // the concurrent collections detect an unsubscribe racing the re-route instead
+            if (!_subscribedTickers.TryRemove(e.RequestId, out var entry))
             {
                 // the subscription was removed meanwhile or its request was already re-routed
-                if (!_subscribedTickers.TryRemove(e.RequestId, out var entry))
-                {
-                    return;
-                }
+                return;
+            }
 
-                var requestInformation = _requestInformation.GetValueOrDefault(e.RequestId);
-                Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Re-routing {requestInformation?.AssociatedSymbol} CFD data request to underlying");
+            var requestInformation = _requestInformation.GetValueOrDefault(e.RequestId);
+            Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Re-routing {requestInformation?.AssociatedSymbol} CFD data request to underlying");
 
-                // re-route the request to the underlying
-                var underlyingContract = new Contract
-                {
-                    ConId = e.ContractId,
-                    Exchange = e.UnderlyingPrimaryExchange,
-                };
+            // re-route the request to the underlying
+            var underlyingContract = new Contract
+            {
+                ConId = e.ContractId,
+                Exchange = e.UnderlyingPrimaryExchange,
+            };
 
-                // IB may still hold the CFD request open, after a gateway restart for instance, and reusing its id
-                // would be rejected as a duplicate ticker id, so the re-routed request takes a new one
-                var id = GetNextId();
-                _requestInformation[id] = new RequestInformation
-                {
-                    RequestId = id,
-                    RequestType = RequestType.Subscription,
-                    AssociatedSymbol = requestInformation?.AssociatedSymbol,
-                    Message = $"[Id={id}] Re-routed subscription [Id={e.RequestId}]: {entry.Symbol.Value} ({GetContractDescription(underlyingContract)})"
-                };
-                if (_subscriptionTimes.Remove(e.RequestId, out var subscriptionTime))
-                {
-                    _subscriptionTimes[id] = subscriptionTime;
-                }
+            // IB may still hold the CFD request open, after a gateway restart for instance, and reusing its id
+            // would be rejected as a duplicate ticker id, so the re-routed request takes a new one
+            var id = GetNextId();
+            _requestInformation[id] = new RequestInformation
+            {
+                RequestId = id,
+                RequestType = RequestType.Subscription,
+                AssociatedSymbol = requestInformation?.AssociatedSymbol,
+                Message = $"[Id={id}] Re-routed subscription [Id={e.RequestId}]: {entry.Symbol.Value} ({GetContractDescription(underlyingContract)})"
+            };
+            _subscribedTickers[id] = entry;
+            if (_subscriptionTimes.TryRemove(e.RequestId, out var subscriptionTime))
+            {
+                _subscriptionTimes[id] = subscriptionTime;
+            }
 
-                RequestMarketData(underlyingContract, id);
+            // when IB already released the CFD request, the error 300 answering this cancel is ignored as benign
+            Client.ClientSocket.cancelMktData(e.RequestId);
+            RequestMarketData(underlyingContract, id);
 
-                _subscribedSymbols[entry.Symbol] = id;
-                _subscribedTickers[id] = entry;
+            if (!_subscribedSymbols.TryUpdate(entry.Symbol, id, e.RequestId))
+            {
+                // the symbol was unsubscribed meanwhile, which cancelled only the CFD request
+                Client.ClientSocket.cancelMktData(id);
+                _subscribedTickers.TryRemove(id, out _);
+                _subscriptionTimes.TryRemove(id, out _);
             }
         }
 
@@ -4716,7 +4723,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                         Thread.Sleep(delay);
                                     }
 
-                                    _subscriptionTimes.Remove(id);
+                                    _subscriptionTimes.TryRemove(id, out _);
                                 }
 
                                 Client.ClientSocket.cancelMktData(id);
