@@ -39,9 +39,12 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         {
             // a gateway installation without its bundled Java: any start attempt fails with JavaNotFound before launching anything
             _gatewayDirectory = Path.Combine(Path.GetTempPath(), $"ib-gateway-restart-tests-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(_gatewayDirectory);
-            File.WriteAllText(Path.Combine(_gatewayDirectory, "ibgateway"), string.Empty);
-            File.WriteAllText(Path.Combine(_gatewayDirectory, "ibgateway.vmoptions"), string.Empty);
+            // IBAutomater looks for the gateway under {dir}/ibgateway/{version} on Windows and at {dir} itself on Linux
+            var versionDirectory = OperatingSystem.IsWindows() ? Path.Combine(_gatewayDirectory, "ibgateway", "1034") : _gatewayDirectory;
+            var executable = OperatingSystem.IsWindows() ? "ibgateway.exe" : "ibgateway";
+            Directory.CreateDirectory(versionDirectory);
+            File.WriteAllText(Path.Combine(versionDirectory, executable), string.Empty);
+            File.WriteAllText(Path.Combine(versionDirectory, "ibgateway.vmoptions"), string.Empty);
 
             _automater = new IBAutomater.IBAutomater(_gatewayDirectory, "1034", "user", "password", "paper", 4002, false);
             _automaterOutput = new List<string>();
