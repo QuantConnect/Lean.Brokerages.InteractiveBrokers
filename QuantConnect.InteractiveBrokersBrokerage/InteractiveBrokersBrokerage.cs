@@ -5803,7 +5803,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         else
                         {
                             // if the gateway is not running, we start it
-                            CheckIbAutomaterError(_ibAutomater.Start(false));
+                            StartGatewayAndConnect();
                         }
                     }
                     catch (Exception ex)
@@ -5890,14 +5890,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                         Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");
 
-                        var result = _ibAutomater.Start(false);
-                        CheckIbAutomaterError(result);
-
-                        // Has error but we are still running, we might be waiting for 2FA user required action after timeout, let's not connect in that case
-                        if (!result.HasError)
-                        {
-                            Connect();
-                        }
+                        StartGatewayAndConnect();
                     }
                     catch (Exception exception)
                     {
@@ -5908,6 +5901,28 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else
             {
                 OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterError", result.ErrorMessage));
+            }
+        }
+
+        /// <summary>
+        /// Starts the IB Gateway and connects to it, raising any failure as an error message
+        /// </summary>
+        private void StartGatewayAndConnect()
+        {
+            try
+            {
+                var result = _ibAutomater.Start(false);
+                CheckIbAutomaterError(result, false);
+
+                // the error was raised above, or we are waiting for the 2FA user required action after a timeout: no gateway to connect to
+                if (!result.HasError)
+                {
+                    Connect();
+                }
+            }
+            catch (Exception exception)
+            {
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterRestartError", exception.ToString()));
             }
         }
 
