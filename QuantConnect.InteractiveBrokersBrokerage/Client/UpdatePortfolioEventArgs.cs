@@ -36,6 +36,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         public decimal Position { get; }
 
         /// <summary>
+        /// The exact position quantity reported by Interactive Brokers, an alias for <see cref="Position"/>.
+        /// If the position is 0, it means the position has just cleared.
+        /// </summary>
+        public decimal PositionQuantity => Position;
+
+        /// <summary>
+        /// Gets the originating positions-multi request identifier, if any.
+        /// </summary>
+        public int? PositionsMultiRequestId { get; }
+
+        /// <summary>
         /// The unit price of the instrument.
         /// </summary>
         public double MarketPrice { get; }
@@ -69,9 +80,35 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// Initializes a new instance of the <see cref="UpdatePortfolioEventArgs"/> class
         /// </summary>
         public UpdatePortfolioEventArgs(Contract contract, decimal position, double marketPrice, double marketValue, double averageCost, double unrealisedPnl, double realisedPnl, string accountName)
+            : this(contract, position, marketPrice, marketValue, averageCost, unrealisedPnl, realisedPnl, accountName, null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance with an integer position, retaining the previous constructor signature.
+        /// </summary>
+        public UpdatePortfolioEventArgs(Contract contract, int position, double marketPrice, double marketValue, double averageCost, double unrealisedPnl, double realisedPnl, string accountName)
+            : this(contract, (decimal)position, marketPrice, marketValue, averageCost, unrealisedPnl, realisedPnl, accountName)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="UpdatePortfolioEventArgs"/> class with an exact position.
+        /// </summary>
+        internal UpdatePortfolioEventArgs(
+            Contract contract,
+            decimal position,
+            double marketPrice,
+            double marketValue,
+            double averageCost,
+            double unrealisedPnl,
+            double realisedPnl,
+            string accountName,
+            int? positionsMultiRequestId)
         {
             Contract = contract;
             Position = position;
+            PositionsMultiRequestId = positionsMultiRequestId;
             MarketPrice = marketPrice;
             MarketValue = marketValue;
             AverageCost = averageCost;
@@ -86,7 +123,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers.Client
         /// <returns>A string that represents the current object.</returns>
         public override string ToString()
         {
-            return $"Contract: {Contract}, ConId: {Contract.ConId}, Position: {Position}, MarketPrice: {MarketPrice}, MarketValue: {MarketValue}, AverageCost: {AverageCost}, UnrealisedPnl: {UnrealisedPnl}, RealisedPnl: {RealisedPnl}, AccountName: {AccountName}";
+            return $"Contract: {Contract}, ConId: {Contract.ConId}, Position: {PositionQuantity}, MarketPrice: {MarketPrice}, MarketValue: {MarketValue}, AverageCost: {AverageCost}, UnrealisedPnl: {UnrealisedPnl}, RealisedPnl: {RealisedPnl}, AccountName: {AccountName}";
         }
     }
 }
