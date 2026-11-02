@@ -5673,7 +5673,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (e.Data.Contains("IB Automater auto-restart login failed", StringComparison.InvariantCultureIgnoreCase))
             {
                 // IBAutomater stops the gateway and reports its exit, which retries with a full login
-                OnMessage(BrokerageMessageEvent.Disconnected("Interactive Brokers refused the login of the daily gateway restart. A new login will be attempted."));
+                OnMessage(BrokerageMessageEvent.Disconnected("Interactive Brokers refused the login of the gateway restart. A new login will be attempted."));
             }
             else if (e.Data.Contains(OrderConfirmationWindowMarker, StringComparison.InvariantCultureIgnoreCase))
             {
