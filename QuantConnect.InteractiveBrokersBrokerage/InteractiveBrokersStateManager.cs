@@ -13,6 +13,7 @@
  * limitations under the License.
 */
 
+using System;
 using System.Threading;
 
 namespace QuantConnect.Brokerages.InteractiveBrokers
@@ -81,12 +82,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
+        /// Gets/sets when the reconnect polling first found the IB reset period over, null while it is open or no disconnect is pending
+        /// </summary>
+        public DateTime? ResetPeriodEndedUtc { get; set; }
+
+        /// <summary>
         /// Resets the state to the default values
         /// </summary>
         public void Reset()
         {
             _disconnected1100Fired = false;
             _previouslyInResetTime = false;
+            ResetPeriodEndedUtc = null;
             _connectingInProgress.Reset();
         }
     }

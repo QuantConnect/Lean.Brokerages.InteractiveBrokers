@@ -35,10 +35,15 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         private TestIBAutomater _automater;
         private List<BrokerageMessageEvent> _messages;
         private List<string> _automaterOutput;
+        private TimeSpan _gracePeriod;
 
         [SetUp]
         public void SetUp()
         {
+            // the reset period tests expect the gateway restart right after the window closes
+            _gracePeriod = InteractiveBrokersBrokerage.PostResetReconnectGracePeriod;
+            InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = TimeSpan.Zero;
+
             // a gateway installation without its bundled Java: any start attempt fails with JavaNotFound before launching anything
             _gatewayDirectory = Path.Combine(Path.GetTempPath(), $"ib-gateway-restart-tests-{Guid.NewGuid():N}");
             // IBAutomater looks for the gateway under {dir}/ibgateway/{version} on Windows and at {dir} itself on Linux
@@ -66,11 +71,14 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         [TearDown]
         public void TearDown()
         {
+            InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = _gracePeriod;
             // ends the reconnect polling the tests started
-            GetField<InteractiveBrokersStateManager>(_brokerage, "_stateManager").Reset();
+            StateManager.Reset();
             _brokerage.Dispose();
             Directory.Delete(_gatewayDirectory, true);
         }
+
+        private InteractiveBrokersStateManager StateManager => GetField<InteractiveBrokersStateManager>(_brokerage, "_stateManager");
 
         [Test]
         public void FailedAutoRestartRaisesTheActualError()
@@ -149,7 +157,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         {
             _automater.IsWithinResetTimes = true;
             _brokerage.HandleError(this, new IB.ErrorEventArgs(-1, 0, 1100, ConnectivityLost));
-            _brokerage.HandleError(this, new IB.ErrorEventArgs(-1, 0, 1102, "Connectivity between IBKR and Trader Workstation has been restored - data maintained."));
+            _brokerage.HandleError(this, new IB.ErrorEventArgs(-1, 0, 1102, ConnectivityRestored));
 
             // the poll scheduled within the reset period finds the connection restored
             _automater.IsWithinResetTimes = false;
@@ -163,8 +171,58 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(2)));
         }
 
+        [Test]
+        public void DisconnectOutlivingTheResetPeriodWaitsForTheGracePeriod()
+        {
+            InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = TimeSpan.FromHours(1);
+            _automater.IsWithinResetTimes = true;
+            _brokerage.HandleError(this, new IB.ErrorEventArgs(-1, 0, 1100, ConnectivityLost));
+
+            // the reset period is over but the connection may still come back, as when IB overruns its published window
+            _automater.IsWithinResetTimes = false;
+            InvokeMethod(_brokerage, "TryWaitForReconnect");
+
+            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Disconnect));
+            Assert.AreEqual(0, _automater.StopCount);
+            Assert.IsTrue(StateManager.PreviouslyInResetTime);
+            Assert.IsNotNull(StateManager.ResetPeriodEndedUtc);
+
+            // the connection is restored within the grace period
+            _brokerage.HandleError(this, new IB.ErrorEventArgs(-1, 0, 1102, ConnectivityRestored));
+
+            Assert.IsFalse(StateManager.Disconnected1100Fired);
+            Assert.IsFalse(StateManager.PreviouslyInResetTime);
+            Assert.IsNull(StateManager.ResetPeriodEndedUtc);
+
+            // the incident is over: the next poll does nothing even with the grace period expired
+            InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = TimeSpan.Zero;
+            InvokeMethod(_brokerage, "TryWaitForReconnect");
+
+            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Disconnect));
+            Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(2)));
+            Assert.AreEqual(0, _automater.StopCount);
+        }
+
+        [Test]
+        public void ANewDisconnectStartsWithoutResetPeriodHistory()
+        {
+            // as left by a reconnect poll that ran while a 1102 restored the connection
+            StateManager.PreviouslyInResetTime = true;
+            Assert.IsFalse(StateManager.Disconnected1100Fired);
+
+            _automater.IsWithinResetTimes = false;
+            _brokerage.HandleError(this, new IB.ErrorEventArgs(-1, 0, 1100, ConnectivityLost));
+
+            var disconnect = _messages.Single(m => m.Type == BrokerageMessageType.Disconnect);
+            StringAssert.Contains("Connection with Interactive Brokers lost", disconnect.Message);
+            Assert.IsFalse(StateManager.PreviouslyInResetTime);
+            Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(2)));
+            Assert.AreEqual(0, _automater.StopCount);
+        }
+
         private const string RefusedLogin = "Login failed: Passwords are case sensitive. Please ensure that the Caps Lock key is not activated.";
         private const string ConnectivityLost = "Connectivity between IBKR and Trader Workstation has been lost.";
+        private const string ConnectivityRestored = "Connectivity between IBKR and Trader Workstation has been restored - data maintained.";
 
         private class TestIBAutomater : IBAutomater.IBAutomater
         {

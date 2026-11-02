@@ -309,6 +309,20 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         internal static DateTime _nextNdxMarketOpenSkipTime = default;
 
         /// <summary>
+        /// How long after the scheduled server reset period ends the connection is still waited for before restarting the gateway
+        /// </summary>
+        private static TimeSpan _postResetReconnectGracePeriod = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// How long after the scheduled server reset period ends the connection is still waited for before restarting the gateway
+        /// </summary>
+        internal static TimeSpan PostResetReconnectGracePeriod
+        {
+            get => _postResetReconnectGracePeriod;
+            set => _postResetReconnectGracePeriod = value;
+        }
+
+        /// <summary>
         /// Stores the exchange hours for the NDX security, used to determine market open/close times and related calculations.
         /// </summary>
         private static SecurityExchangeHours _ndxSecurityExchangeHours;
@@ -2325,6 +2339,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 StopGatewayRestartTask();
                 if (!_stateManager.Disconnected1100Fired)
                 {
+                    // a new disconnect starts with no reset-period history
+                    _stateManager.PreviouslyInResetTime = false;
+                    _stateManager.ResetPeriodEndedUtc = null;
                     _stateManager.Disconnected1100Fired = true;
 
                     // begin the try wait logic
@@ -2346,6 +2363,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _stateManager.Disconnected1100Fired = false;
                 // a later disconnect is a new one, not one left over from the reset period
                 _stateManager.PreviouslyInResetTime = false;
+                _stateManager.ResetPeriodEndedUtc = null;
                 return;
             }
             else if (errorCode == 1101)
@@ -2356,6 +2374,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _stateManager.Disconnected1100Fired = false;
                 // a later disconnect is a new one, not one left over from the reset period
                 _stateManager.PreviouslyInResetTime = false;
+                _stateManager.ResetPeriodEndedUtc = null;
 
                 RestoreDataSubscriptions();
                 return;
@@ -2583,6 +2602,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => TryWaitForReconnect());
 
                 _stateManager.PreviouslyInResetTime = true;
+                // a window that reopens restarts the grace period
+                _stateManager.ResetPeriodEndedUtc = null;
                 return;
             }
 
@@ -2595,7 +2616,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 return;
             }
 
+            // IB resets can overrun the published window: a short grace trades a cold login (and its 2FA prompt) for a late 1102
+            _stateManager.ResetPeriodEndedUtc ??= DateTime.UtcNow;
+            if (DateTime.UtcNow - _stateManager.ResetPeriodEndedUtc < _postResetReconnectGracePeriod)
+            {
+                Log.Trace($"InteractiveBrokersBrokerage.TryWaitForReconnect(): Server reset period ended, waiting up to {_postResetReconnectGracePeriod} more for the connection to be restored...");
+
+                Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => TryWaitForReconnect());
+                return;
+            }
+
             _stateManager.PreviouslyInResetTime = false;
+            _stateManager.ResetPeriodEndedUtc = null;
             OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers was not restored after the server reset period."));
 
             if (!_isRemoteGateway)
@@ -2604,7 +2636,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 // the gateway can be left logged out, e.g. when IB refused its re-login during the reset: once stopped,
                 // the exit handler retries with a full login, a soft restart would reuse the session IB refused
-                Task.Factory.StartNew(() => _ibAutomater.Stop());
+                Task.Factory.StartNew(() =>
+                {
+                    // a 1102 may have landed since the decision above
+                    if (!_stateManager.Disconnected1100Fired)
+                    {
+                        Log.Trace("InteractiveBrokersBrokerage.TryWaitForReconnect(): Connection restored before the gateway was stopped, skipping the restart.");
+                        return;
+                    }
+                    _ibAutomater.Stop();
+                });
             }
         }
 
