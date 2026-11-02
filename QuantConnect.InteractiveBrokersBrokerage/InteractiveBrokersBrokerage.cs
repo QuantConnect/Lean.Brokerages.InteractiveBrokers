@@ -311,16 +311,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// How long after the scheduled server reset period ends the connection is still waited for before restarting the gateway
         /// </summary>
-        private static TimeSpan _postResetReconnectGracePeriod = TimeSpan.FromMinutes(5);
-
-        /// <summary>
-        /// How long after the scheduled server reset period ends the connection is still waited for before restarting the gateway
-        /// </summary>
-        internal static TimeSpan PostResetReconnectGracePeriod
-        {
-            get => _postResetReconnectGracePeriod;
-            set => _postResetReconnectGracePeriod = value;
-        }
+        internal static TimeSpan PostResetReconnectGracePeriod { get; set; } = TimeSpan.FromMinutes(5);
 
         /// <summary>
         /// Stores the exchange hours for the NDX security, used to determine market open/close times and related calculations.
@@ -2618,9 +2609,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // IB resets can overrun the published window: a short grace trades a cold login (and its 2FA prompt) for a late 1102
             _stateManager.ResetPeriodEndedUtc ??= DateTime.UtcNow;
-            if (DateTime.UtcNow - _stateManager.ResetPeriodEndedUtc < _postResetReconnectGracePeriod)
+            if (DateTime.UtcNow - _stateManager.ResetPeriodEndedUtc < PostResetReconnectGracePeriod)
             {
-                Log.Trace($"InteractiveBrokersBrokerage.TryWaitForReconnect(): Server reset period ended, waiting up to {_postResetReconnectGracePeriod} more for the connection to be restored...");
+                Log.Trace($"InteractiveBrokersBrokerage.TryWaitForReconnect(): Server reset period ended, waiting up to {PostResetReconnectGracePeriod} more for the connection to be restored...");
 
                 Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => TryWaitForReconnect());
                 return;

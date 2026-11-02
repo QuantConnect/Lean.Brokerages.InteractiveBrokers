@@ -25,6 +25,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
     {
         private volatile bool _disconnected1100Fired;
         private volatile bool _previouslyInResetTime;
+        // ticks rather than a DateTime? so the poll's timer thread and HandleError read and write it atomically, 0 for none
+        private long _resetPeriodEndedUtcTicks;
         private readonly ManualResetEvent _connectingInProgress = new ManualResetEvent(false);
 
         /// <summary>
@@ -84,7 +86,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Gets/sets when the reconnect polling first found the IB reset period over, null while it is open or no disconnect is pending
         /// </summary>
-        public DateTime? ResetPeriodEndedUtc { get; set; }
+        public DateTime? ResetPeriodEndedUtc
+        {
+            get
+            {
+                var ticks = Interlocked.Read(ref _resetPeriodEndedUtcTicks);
+                return ticks == 0 ? null : new DateTime(ticks, DateTimeKind.Utc);
+            }
+
+            set
+            {
+                Interlocked.Exchange(ref _resetPeriodEndedUtcTicks, value?.Ticks ?? 0);
+            }
+        }
 
         /// <summary>
         /// Resets the state to the default values
