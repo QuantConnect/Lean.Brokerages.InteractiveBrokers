@@ -2344,6 +2344,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
 
                 _stateManager.Disconnected1100Fired = false;
+                // a later disconnect is a new one, not one left over from the reset period
+                _stateManager.PreviouslyInResetTime = false;
                 return;
             }
             else if (errorCode == 1101)
@@ -2352,6 +2354,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
 
                 _stateManager.Disconnected1100Fired = false;
+                // a later disconnect is a new one, not one left over from the reset period
+                _stateManager.PreviouslyInResetTime = false;
 
                 RestoreDataSubscriptions();
                 return;
@@ -2571,25 +2575,37 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var isResetTime = _ibAutomater.IsWithinScheduledServerResetTimes();
 
-            if (!isResetTime)
-            {
-                if (!_stateManager.PreviouslyInResetTime)
-                {
-                    // if we were disconnected and we're not within the reset times, send the error event
-                    OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. " +
-                                                                 "This could be because of internet connectivity issues or a log in from another location."
-                        ));
-                }
-            }
-            else
+            if (isResetTime)
             {
                 Log.Trace("InteractiveBrokersBrokerage.TryWaitForReconnect(): Within server reset times, trying to wait for reconnect...");
 
                 // we're still not connected but we're also within the schedule reset time, so just keep polling
                 Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => TryWaitForReconnect());
+
+                _stateManager.PreviouslyInResetTime = true;
+                return;
             }
 
-            _stateManager.PreviouslyInResetTime = isResetTime;
+            if (!_stateManager.PreviouslyInResetTime)
+            {
+                // if we were disconnected and we're not within the reset times, send the error event
+                OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. " +
+                                                             "This could be because of internet connectivity issues or a log in from another location."
+                    ));
+                return;
+            }
+
+            _stateManager.PreviouslyInResetTime = false;
+            OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers was not restored after the server reset period."));
+
+            if (!_isRemoteGateway)
+            {
+                Log.Trace("InteractiveBrokersBrokerage.TryWaitForReconnect(): Not reconnected after the server reset period, restarting the gateway...");
+
+                // the gateway can be left logged out, e.g. when IB refused its re-login during the reset: once stopped,
+                // the exit handler retries with a full login, a soft restart would reuse the session IB refused
+                Task.Factory.StartNew(() => _ibAutomater.Stop());
+            }
         }
 
         /// <summary>
@@ -5653,6 +5669,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     OnMessage(BrokerageMessageEvent.Disconnected(message));
                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.ActionRequired, "2FAAuthRequired", message));
                 });
+            }
+            else if (e.Data.Contains("IB Automater auto-restart login failed", StringComparison.InvariantCultureIgnoreCase))
+            {
+                // IBAutomater stops the gateway and reports its exit, which retries with a full login
+                OnMessage(BrokerageMessageEvent.Disconnected("Interactive Brokers refused the login of the daily gateway restart. A new login will be attempted."));
             }
             else if (e.Data.Contains(OrderConfirmationWindowMarker, StringComparison.InvariantCultureIgnoreCase))
             {
