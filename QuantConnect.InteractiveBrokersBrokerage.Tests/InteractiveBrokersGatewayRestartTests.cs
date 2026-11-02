@@ -220,6 +220,35 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(0, _automater.StopCount);
         }
 
+        [Test]
+        public void ConnectionRestoredDuringAPostResetPollIsNotRaisedAsADisconnect()
+        {
+            InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = TimeSpan.FromHours(1);
+            _automater.IsWithinResetTimes = true;
+            _brokerage.HandleError(this, new IB.ErrorEventArgs(-1, 0, 1100, ConnectivityLost));
+
+            // the window closed and the first post-window poll opened the grace period
+            _automater.IsWithinResetTimes = false;
+            InvokeMethod(_brokerage, "TryWaitForReconnect");
+            Assert.IsNotNull(StateManager.ResetPeriodEndedUtc);
+
+            // IB restores the connection on the reader thread after the next poll passed its first check
+            _automater.OnResetTimesQueried = () =>
+            {
+                _automater.OnResetTimesQueried = null;
+                _brokerage.HandleError(this, new IB.ErrorEventArgs(-1, 0, 1102, ConnectivityRestored));
+            };
+            InvokeMethod(_brokerage, "TryWaitForReconnect");
+
+            // nothing was raised during the window, so the base class drops the 1102's Reconnect and a Disconnect here would stick
+            Assert.IsEmpty(_messages);
+            Assert.IsFalse(StateManager.Disconnected1100Fired);
+            Assert.IsFalse(StateManager.PreviouslyInResetTime);
+            Assert.IsNull(StateManager.ResetPeriodEndedUtc);
+            Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(2)));
+            Assert.AreEqual(0, _automater.StopCount);
+        }
+
         private const string RefusedLogin = "Login failed: Passwords are case sensitive. Please ensure that the Caps Lock key is not activated.";
         private const string ConnectivityLost = "Connectivity between IBKR and Trader Workstation has been lost.";
         private const string ConnectivityRestored = "Connectivity between IBKR and Trader Workstation has been restored - data maintained.";
@@ -227,6 +256,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         private class TestIBAutomater : IBAutomater.IBAutomater
         {
             public bool IsWithinResetTimes { get; set; }
+            // lets a test interleave IB messages with a reconnect poll that already started
+            public Action OnResetTimesQueried { get; set; }
             public int StopCount;
             public ManualResetEventSlim Stopped { get; } = new();
 
@@ -235,7 +266,11 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             {
             }
 
-            public override bool IsWithinScheduledServerResetTimes() => IsWithinResetTimes;
+            public override bool IsWithinScheduledServerResetTimes()
+            {
+                OnResetTimesQueried?.Invoke();
+                return IsWithinResetTimes;
+            }
 
             public override void Stop()
             {

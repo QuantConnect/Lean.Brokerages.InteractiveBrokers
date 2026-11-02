@@ -2349,23 +2349,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (errorCode == 1102)
             {
                 // Connectivity between IB and TWS has been restored - data maintained.
+                ClearDisconnectState();
                 OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
-
-                _stateManager.Disconnected1100Fired = false;
-                // a later disconnect is a new one, not one left over from the reset period
-                _stateManager.PreviouslyInResetTime = false;
-                _stateManager.ResetPeriodEndedUtc = null;
                 return;
             }
             else if (errorCode == 1101)
             {
                 // Connectivity between IB and TWS has been restored - data lost.
+                ClearDisconnectState();
                 OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
-
-                _stateManager.Disconnected1100Fired = false;
-                // a later disconnect is a new one, not one left over from the reset period
-                _stateManager.PreviouslyInResetTime = false;
-                _stateManager.ResetPeriodEndedUtc = null;
 
                 RestoreDataSubscriptions();
                 return;
@@ -2601,15 +2593,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (!_stateManager.PreviouslyInResetTime)
             {
                 // if we were disconnected and we're not within the reset times, send the error event
-                OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. " +
-                                                             "This could be because of internet connectivity issues or a log in from another location."
-                    ));
+                RaiseDisconnectUnlessRestored("Connection with Interactive Brokers lost. " +
+                                              "This could be because of internet connectivity issues or a log in from another location.");
                 return;
             }
 
             // IB resets can overrun the published window: a short grace trades a cold login (and its 2FA prompt) for a late 1102
-            _stateManager.ResetPeriodEndedUtc ??= DateTime.UtcNow;
-            if (DateTime.UtcNow - _stateManager.ResetPeriodEndedUtc < PostResetReconnectGracePeriod)
+            var resetPeriodEndedUtc = _stateManager.ResetPeriodEndedUtc ??= DateTime.UtcNow;
+            if (DateTime.UtcNow - resetPeriodEndedUtc < PostResetReconnectGracePeriod)
             {
                 Log.Trace($"InteractiveBrokersBrokerage.TryWaitForReconnect(): Server reset period ended, waiting up to {PostResetReconnectGracePeriod} more for the connection to be restored...");
 
@@ -2619,7 +2610,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             _stateManager.PreviouslyInResetTime = false;
             _stateManager.ResetPeriodEndedUtc = null;
-            OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers was not restored after the server reset period."));
+            if (!RaiseDisconnectUnlessRestored("Connection with Interactive Brokers was not restored after the server reset period."))
+            {
+                return;
+            }
 
             if (!_isRemoteGateway)
             {
@@ -2638,6 +2632,39 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     _ibAutomater.Stop();
                 });
             }
+        }
+
+        /// <summary>
+        /// Raises the disconnect unless a 1101/1102 restored the connection meanwhile, returns whether it was raised
+        /// </summary>
+        private bool RaiseDisconnectUnlessRestored(string message)
+        {
+            // the reader thread can restore the connection at any point of the poll
+            if (!_stateManager.Disconnected1100Fired)
+            {
+                return false;
+            }
+
+            OnMessage(BrokerageMessageEvent.Disconnected(message));
+            if (_stateManager.Disconnected1100Fired)
+            {
+                return true;
+            }
+
+            // the restore's own Reconnected was dropped as a no-op before this Disconnect, the base class dedupes this one otherwise
+            OnMessage(BrokerageMessageEvent.Reconnected("Connection with Interactive Brokers restored."));
+            return false;
+        }
+
+        /// <summary>
+        /// Ends the pending disconnect, called before the Reconnected is raised so a racing poll finds it over
+        /// </summary>
+        private void ClearDisconnectState()
+        {
+            _stateManager.Disconnected1100Fired = false;
+            // a later disconnect is a new one, not one left over from the reset period
+            _stateManager.PreviouslyInResetTime = false;
+            _stateManager.ResetPeriodEndedUtc = null;
         }
 
         /// <summary>
