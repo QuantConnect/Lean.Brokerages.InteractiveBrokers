@@ -324,6 +324,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         public override bool IsConnected => _client != null && _client.Connected && !_stateManager.Disconnected1100Fired && !_stateManager.IsConnecting;
 
         /// <summary>
+        /// IB reports every option position change through its portfolio updates, so Lean's daily option holdings sync is not needed
+        /// </summary>
+        public override bool HoldingsSyncEnabled => false;
+
+        /// <summary>
         /// Returns true if the connected user is a financial advisor
         /// </summary>
         public bool IsFinancialAdvisor => IsMasterAccount(_account);
