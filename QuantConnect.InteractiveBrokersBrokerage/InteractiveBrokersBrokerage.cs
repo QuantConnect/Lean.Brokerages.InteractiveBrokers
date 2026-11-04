@@ -66,7 +66,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
     /// The Interactive Brokers brokerage
     /// </summary>
     [BrokerageFactory(typeof(InteractiveBrokersBrokerageFactory))]
-    public sealed class InteractiveBrokersBrokerage : Brokerage, IDataQueueHandler, IDataQueueUniverseProvider
+    public sealed partial class InteractiveBrokersBrokerage : Brokerage, IDataQueueHandler, IDataQueueUniverseProvider
     {
         /// <summary>
         /// The name of the brokerage.
@@ -295,14 +295,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly HashSet<string> _unsupportedAssets = new();
 
         /// <summary>
-        /// Represents the allocation group managed by financial advisors.
-        /// </summary>
-        /// <remarks>
-        /// The specific Advisor Account Group name that has already been created in TWS Global Configuration.
-        /// </remarks>
-        private static string _financialAdvisorsGroupFilter;
-
-        /// <summary>
         /// Represents the next local market open time after which the first 'lastPrice' tick for the NDX index should be skipped.
         /// This is used to ensure only the initial tick after market open is ignored each trading day.
         /// </summary>
@@ -385,7 +377,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Config.Get("ib-user-name"),
                 Config.Get("ib-password"),
                 Config.GetValue("ib-agent-description", IB.AgentDescription.Individual),
-                financialAdvisorsGroupFilter: Config.Get("ib-financial-advisors-group-filter")
+                loadExistingHoldings: true,
+                weeklyRestartUtcTime: null,
+                financialAdvisorsGroupFilter: Config.Get("ib-financial-advisors-group-filter"),
+                financialAdvisorGroupManagementEnabled: Config.GetBool("ib-financial-advisors-group-management-enabled"),
+                financialAdvisorUnifiedGroupsEnabled: Config.GetBool("ib-financial-advisors-unified-groups-enabled")
                 )
         {
         }
@@ -422,6 +418,117 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             bool loadExistingHoldings = true,
             TimeSpan? weeklyRestartUtcTime = null,
             string financialAdvisorsGroupFilter = default)
+            : this(
+                algorithm,
+                orderProvider,
+                securityProvider,
+                account,
+                host,
+                port,
+                ibDirectory,
+                ibVersion,
+                userName,
+                password,
+                agentDescription,
+                loadExistingHoldings,
+                weeklyRestartUtcTime,
+                financialAdvisorsGroupFilter,
+                false,
+                false)
+        {
+        }
+
+        /// <summary>
+        /// Creates a new InteractiveBrokersBrokerage with explicit Financial Advisor feature settings.
+        /// </summary>
+        /// <param name="algorithm">The algorithm instance</param>
+        /// <param name="orderProvider">An instance of IOrderProvider used to fetch Order objects by brokerage ID</param>
+        /// <param name="securityProvider">The security provider used to give access to algorithm securities</param>
+        /// <param name="account">The Interactive Brokers account name</param>
+        /// <param name="host">host name or IP address of the machine where TWS is running. Leave blank to connect to the local host.</param>
+        /// <param name="port">must match the port specified in TWS on the Configure&gt;API&gt;Socket Port field.</param>
+        /// <param name="ibDirectory">The IB Gateway root directory</param>
+        /// <param name="ibVersion">The IB Gateway version</param>
+        /// <param name="userName">The login user name</param>
+        /// <param name="password">The login password</param>
+        /// <param name="tradingMode">Retained for compatibility; the account identifier determines paper or live mode.</param>
+        /// <param name="agentDescription">Used for Rule 80A describes the type of trader.</param>
+        /// <param name="loadExistingHoldings">False will ignore existing security holdings from being loaded.</param>
+        /// <param name="weeklyRestartUtcTime">The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)</param>
+        /// <param name="financialAdvisorsGroupFilter">The name of the financial advisors group filter associated with this client.</param>
+        /// <param name="financialAdvisorGroupManagementEnabled">
+        /// Whether Financial Advisor group assignment and allocation management are enabled. Requires
+        /// <paramref name="financialAdvisorUnifiedGroupsEnabled"/>.
+        /// </param>
+        /// <param name="financialAdvisorUnifiedGroupsEnabled">
+        /// Whether unified Financial Advisor snapshots and group-order routing are enabled.
+        /// </param>
+        public InteractiveBrokersBrokerage(
+            IAlgorithm algorithm,
+            IOrderProvider orderProvider,
+            ISecurityProvider securityProvider,
+            string account,
+            string host,
+            int port,
+            string ibDirectory,
+            string ibVersion,
+            string userName,
+            string password,
+            string tradingMode,
+            string agentDescription,
+            bool loadExistingHoldings,
+            TimeSpan? weeklyRestartUtcTime,
+            string financialAdvisorsGroupFilter,
+            bool financialAdvisorGroupManagementEnabled,
+            bool financialAdvisorUnifiedGroupsEnabled)
+            : this(algorithm, orderProvider, securityProvider, account, host, port,
+                ibDirectory, ibVersion, userName, password, agentDescription,
+                loadExistingHoldings, weeklyRestartUtcTime, financialAdvisorsGroupFilter,
+                financialAdvisorGroupManagementEnabled, financialAdvisorUnifiedGroupsEnabled)
+        {
+        }
+
+        /// <summary>
+        /// Creates a new InteractiveBrokersBrokerage with explicit Financial Advisor feature settings.
+        /// </summary>
+        /// <param name="algorithm">The algorithm instance</param>
+        /// <param name="orderProvider">An instance of IOrderProvider used to fetch Order objects by brokerage ID</param>
+        /// <param name="securityProvider">The security provider used to give access to algorithm securities</param>
+        /// <param name="account">The Interactive Brokers account name</param>
+        /// <param name="host">host name or IP address of the machine where TWS is running. Leave blank to connect to the local host.</param>
+        /// <param name="port">must match the port specified in TWS on the Configure&gt;API&gt;Socket Port field.</param>
+        /// <param name="ibDirectory">The IB Gateway root directory</param>
+        /// <param name="ibVersion">The IB Gateway version</param>
+        /// <param name="userName">The login user name</param>
+        /// <param name="password">The login password</param>
+        /// <param name="agentDescription">Used for Rule 80A describes the type of trader.</param>
+        /// <param name="loadExistingHoldings">False will ignore existing security holdings from being loaded.</param>
+        /// <param name="weeklyRestartUtcTime">The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)</param>
+        /// <param name="financialAdvisorsGroupFilter">The name of the financial advisors group filter associated with this client.</param>
+        /// <param name="financialAdvisorGroupManagementEnabled">
+        /// Whether Financial Advisor group assignment and allocation management are enabled. Requires
+        /// <paramref name="financialAdvisorUnifiedGroupsEnabled"/>.
+        /// </param>
+        /// <param name="financialAdvisorUnifiedGroupsEnabled">
+        /// Whether unified Financial Advisor snapshots and group-order routing are enabled.
+        /// </param>
+        public InteractiveBrokersBrokerage(
+            IAlgorithm algorithm,
+            IOrderProvider orderProvider,
+            ISecurityProvider securityProvider,
+            string account,
+            string host,
+            int port,
+            string ibDirectory,
+            string ibVersion,
+            string userName,
+            string password,
+            string agentDescription,
+            bool loadExistingHoldings,
+            TimeSpan? weeklyRestartUtcTime,
+            string financialAdvisorsGroupFilter,
+            bool financialAdvisorGroupManagementEnabled,
+            bool financialAdvisorUnifiedGroupsEnabled)
             : base(BrokerageName)
         {
             Initialize(
@@ -438,12 +545,19 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 agentDescription,
                 loadExistingHoldings,
                 weeklyRestartUtcTime,
-                financialAdvisorsGroupFilter);
+                financialAdvisorsGroupFilter,
+                financialAdvisorGroupManagementEnabled,
+                financialAdvisorUnifiedGroupsEnabled);
         }
 
         /// <summary>
         /// Provides public access to the underlying IBClient instance
         /// </summary>
+        /// <remarks>
+        /// Public subscribers run synchronously on IB's single-threaded message pump and must not block.
+        /// Blocking delays subsequent messages, including callbacks awaited by the FA service. If an unkeyed
+        /// FA request times out, the service rejects further unkeyed requests until a physical reconnect.
+        /// </remarks>
         public IB.InteractiveBrokersClient Client => _client;
 
         /// <summary>
@@ -466,11 +580,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return false;
                 }
 
+                ValidateFinancialAdvisorOrderAdmission(order, isUpdate: false);
                 if (order.Contingency != null)
                 {
                     // contingent orders are placed together, atomically, once they have all arrived
                     if (ContingentOrderCache.TryGetContingentCachedOrders(order, out var contingentOrders))
                     {
+                        ValidateFinancialAdvisorContingentOrders(contingentOrders);
                         IBPlaceContingentOrders(contingentOrders);
                     }
                     return true;
@@ -507,6 +623,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return false;
                 }
 
+                ValidateFinancialAdvisorOrderAdmission(order, isUpdate: true);
                 _orderUpdates[order.Id] = order.Id;
                 IBPlaceOrder(order, false);
             }
@@ -1041,11 +1158,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (!_client.Connected) throw new Exception("InteractiveBrokersBrokerage.Connect(): Connection returned but was not in connected state.");
 
-                    // request account information for logging purposes
-                    var group = string.IsNullOrEmpty(_financialAdvisorsGroupFilter) ? "All" : _financialAdvisorsGroupFilter;
-                    _client.ClientSocket.reqAccountSummary(GetNextId(), group, "AccountType");
-                    _client.ClientSocket.reqManagedAccts();
-                    _client.ClientSocket.reqFamilyCodes();
+                    if (ShouldRequestStartupAccountSummary)
+                    {
+                        // request account information for logging purposes
+                        var group = string.IsNullOrEmpty(_financialAdvisorsGroupFilter) ? "All" : _financialAdvisorsGroupFilter;
+                        _client.ClientSocket.reqAccountSummary(GetNextId(), group, "AccountType");
+                    }
+                    if (!FinancialAdvisorServiceOwnsStartupRequests)
+                    {
+                        _client.ClientSocket.reqManagedAccts();
+                        _client.ClientSocket.reqFamilyCodes();
+                    }
 
                     if (IsFinancialAdvisor)
                     {
@@ -1451,6 +1574,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <param name="loadExistingHoldings">False will ignore existing security holdings from being loaded.</param>
         /// <param name="weeklyRestartUtcTime">The UTC time at which IBAutomater should be restarted and 2FA confirmation should be requested on Sundays (IB's weekly restart)</param>
         /// <param name="financialAdvisorsGroupFilter">The name of the financial advisors group associated with this client.</param>
+        /// <param name="financialAdvisorGroupManagementEnabled">True to enable algorithm-driven Financial Advisor group management.</param>
+        /// <param name="financialAdvisorUnifiedGroupsEnabled">True to enable unified Financial Advisor group handling.</param>
         private void Initialize(
             IAlgorithm algorithm,
             IOrderProvider orderProvider,
@@ -1465,7 +1590,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             string agentDescription = IB.AgentDescription.Individual,
             bool loadExistingHoldings = true,
             TimeSpan? weeklyRestartUtcTime = null,
-            string financialAdvisorsGroupFilter = default)
+            string financialAdvisorsGroupFilter = default,
+            bool financialAdvisorGroupManagementEnabled = false,
+            bool financialAdvisorUnifiedGroupsEnabled = false)
         {
             if (_isInitialized)
             {
@@ -1479,12 +1606,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _algorithm = algorithm;
             _orderProvider = orderProvider;
             ConcurrencyEnabled = true;
-
-            if (!string.IsNullOrEmpty(financialAdvisorsGroupFilter))
-            {
-                Log.Trace($"InteractiveBrokersBrokerage.InteractiveBrokersBrokerage(): Using Financial Advisor group filter: '{financialAdvisorsGroupFilter}'");
-                _financialAdvisorsGroupFilter = financialAdvisorsGroupFilter;
-            }
+            ConfigureFinancialAdvisorFeatures(
+                financialAdvisorsGroupFilter,
+                financialAdvisorGroupManagementEnabled,
+                financialAdvisorUnifiedGroupsEnabled);
 
             _mapFileProvider = Composer.Instance.GetPart<IMapFileProvider>();
             if (_mapFileProvider == null)
@@ -1527,7 +1652,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var exportIbGatewayLogs = true; // Config.GetBool("ib-export-ibgateway-logs");
             // IB paper account ids start with a 'D' (DU..., DF...)
             var tradingMode = account.StartsWith("d", StringComparison.InvariantCultureIgnoreCase) ? "paper" : "live";
-            _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, exportIbGatewayLogs);
+            _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, exportIbGatewayLogs, financialAdvisorUnifiedGroupsEnabled);
             _ibAutomater.OutputDataReceived += OnIbAutomaterOutputDataReceived;
             _ibAutomater.ErrorDataReceived += OnIbAutomaterErrorDataReceived;
             _ibAutomater.Exited += OnIbAutomaterExited;
@@ -1570,6 +1695,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             DeploymentDetailsHelper.Add("ib-financial-advisors-group-filter", financialAdvisorsGroupFilter);
 
             _client = new IB.InteractiveBrokersClient(_signal);
+            InitializeFinancialAdvisorAccountState();
 
             // running as a data provider only
             if (_algorithm != null)
@@ -1583,15 +1709,18 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 _client.CommissionReport += HandleCommissionReport;
             }
             _client.UpdateAccountValue += HandleUpdateAccountValue;
-            _client.AccountSummary += HandleAccountSummary;
-            _client.ManagedAccounts += HandleManagedAccounts;
-            _client.FamilyCodes += HandleFamilyCodes;
+            if (!FinancialAdvisorServiceOwnsStartupRequests)
+            {
+                _client.AccountSummary += HandleAccountSummary;
+                _client.ManagedAccounts += HandleManagedAccounts;
+                _client.FamilyCodes += HandleFamilyCodes;
+            }
             _client.Error += HandleError;
             _client.TickPrice += HandleTickPrice;
             _client.TickSize += HandleTickSize;
             _client.CurrentTimeUtc += HandleBrokerTime;
             _client.ReRouteMarketDataRequest += HandleMarketDataReRoute;
-            if (!string.IsNullOrEmpty(financialAdvisorsGroupFilter))
+            if (!string.IsNullOrEmpty(_financialAdvisorsGroupFilter))
             {
                 _client.AccountUpdateMulti += HandleUpdateAccountValue;
             }
@@ -2285,6 +2414,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             Log.Trace($"InteractiveBrokersBrokerage.HandleError(): RequestId: {requestId} ErrorCode: {errorCode} - {errorMsg}");
 
+            if (_financialAdvisorAccountState?.IsExpectedGroupsReadbackRetry(e) == true)
+            {
+                return;
+            }
+
+            if (_financialAdvisorAccountState?.IsServiceOwnedRequestId(requestId) == true)
+            {
+                return;
+            }
+
             // error 300: "Can't find EId with tickerId:N" - IB rejecting a cancelMktData for a ticker
             // it has no active subscription for. This is benign only when it's a market-data ticker we
             // have already unsubscribed (the async cancel races the removal, common during teardown).
@@ -2602,6 +2741,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void HandleUpdateAccountValue(object sender, IB.UpdateAccountValueEventArgs e)
         {
+            if (IsFinancialAdvisorAccountUpdateServiceRow(e)) return;
             if (Log.DebuggingEnabled)
             {
                 Log.Trace($"HandleUpdateAccountValue(): Key:{e.Key} Value:{e.Value} Currency:{e.Currency} AccountName:{e.AccountName}");
@@ -3041,7 +3181,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var orderProperties = order.Properties as InteractiveBrokersOrderProperties;
             if (orderProperties == null)
-                return true;
+            {
+                return !_financialAdvisorUnifiedGroupsEnabled ||
+                    !InteractiveBrokersFinancialAdvisorAccountState.IsFinancialAdvisorGroupOrder(
+                        order,
+                        _financialAdvisorsGroupFilter) ||
+                    execution.AcctNumber == _account;
+            }
 
             return
                 // FA master orders for groups/profiles
@@ -3129,6 +3275,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 var currentQuantityFilled = targetOrderExecutionDetails.Execution.Shares;
                 var totalQuantityFilled = targetOrderExecutionDetails.Execution.CumQty;
                 var remainingQuantity = absoluteQuantity - totalQuantityFilled;
+                if (UsesFinancialAdvisorFillResidualTolerance(targetOrder))
+                {
+                    var residualTolerance = Math.Abs(GetSymbolProperties(targetOrder.Symbol).LotSize) / 1000000m;
+                    if (Math.Abs(remainingQuantity) < residualTolerance)
+                    {
+                        remainingQuantity = 0m;
+                    }
+                }
                 var price = NormalizePriceToLean(targetOrderExecutionDetails.Execution.Price, targetOrder.Symbol);
                 var orderFee = new OrderFee(new CashAmount(
                     Convert.ToDecimal(targetOrderCommissionReport.CommissionAndFees),
@@ -3168,6 +3322,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void HandlePortfolioUpdates(object sender, IB.UpdatePortfolioEventArgs e)
         {
+            if (!TryGetFinancialAdvisorPortfolioPosition(e, out var position)) return;
             try
             {
                 Log.Trace($"InteractiveBrokersBrokerage.HandlePortfolioUpdates(): {e}");
@@ -3177,13 +3332,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 {
                     var symbol = MapSymbol(e.Contract);
 
-                    OnOptionNotification(new OptionNotificationEventArgs(symbol, e.Position));
+                    OnOptionNotification(new OptionNotificationEventArgs(symbol, position));
                 }
 
                 _accountHoldingsResetEvent.Reset();
                 if (_loadExistingHoldings)
                 {
-                    var holding = CreateHolding(e);
+                    var holding = CreateHolding(e, position);
                     MergeHolding(_accountData.AccountHoldings, holding, e.AccountName);
                 }
             }
@@ -3199,7 +3354,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     }
                 }
 
-                if (e.Position != 0)
+                if (position != 0)
                 {
                     // Force a runtime error only with a nonzero position for an unsupported security type,
                     // because after the user has manually closed the position and restarted the algorithm,
@@ -3429,6 +3584,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     ibOrder.FaGroup ??= string.Empty;
                     ibOrder.Account ??= string.Empty;
                 }
+
+                ConfigureFinancialAdvisorOrder(ibOrder, order);
             }
 
             // contingent orders update: IB expects back the parent id and OCA group it reports for the order
@@ -3446,6 +3603,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             var result = new List<Order>();
             var quantitySign = ConvertOrderDirection(ibOrder.Action) == OrderDirection.Sell ? -1 : 1;
+            var orderProperties = ConvertOrderProperties(ibOrder);
             var quantity = ibOrder.TotalQuantity * quantitySign;
 
             if (contract.SecType == IB.SecurityType.Bag)
@@ -3478,7 +3636,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                     if (!TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, orderType,
                             comboLeg.Ratio * quantitySignLeg * quantity, legLimitPrice, 0, 0, contractDetails.Contract, group, orderState,
-                            ConvertOrderProperties(ibOrder), out var leanOrder))
+                            orderProperties?.Clone(), out var leanOrder))
                     {
                         // if we fail to convert one leg, we fail the whole order
                         return new List<Order>();
@@ -3488,7 +3646,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
             }
             else if (TryConvertOrder(ibOrder.Tif, ibOrder.GoodTillDate, ibOrder.OrderId, ibOrder.AuxPrice, ConvertOrderType(ibOrder), quantity,
-                ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState, ConvertOrderProperties(ibOrder),
+                ibOrder.LmtPrice, ibOrder.TrailStopPrice, ibOrder.TrailingPercent, contract, null, orderState, orderProperties,
                 out var leanOrder))
             {
                 result.Add(leanOrder);
@@ -3527,6 +3685,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     orderProperties.Account = ibOrder.Account;
                 }
 
+                ConfigureFinancialAdvisorRecoveredOrderProperties(ibOrder, orderProperties);
                 return orderProperties;
             }
             catch (Exception err)
@@ -4310,7 +4469,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Creates a holding object from the UpdatePortfolioEventArgs
         /// </summary>
-        private Holding CreateHolding(IB.UpdatePortfolioEventArgs e)
+        private Holding CreateHolding(IB.UpdatePortfolioEventArgs e, decimal position)
         {
             var symbol = MapSymbol(e.Contract);
 
@@ -4324,7 +4483,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             return new Holding
             {
                 Symbol = symbol,
-                Quantity = e.Position,
+                Quantity = position,
                 AveragePrice = Convert.ToDecimal(e.AverageCost) / multiplier,
                 MarketPrice = Convert.ToDecimal(e.MarketPrice),
                 CurrencySymbol = currencySymbol
@@ -4482,6 +4641,17 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var userId = job.BrokerageData["ib-user-name"];
             var password = job.BrokerageData["ib-password"];
             var agentDescription = job.BrokerageData["ib-agent-description"];
+            var financialAdvisorErrors = new List<string>();
+            InteractiveBrokersBrokerageFactory.ParseFinancialAdvisorSettings(
+                job.BrokerageData,
+                financialAdvisorErrors,
+                out var financialAdvisorsGroupFilter,
+                out var financialAdvisorGroupManagementEnabled,
+                out var financialAdvisorUnifiedGroupsEnabled);
+            if (financialAdvisorErrors.Count != 0)
+            {
+                throw new ArgumentException(string.Join(Environment.NewLine, financialAdvisorErrors));
+            }
 
             var loadExistingHoldings = Config.GetBool("load-existing-holdings", true);
             if (job.BrokerageData.ContainsKey("load-existing-holdings"))
@@ -4500,7 +4670,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 userId,
                 password,
                 agentDescription,
-                loadExistingHoldings);
+                loadExistingHoldings,
+                financialAdvisorsGroupFilter: financialAdvisorsGroupFilter,
+                financialAdvisorGroupManagementEnabled: financialAdvisorGroupManagementEnabled,
+                financialAdvisorUnifiedGroupsEnabled: financialAdvisorUnifiedGroupsEnabled);
 
             if (!IsConnected)
             {
@@ -6128,8 +6301,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         /// <param name="groupName">The name of the financial advisor group to check.</param>
         /// <returns><c>true</c> if the group is allowed; otherwise, <c>false</c>.</returns>
-        private static bool IsFaGroupFlitterSet(string groupName)
+        private bool IsFaGroupFlitterSet(string groupName)
         {
+            // Intentionally distinct from IsOutsideFinancialAdvisorGroupFilter; preserves upstream's IsNullOrEmpty/InvariantCultureIgnoreCase semantics.
             return !string.IsNullOrEmpty(_financialAdvisorsGroupFilter)
                 && !string.IsNullOrEmpty(groupName)
                 && !groupName.Equals(_financialAdvisorsGroupFilter, StringComparison.InvariantCultureIgnoreCase);
