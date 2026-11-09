@@ -35,95 +35,9 @@ For more information about the IB brokerage, see the [QuantConnect-IB Integratio
 
   In the QuantConnect Cloud Platform, you can harness the QuantConnect Live Data Feed, the IB Live Data Feed, or both. For most users, this is substantially cheaper and easier than self-hosting.
   
-### Deploying IB with LEAN CLI
+### Deploying Interactive Brokers with LEAN CLI
 
-Follow these steps to start local live trading with the IB brokerage:
-
-1.  Open a terminal in your [organization workspace](https://www.quantconnect.com/docs/v2/lean-cli/initialization/organization-workspaces).
-2.  Run `lean live "<projectName>"` to start a live deployment wizard for the project in `./<projectName>` and then enter the brokerage number.
-
-	```
-    $ lean live "My Project"
-    Select a brokerage:
-    1) Paper Trading
-    2) Interactive Brokers
-    3) Tradier
-    4) OANDA
-    5) Bitfinex
-    6) Coinbase Pro
-    7) Binance
-    8) Zerodha
-    9) Samco
-    10) Terminal Link
-    11) Atreyu
-    12) Trading Technologies
-    13) Kraken
-    14) FTX 
-    Enter an option: 
-	```
-
-
-3.  Enter the number of the organization that has a subscription for the IB module. 
-
-    ```
-    $ lean live "My Project"
-    Select the organization with the Interactive Brokers module subscription:
-    1) Organization 1
-    2) Organization 2
-    3) Organization 3
-    Enter an option: 1
-    ```
-
-4.  Set up IB Key Security via IBKR Mobile. For instructions, see [IB Key Security via IBKR Mobile](https://guides.interactivebrokers.com/iphone/log_in/ibkey.htm?tocpath=IB%20Key%20Security%20Protocol%7C_____0) on the IB website.
-
-5.  Go back to the terminal and enter your IB username, account id, and password.
-
-    ```
-    $ lean live "My Project"
-    Username: trader777
-    Account id: DU1234567
-    Account password: ****************
-    ```
-
-6.  Enter the number of the data feed to use and then follow the steps required for the data connection.
-
-    ```
-    $ lean live "My Project"
-    Select a data feed:
-    1) Interactive Brokers
-    2) Tradier
-    3) Oanda
-    4) Bitfinex
-    5) Coinbase Pro
-    6) Binance
-    7) Zerodha
-    8) Samco
-    9) Terminal Link
-    10) Trading Technologies
-    11) Kraken
-    12) FTX
-    13) IQFeed
-    14) Polygon Data Feed
-    15) Custom data only
-    To enter multiple options, separate them with comma.:
-    ```
-
-    If you select IQFeed, see [IQFeed](https://www.quantconnect.com/docs/v2/lean-cli/live-trading/data-providers/iqfeed) for set up instructions.  
-    If you select Polygon Data Feed, see [Polygon](https://www.quantconnect.com/docs/v2/lean-cli/live-trading/data-providers/polygon) for set up instructions.
-
-7.  Enter whether you want to enable delayed market data.
-
-    ```
-    $ lean live "My Project"
-    Enable delayed market data? [yes/no]: 
-    ```
-
-    This property configures the behavior when your algorithm attempts to subscribe to market data for which you don't have a market data subscription on Interactive Brokers. When enabled, your algorithm continues running using delayed market data. When disabled, live trading will stop and LEAN will shut down.
-
-8.  View the result in the `<projectName>/live/<timestamp>` directory. Results are stored in real-time in JSON format. You can save results to a different directory by providing the `--output <path>` option in step 2.
-
-If you already have a live environment configured in your Lean configuration file, you can skip the interactive wizard by providing the `--environment <value>` option in step 2. The value of this option must be the name of an environment which has `live-mode` set to `true`.
-
+To deploy live algorithms with Interactive Brokers through the LEAN CLI, see [Interactive Brokers](https://www.quantconnect.com/docs/v2/lean-cli/live-trading/brokerages/interactive-brokers) in the LEAN CLI documentation.
 
 ## Account Types
 
