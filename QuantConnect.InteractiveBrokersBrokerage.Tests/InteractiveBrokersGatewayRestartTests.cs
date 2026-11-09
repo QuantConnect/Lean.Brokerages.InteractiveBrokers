@@ -390,12 +390,15 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         {
             // as while a retry is inside Connect()
             SetField(_brokerage, "_isReconnecting", 1);
+            StateManager.IsConnecting = true;
             _automater.IsWithinResetTimes = false;
             Reconnect(afterAutoRestart);
 
             // a second Connect() would fail and stop the algorithm with an error
             Assert.IsEmpty(_messages);
             Assert.AreEqual(1, GetField<int>(_brokerage, "_isReconnecting"));
+            // the retry is still connecting: reset, the brokerage would report as connected before its account download ends
+            Assert.IsTrue(StateManager.IsConnecting);
         }
 
         [Test]

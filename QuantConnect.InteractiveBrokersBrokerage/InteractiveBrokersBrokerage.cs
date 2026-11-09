@@ -6025,18 +6025,24 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Connects to the gateway unless another reconnect is in progress, which then owns the outcome
         /// </summary>
-        private void Reconnect(string errorCode, bool disconnectFirst = false)
+        private void Reconnect(string errorCode, bool afterGatewayRestart = false)
         {
             if (Interlocked.Exchange(ref _isReconnecting, 1) == 1)
             {
                 Log.Trace("InteractiveBrokersBrokerage.Reconnect(): another reconnect is in progress, skipping this one");
+                if (afterGatewayRestart)
+                {
+                    // the new gateway session has no connectivity history, the reconnect in progress keeps its connecting state
+                    ClearDisconnectState();
+                }
                 return;
             }
 
             try
             {
-                if (disconnectFirst)
+                if (afterGatewayRestart)
                 {
+                    _stateManager.Reset();
                     Disconnect();
                 }
                 Connect();
@@ -6163,7 +6169,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             _lastGatewayRestartTimeUtc = DateTime.UtcNow;
 
-            _stateManager.Reset();
             StopGatewayRestartTask();
 
             // check if IBGateway was closed because of an IBAutomater error
@@ -6175,7 +6180,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // IBGateway was restarted automatically
                 Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterRestarted(): IBGateway restart detected, reconnecting...");
 
-                Reconnect("IBAutomaterAutoRestartError", disconnectFirst: true);
+                Reconnect("IBAutomaterAutoRestartError", afterGatewayRestart: true);
+            }
+            else
+            {
+                _stateManager.Reset();
             }
         }
 
