@@ -6057,6 +6057,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     if (!_isDisposeCalled && !IsConnected)
                     {
                         Log.Trace("InteractiveBrokersBrokerage.ScheduleReconnectRetry(): retrying the connection...");
+                        // a 1100 from a previous attempt gets no 1102 if IB returned while no connection was open
+                        ClearDisconnectState();
                         Connect();
                     }
                 }

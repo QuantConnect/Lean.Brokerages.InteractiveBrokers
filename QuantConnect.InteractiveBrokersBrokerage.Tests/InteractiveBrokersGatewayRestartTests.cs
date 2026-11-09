@@ -316,6 +316,22 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
         }
 
+        [Test]
+        public void ReconnectRetryStartsWithoutTheDisconnectOfAPreviousAttempt()
+        {
+            InteractiveBrokersBrokerage.ResetPeriodReconnectRetryInterval = TimeSpan.FromMilliseconds(50);
+            _automater.IsWithinResetTimes = true;
+            Reconnect(afterAutoRestart: true);
+
+            // a failed attempt's connection reported that the gateway lost IB
+            _brokerage.HandleError(this, new IB.ErrorEventArgs(-1, 0, 1100, ConnectivityLost));
+            Assert.IsTrue(StateManager.Disconnected1100Fired);
+
+            // no 1102 follows if IB returns while no connection is open: left set, a retry that connects would end as not connected
+            Assert.IsTrue(SpinWait.SpinUntil(() => !StateManager.Disconnected1100Fired, TimeSpan.FromSeconds(10)));
+            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
+        }
+
         /// <summary>
         /// Reconnects through the gateway's auto-restart or through a gateway start, failing in both: this brokerage has no gateway to connect to
         /// </summary>
