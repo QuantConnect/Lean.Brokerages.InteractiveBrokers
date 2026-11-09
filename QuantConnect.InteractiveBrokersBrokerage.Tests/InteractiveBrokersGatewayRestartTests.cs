@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -36,6 +37,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         private List<BrokerageMessageEvent> _messages;
         private List<string> _automaterOutput;
         private TimeSpan _gracePeriod;
+        private TimeSpan _retryInterval;
 
         [SetUp]
         public void SetUp()
@@ -43,6 +45,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             // the reset period tests expect the gateway restart right after the window closes
             _gracePeriod = InteractiveBrokersBrokerage.PostResetReconnectGracePeriod;
             InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = TimeSpan.Zero;
+            _retryInterval = InteractiveBrokersBrokerage.ResetPeriodReconnectRetryInterval;
 
             // a gateway installation without its bundled Java: any start attempt fails with JavaNotFound before launching anything
             _gatewayDirectory = Path.Combine(Path.GetTempPath(), $"ib-gateway-restart-tests-{Guid.NewGuid():N}");
@@ -72,6 +75,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         public void TearDown()
         {
             InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = _gracePeriod;
+            InteractiveBrokersBrokerage.ResetPeriodReconnectRetryInterval = _retryInterval;
             // ends the reconnect polling the tests started
             StateManager.Reset();
             _brokerage.Dispose();
@@ -247,6 +251,93 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsNull(StateManager.ResetPeriodEndedUtc);
             Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(2)));
             Assert.AreEqual(0, _automater.StopCount);
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void FailedReconnectWithinTheResetPeriodIsRaisedAsDisconnect(bool afterAutoRestart)
+        {
+            // the gateway is up and logged in but IB doesn't serve the account while it resets
+            _automater.IsWithinResetTimes = true;
+            Reconnect(afterAutoRestart);
+
+            Assert.AreEqual(1, _messages.Count(m => m.Type == BrokerageMessageType.Disconnect));
+            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
+        }
+
+        [TestCase(true, "IBAutomaterAutoRestartError")]
+        [TestCase(false, "IBAutomaterRestartError")]
+        public void FailedReconnectOutsideTheResetPeriodIsRaisedAsError(bool afterAutoRestart, string expectedCode)
+        {
+            _automater.IsWithinResetTimes = false;
+            Reconnect(afterAutoRestart);
+
+            Assert.AreEqual(expectedCode, _messages.Single(m => m.Type == BrokerageMessageType.Error).Code);
+            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Disconnect));
+        }
+
+        [Test]
+        public void ReconnectStillFailingAfterTheResetPeriodRestartsTheGateway()
+        {
+            InteractiveBrokersBrokerage.ResetPeriodReconnectRetryInterval = TimeSpan.FromMilliseconds(50);
+            _automater.IsWithinResetTimes = true;
+            // both reconnect paths fail before the first retry, they share its sequence
+            Reconnect(afterAutoRestart: true);
+            Reconnect(afterAutoRestart: false);
+
+            // the retries keep failing while IB resets
+            Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(1)));
+
+            _automater.IsWithinResetTimes = false;
+
+            // a new gateway session is the last resort, its exit handler logs in and reconnects
+            Assert.IsTrue(_automater.Stopped.Wait(TimeSpan.FromSeconds(10)));
+            Thread.Sleep(500);
+            Assert.AreEqual(1, _automater.StopCount);
+            Assert.AreEqual(1, _messages.Count(m => m.Type == BrokerageMessageType.Disconnect));
+            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
+        }
+
+        [Test]
+        public void ReconnectRetriesContinueDuringTheGracePeriod()
+        {
+            InteractiveBrokersBrokerage.ResetPeriodReconnectRetryInterval = TimeSpan.FromMilliseconds(50);
+            InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = TimeSpan.FromHours(1);
+            _automater.IsWithinResetTimes = true;
+            Reconnect(afterAutoRestart: true);
+
+            // the reset period is over but IB may still be coming back, as when it overruns its published window
+            _automater.IsWithinResetTimes = false;
+            Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(1)));
+
+            // the retries were still running: the next one finds the grace period over
+            InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = TimeSpan.Zero;
+            Assert.IsTrue(_automater.Stopped.Wait(TimeSpan.FromSeconds(10)));
+            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
+        }
+
+        /// <summary>
+        /// Reconnects through the gateway's auto-restart or through a gateway start, failing in both: this brokerage has no gateway to connect to
+        /// </summary>
+        private void Reconnect(bool afterAutoRestart)
+        {
+            if (afterAutoRestart)
+            {
+                InvokeMethod(_brokerage, "OnIbAutomaterRestarted", null, EventArgs.Empty);
+                return;
+            }
+
+            // a gateway already running, so the start succeeds and the connection is attempted
+            SetField(_automater, "_process", Process.GetCurrentProcess());
+            try
+            {
+                InvokeMethod(_brokerage, "StartGatewayAndConnect");
+            }
+            finally
+            {
+                // not ours to stop
+                SetField(_automater, "_process", null);
+            }
         }
 
         private const string RefusedLogin = "Login failed: Passwords are case sensitive. Please ensure that the Caps Lock key is not activated.";
