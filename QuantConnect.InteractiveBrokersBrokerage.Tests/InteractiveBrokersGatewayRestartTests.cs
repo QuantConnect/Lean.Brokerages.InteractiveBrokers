@@ -14,16 +14,25 @@
 */
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
+using IBApi;
 using NUnit.Framework;
 using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using QuantConnect.IBAutomater;
+using QuantConnect.Packets;
+using QuantConnect.Securities;
+using QuantConnect.Tests.Engine.DataFeeds;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
@@ -255,14 +264,35 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
         [TestCase(true)]
         [TestCase(false)]
-        public void FailedReconnectWithinTheResetPeriodIsRaisedAsDisconnect(bool afterAutoRestart)
+        public void FailedReconnectWithinTheResetPeriodRaisesNothing(bool afterAutoRestart)
         {
             // the gateway is up and logged in but IB doesn't serve the account while it resets
             _automater.IsWithinResetTimes = true;
             Reconnect(afterAutoRestart);
 
-            Assert.AreEqual(1, _messages.Count(m => m.Type == BrokerageMessageType.Disconnect));
-            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
+            // not even a disconnect: with an open market Lean would stop the algorithm 15 minutes after it
+            Assert.IsEmpty(_messages);
+        }
+
+        [Test]
+        public void OpenMarketAlgorithmIsNotStoppedWhileRetryingWithinTheResetPeriod()
+        {
+            var algorithm = new AlgorithmStub();
+            algorithm.AddSecurities(forex: new List<string> { "EURUSD" });
+            var utcNow = DateTime.UtcNow;
+            algorithm.SetDateTime(utcNow);
+            var exchange = algorithm.Securities.Values.Single().Exchange;
+            exchange.SetMarketHours([new MarketHoursSegment(MarketHoursState.Market, TimeSpan.Zero, TimeSpan.FromDays(1))], utcNow.ConvertFromUtc(exchange.TimeZone).DayOfWeek);
+            // Lean's handler with its 15 minutes to reconnect cut to 2 seconds, it checks once a minute
+            var handler = new DefaultBrokerageMessageHandler(algorithm, new LiveNodePacket(), null, TimeSpan.FromSeconds(2));
+            _brokerage.Message += (_, message) => handler.HandleMessage(message);
+
+            InteractiveBrokersBrokerage.ResetPeriodReconnectRetryInterval = TimeSpan.FromMilliseconds(500);
+            _automater.IsWithinResetTimes = true;
+            Reconnect(afterAutoRestart: false);
+
+            Thread.Sleep(TimeSpan.FromSeconds(70));
+            Assert.IsNull(algorithm.RunTimeError);
         }
 
         [TestCase(true, "IBAutomaterAutoRestartError")]
@@ -287,6 +317,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             // the retries keep failing while IB resets
             Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(1)));
+            Assert.IsEmpty(_messages);
 
             _automater.IsWithinResetTimes = false;
 
@@ -294,8 +325,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(_automater.Stopped.Wait(TimeSpan.FromSeconds(10)));
             Thread.Sleep(500);
             Assert.AreEqual(1, _automater.StopCount);
-            Assert.AreEqual(1, _messages.Count(m => m.Type == BrokerageMessageType.Disconnect));
-            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
+            // only now is the disconnect raised
+            Assert.AreEqual(BrokerageMessageType.Disconnect, _messages.Single().Type);
         }
 
         [Test]
@@ -309,6 +340,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             // the reset period is over but IB may still be coming back, as when it overruns its published window
             _automater.IsWithinResetTimes = false;
             Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(1)));
+            Assert.IsEmpty(_messages);
 
             // the retries were still running: the next one finds the grace period over
             InteractiveBrokersBrokerage.PostResetReconnectGracePeriod = TimeSpan.Zero;
@@ -332,6 +364,62 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
         }
 
+        [Test]
+        public void ReconnectRetryWaitsForAReconnectInProgress()
+        {
+            InteractiveBrokersBrokerage.ResetPeriodReconnectRetryInterval = TimeSpan.FromMilliseconds(200);
+            _automater.IsWithinResetTimes = true;
+            Reconnect(afterAutoRestart: true);
+
+            // as while a gateway restart or start is inside Connect()
+            SetField(_brokerage, "_isReconnecting", 1);
+            _automater.IsWithinResetTimes = false;
+
+            // a retry that connected now would fail outside the reset period and stop the gateway
+            Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(1)));
+            Assert.IsEmpty(_messages);
+
+            // that reconnect is over and the gateway still isn't connected: the retries go on
+            SetField(_brokerage, "_isReconnecting", 0);
+            Assert.IsTrue(_automater.Stopped.Wait(TimeSpan.FromSeconds(10)));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void ReconnectStepsAsideForAReconnectInProgress(bool afterAutoRestart)
+        {
+            // as while a retry is inside Connect()
+            SetField(_brokerage, "_isReconnecting", 1);
+            _automater.IsWithinResetTimes = false;
+            Reconnect(afterAutoRestart);
+
+            // a second Connect() would fail and stop the algorithm with an error
+            Assert.IsEmpty(_messages);
+            Assert.AreEqual(1, GetField<int>(_brokerage, "_isReconnecting"));
+        }
+
+        [Test]
+        public void ConnectionEstablishedMeanwhileEndsTheRetries()
+        {
+            using var gateway = new HandshakeOnlyGateway();
+            InteractiveBrokersBrokerage.ResetPeriodReconnectRetryInterval = TimeSpan.FromMilliseconds(500);
+            _automater.IsWithinResetTimes = true;
+            Reconnect(afterAutoRestart: true);
+
+            // another path connects before the first retry
+            var client = new IB.InteractiveBrokersClient(new EReaderMonitorSignal());
+            client.ClientSocket.eConnect("127.0.0.1", gateway.Port, 0);
+            SetField(_brokerage, "_client", client);
+            StateManager.IsConnecting = false;
+            Assert.IsTrue(_brokerage.IsConnected);
+
+            // the retries end there: nothing reports the healthy connection as lost and the gateway is left alone
+            _automater.IsWithinResetTimes = false;
+            Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(2)));
+            Assert.IsEmpty(_messages);
+            Assert.IsTrue(_brokerage.IsConnected);
+        }
+
         /// <summary>
         /// Reconnects through the gateway's auto-restart or through a gateway start, failing in both: this brokerage has no gateway to connect to
         /// </summary>
@@ -353,6 +441,36 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             {
                 // not ours to stop
                 SetField(_automater, "_process", null);
+            }
+        }
+
+        /// <summary>
+        /// Answers the IB API handshake and keeps the connection open, enough for a client to be connected
+        /// </summary>
+        private sealed class HandshakeOnlyGateway : IDisposable
+        {
+            private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+            private TcpClient _client;
+
+            public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
+
+            public HandshakeOnlyGateway()
+            {
+                _listener.Start();
+                _listener.AcceptTcpClientAsync().ContinueWith(accepted =>
+                {
+                    _client = accepted.Result;
+                    var serverVersion = Encoding.ASCII.GetBytes("199\020261107 23:45:31 EST\0");
+                    var writer = new BinaryWriter(_client.GetStream());
+                    writer.Write(BinaryPrimitives.ReverseEndianness(serverVersion.Length));
+                    writer.Write(serverVersion);
+                }, TaskContinuationOptions.OnlyOnRanToCompletion);
+            }
+
+            public void Dispose()
+            {
+                _client?.Dispose();
+                _listener.Stop();
             }
         }
 
