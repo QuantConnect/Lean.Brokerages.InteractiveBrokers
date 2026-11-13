@@ -20,6 +20,8 @@ using QuantConnect.Securities;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 {
@@ -224,6 +226,29 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.AreEqual(expectedContract.Currency, actualContract.Currency);
         }
 
+        [TestCase("DAX      DEC2026", "FDXM", "5", "EUREX", "20261218")]
+        [TestCase("SI       DEC2026", "SIL", "1000", "COMEX", "20261229")]
+        public void MalformedContractSymbolKeepsTradingClass(string symbol, string tradingClass, string multiplier, string exchange, string expectedLastTradeDate)
+        {
+            var malformedContract = new Contract
+            {
+                Symbol = symbol,
+                SecType = IB.SecurityType.Future,
+                TradingClass = tradingClass,
+                Multiplier = multiplier,
+                Exchange = exchange,
+                LastTradeDateOrContractMonth = "0"
+            };
+
+            var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
+            var contract = mapper.ParseMalformedContractFutureSymbol(malformedContract, SymbolPropertiesDatabase.FromDataFolder());
+
+            Assert.AreEqual(symbol.Split(' ')[0], contract.Symbol);
+            Assert.AreEqual(tradingClass, contract.TradingClass);
+            Assert.AreEqual(multiplier, contract.Multiplier);
+            Assert.AreEqual(expectedLastTradeDate, contract.LastTradeDateOrContractMonth);
+        }
+
         [TestCase(2021, 2, 23)]
         [TestCase(2021, 3, 25)]
         public void FuturesOptionsWithUnderlyingContractMonthMappedByRuleResolvesUnderlyingGetLeanSymbol(int year, int month, int day)
@@ -336,6 +361,115 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             var mappedBrokerageRootSymbol = mapper.GetBrokerageRootSymbol(leanRootSymbol, securityType);
             Assert.AreEqual(brokerageSymbol, mappedBrokerageRootSymbol);
+        }
+
+        // IB lists some futures under a shared symbol and tells them apart by trading class and multiplier:
+        // Eurex DAX -> FDAX (25), FDXM (5), FDXS (1); COMEX SI -> SI (5000), SIL (1000). LEAN keeps one root per product.
+        [TestCase("DAX", "FDAX", "FDAX")]
+        [TestCase("DAX", "FDXM", "FDXM")]
+        [TestCase("DAX", "FDXS", "FDXS")]
+        [TestCase("DAX", "", "FDAX")]
+        [TestCase("DAX", null, "FDAX")]
+        [TestCase("SI", "SI", "SI")]
+        [TestCase("SI", "SIL", "SIL")]
+        [TestCase("ESTX50", "FESX", "FESX")]
+        [TestCase("ES", "ES", "ES")]
+        [TestCase("GBP", "GBP", "6B")]
+        [TestCase("ES", "FDXS", "ES")]
+        public void MapsLeanFutureRootFromTradingClass(string ibSymbol, string tradingClass, string expectedLeanRoot)
+        {
+            var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
+            Assert.AreEqual(expectedLeanRoot, mapper.GetLeanRootSymbol(ibSymbol, SecurityType.Future, tradingClass));
+        }
+
+        // futures options keep their option trading class, so their underlying root resolves as before: SI options trade as SO
+        [TestCase("SI", "SO", "SI")]
+        public void MapsLeanFutureOptionRootFromTradingClass(string ibSymbol, string tradingClass, string expectedLeanRoot)
+        {
+            var mapper = new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider);
+            Assert.AreEqual(expectedLeanRoot, mapper.GetLeanRootSymbol(ibSymbol, SecurityType.FutureOption, tradingClass));
+        }
+
+        [TestCase("FDXM", true, "DAX")]
+        [TestCase("FDXS", true, "DAX")]
+        [TestCase("SIL", true, "SI")]
+        [TestCase("FDAX", false, null)]
+        [TestCase("SI", false, null)]
+        [TestCase("ES", false, null)]
+        public void KnowsFuturesIdentifiedByTradingClass(string leanRoot, bool expected, string expectedIbSymbol)
+        {
+            Assert.AreEqual(expected, InteractiveBrokersSymbolMapper.TryGetFutureTradingClassContract(leanRoot, out var ibSymbol, out var tradingClass));
+            Assert.AreEqual(expectedIbSymbol, ibSymbol);
+            Assert.AreEqual(expected ? leanRoot : null, tradingClass);
+            // GetBrokerageRootSymbol is unchanged for every root
+            Assert.AreEqual(leanRoot == "FDAX" ? "DAX" : leanRoot, new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider).GetBrokerageRootSymbol(leanRoot, SecurityType.Future));
+        }
+
+        [TestCase("DAX", "EUREX", "EUR", "FDAX", "25", Market.EUREX)]
+        [TestCase("DAX", "EUREX", "EUR", "FDXM", "5", Market.EUREX)]
+        [TestCase("DAX", "EUREX", "EUR", "FDXS", "1", Market.EUREX)]
+        [TestCase("SI", "COMEX", "USD", "SI", "5000", Market.COMEX)]
+        [TestCase("SI", "COMEX", "USD", "SIL", "1000", Market.COMEX)]
+        public void MapsIbFutureToLeanRootOfItsTradingClass(string ibSymbol, string exchange, string currency, string tradingClass, string multiplier, string market)
+        {
+            var contract = new Contract
+            {
+                Symbol = ibSymbol,
+                SecType = "FUT",
+                Exchange = exchange,
+                Currency = currency,
+                TradingClass = tradingClass,
+                Multiplier = multiplier,
+                LastTradeDateOrContractMonth = TradingClassFutureExpiry.ToString("yyyyMMdd"),
+                LocalSymbol = $"{tradingClass}Z6"
+            };
+
+            var symbol = (Symbol)GetBrokerageMethod("MapSymbol").Invoke(CreateOfflineBrokerage(), [contract]);
+
+            Assert.AreEqual(market, symbol.ID.Market);
+            Assert.AreEqual(TradingClassFutureExpiry, symbol.ID.Date);
+            Assert.AreEqual(tradingClass, symbol.ID.Symbol, $"IB {ibSymbol} contract with trading class {tradingClass} mapped to LEAN root {symbol.ID.Symbol}");
+        }
+
+        [TestCase("FDAX", Market.EUREX, "DAX", "EUREX", "EUR", "25", null)]
+        [TestCase("FDXM", Market.EUREX, "DAX", "EUREX", "EUR", "5", "FDXM")]
+        [TestCase("FDXS", Market.EUREX, "DAX", "EUREX", "EUR", "1", "FDXS")]
+        [TestCase("SI", Market.COMEX, "SI", "COMEX", "USD", "5000", null)]
+        [TestCase("SIL", Market.COMEX, "SI", "COMEX", "USD", "1000", "SIL")]
+        public void CreatesIbFutureContractWithTradingClass(string leanRoot, string market, string ibSymbol, string exchange, string currency, string multiplier, string tradingClass)
+        {
+            var symbol = Symbol.CreateFuture(leanRoot, market, TradingClassFutureExpiry);
+
+            var contract = (Contract)GetBrokerageMethod("CreateContract").Invoke(CreateOfflineBrokerage(), [symbol, false, null, null]);
+
+            Assert.AreEqual(exchange, contract.Exchange);
+            Assert.AreEqual(currency, contract.Currency);
+            Assert.AreEqual(multiplier, contract.Multiplier);
+            Assert.AreEqual(ibSymbol, contract.Symbol, $"LEAN {leanRoot} was sent to IB as symbol {contract.Symbol}");
+            // the product the shared symbol maps to keeps resolving by symbol and multiplier; the others carry their trading class
+            Assert.AreEqual(tradingClass, contract.TradingClass, $"LEAN {leanRoot} was sent to IB with trading class '{contract.TradingClass}'");
+        }
+
+        private static readonly DateTime TradingClassFutureExpiry = new(2026, 12, 18);
+
+        /// <summary>
+        /// An uninitialized brokerage with only the symbol mapper set, enough for MapSymbol / CreateContract without an IB Gateway
+        /// </summary>
+        private static InteractiveBrokersBrokerage CreateOfflineBrokerage()
+        {
+            TestSetup.ReloadConfiguration();
+            var brokerage = (InteractiveBrokersBrokerage)RuntimeHelpers.GetUninitializedObject(typeof(InteractiveBrokersBrokerage));
+            var mapperField = typeof(InteractiveBrokersBrokerage).GetField("_symbolMapper", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(mapperField, "_symbolMapper field not found");
+            mapperField.SetValue(brokerage, new InteractiveBrokersSymbolMapper(TestGlobals.MapFileProvider));
+            return brokerage;
+        }
+
+        private static MethodInfo GetBrokerageMethod(string name)
+        {
+            var method = typeof(InteractiveBrokersBrokerage).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(method, $"{name} not found");
+            return method;
         }
     }
 }
