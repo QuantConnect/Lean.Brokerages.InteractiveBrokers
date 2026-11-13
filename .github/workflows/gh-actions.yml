@@ -2,17 +2,16 @@ name: Build & Test
 
 on:
   push:
-    branches: ['*']
+    branches: [master]
   pull_request:
     branches: [master]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    # A pull request from a fork gets no secrets: skip it, its branch is built when pushed to this repository
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: self-hosted
     concurrency:
