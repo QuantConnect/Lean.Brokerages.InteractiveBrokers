@@ -104,8 +104,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             using var resetEvent = new ManualResetEvent(false);
             using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
 
-            var mxnFuture = Symbol.CreateFuture(Futures.Currencies.MXN, Market.CME, new(2026, 03, 16));
-            var mxnFutureOptionContract = Symbol.CreateOption(mxnFuture, mxnFuture.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Call, 0.055m, new(2026, 01, 09));
+            var mxnFuture = Symbol.CreateFuture(Futures.Currencies.MXN, Market.CME, new(2027, 03, 15));
+            var mxnFutureOptionContract = Symbol.CreateOption(mxnFuture, mxnFuture.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Call, 0.055m, new(2027, 02, 05));
 
             var symbols = new List<Symbol>()
             {
@@ -477,10 +477,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var cts = new CancellationTokenSource();
             using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
 
-            var corn = Symbol.CreateFuture(Futures.Grains.Corn, Market.CBOT, new(2025, 12, 12));
-            var le = Symbol.CreateFuture(Futures.Meats.LiveCattle, Market.CME, new(2025, 12, 31));
-            var jpy = Symbol.CreateFuture(Futures.Currencies.JPY, Market.CME, new(2025, 12, 15));
-            var aud = Symbol.CreateFuture(Futures.Currencies.AUD, Market.CME, new(2025, 12, 15));
+            var corn = Symbol.CreateFuture(Futures.Grains.Corn, Market.CBOT, new(2027, 03, 12));
+            var le = Symbol.CreateFuture(Futures.Meats.LiveCattle, Market.CME, new(2027, 02, 26));
+            var jpy = Symbol.CreateFuture(Futures.Currencies.JPY, Market.CME, new(2027, 03, 15));
+            var aud = Symbol.CreateFuture(Futures.Currencies.AUD, Market.CME, new(2027, 03, 15));
 
             // Not found
             var nzd = Symbol.CreateFuture(Futures.Currencies.NZD, Market.CME, new(2025, 12, 15));
@@ -488,11 +488,11 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var style = SecurityType.FutureOption.DefaultOptionStyle();
             var fops = new List<Symbol>(6)
             {
-                Symbol.CreateOption(corn, corn.ID.Market, style, OptionRight.Call, 4.1m, new(2025, 11, 21)), //  corn: price magnifier: 100
-                Symbol.CreateOption(le, le.ID.Market, style, OptionRight.Call, 2.18m, new(2025, 12, 05)), // le: price magnifier: 100
-                Symbol.CreateOption(jpy, jpy.ID.Market, style, OptionRight.Call, 0.00625m, new(2026, 01, 09)), // jpy: price magnifier: undefined
-                Symbol.CreateOption(jpy, jpy.ID.Market, style, OptionRight.Put, 0.0068m, new(2026, 01, 09)), // jpy: price magnifier: undefined
-                Symbol.CreateOption(aud, aud.ID.Market, style, OptionRight.Call, 0.635m, new(2025, 12, 05)), // aud: price magnifier: undefined
+                Symbol.CreateOption(corn, corn.ID.Market, style, OptionRight.Call, 4.1m, new(2027, 01, 22)), //  corn: price magnifier: 100
+                Symbol.CreateOption(le, le.ID.Market, style, OptionRight.Call, 2.18m, new(2027, 02, 05)), // le: price magnifier: 100
+                Symbol.CreateOption(jpy, jpy.ID.Market, style, OptionRight.Call, 0.00625m, new(2027, 02, 05)), // jpy: price magnifier: undefined
+                Symbol.CreateOption(jpy, jpy.ID.Market, style, OptionRight.Put, 0.0068m, new(2027, 02, 05)), // jpy: price magnifier: undefined
+                Symbol.CreateOption(aud, aud.ID.Market, style, OptionRight.Call, 0.635m, new(2027, 02, 05)), // aud: price magnifier: undefined
 
                 // Not found
                 Symbol.CreateOption(nzd, nzd.ID.Market, style, OptionRight.Call, 0.54m, new(2026, 12, 05)), // nzd: price magnifier: undefined
