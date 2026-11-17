@@ -100,6 +100,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private readonly HashSet<OrderType> _noSubmissionOrderTypes = new(new[] {
             OrderType.MarketOnOpen,
+            // IB can hold back any answer to a market on close order until about 30 seconds before the close
+            OrderType.MarketOnClose,
             OrderType.ComboLegLimit,
             // combo market & limit do not send submission event when trading only options
             OrderType.ComboMarket,
