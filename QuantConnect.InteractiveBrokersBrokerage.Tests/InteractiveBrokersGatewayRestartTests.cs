@@ -532,7 +532,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var workingDirectory = Path.Combine(_gatewayDirectory, "working");
             Directory.CreateDirectory(workingDirectory);
             File.WriteAllText(Path.Combine(workingDirectory, "IBAutomater.sh"),
-                "#!/bin/bash\ndirectory=$(dirname \"$1\")\nwhile [ ! -f \"$directory/shutdown\" ]; do sleep 0.1; done\n");
+                "#!/bin/bash\ndirectory=$(dirname \"$1\")\nwhile [ -d \"$directory\" ] && [ ! -f \"$directory/shutdown\" ]; do sleep 0.1; done\n");
             var previousDirectory = Environment.CurrentDirectory;
             Environment.CurrentDirectory = workingDirectory;
             try
