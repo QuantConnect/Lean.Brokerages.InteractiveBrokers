@@ -425,18 +425,52 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         }
 
         [Test]
-        public void ConnectStepsAsideForAConnectionAttemptInProgress()
+        public void ConnectWaitsForAConnectionAttemptInProgress()
         {
+            using var gateway = new HandshakeOnlyGateway();
             // as while a gateway restart, a gateway start or a retry is inside Connect(), here waiting for a 2FA confirmation
             SetField(_brokerage, "_isReconnecting", 1);
             SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
 
-            Assert.DoesNotThrow(() => _brokerage.Connect());
+            var connect = Task.Run(() => _brokerage.Connect());
 
             // a second gateway start or connection would disconnect the attempt in progress
+            Assert.IsFalse(connect.Wait(TimeSpan.FromSeconds(1)));
+            Assert.IsFalse(_automaterOutput.Any(x => x.StartsWith("Loading IBGateway")));
+
+            // the attempt in progress connects
+            EndConnectionAttempt(gateway);
+
+            Assert.IsTrue(connect.Wait(TimeSpan.FromSeconds(10)));
             Assert.IsFalse(_automaterOutput.Any(x => x.StartsWith("Loading IBGateway")));
             Assert.IsEmpty(_messages);
-            Assert.AreEqual(1, GetField<int>(_brokerage, "_isReconnecting"));
+            Assert.AreEqual(0, GetField<int>(_brokerage, "_isReconnecting"));
+        }
+
+        [Test]
+        public void CashSyncDuringAConnectionAttemptGetsTheDownloadedBalances()
+        {
+            using var gateway = new HandshakeOnlyGateway();
+            var algorithm = new AlgorithmStub();
+            algorithm.SetCash(10000);
+            // another attempt is connecting and cleared the account data it downloads again
+            SetField(_brokerage, "_isReconnecting", 1);
+            var accountData = GetField<InteractiveBrokersAccountData>(_brokerage, "_accountData");
+            accountData.CashBalances.Clear();
+
+            var cashSync = Task.Run(() => _brokerage.PerformCashSync(algorithm, DateTime.UtcNow, () => TimeSpan.FromDays(1)));
+
+            // the cleared balances are not the account's: taken as such, the sync would zero the algorithm's cash
+            Assert.IsFalse(cashSync.Wait(TimeSpan.FromSeconds(1)));
+            Assert.AreEqual(10000, algorithm.Portfolio.CashBook[Currencies.USD].Amount);
+
+            // the attempt in progress downloads the account and connects
+            accountData.CashBalances[Currencies.USD] = 12000;
+            EndConnectionAttempt(gateway);
+
+            Assert.IsTrue(cashSync.Wait(TimeSpan.FromSeconds(10)));
+            Assert.IsTrue(cashSync.Result);
+            Assert.AreEqual(12000, algorithm.Portfolio.CashBook[Currencies.USD].Amount);
         }
 
         [Test]
@@ -484,6 +518,18 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.IsTrue(connect.Wait(TimeSpan.FromSeconds(10)));
             Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
+        }
+
+        /// <summary>
+        /// Ends the connection attempt a test holds the connection guard for, connected to the given gateway
+        /// </summary>
+        private void EndConnectionAttempt(HandshakeOnlyGateway gateway)
+        {
+            var client = new IB.InteractiveBrokersClient(new EReaderMonitorSignal());
+            client.ClientSocket.eConnect("127.0.0.1", gateway.Port, 0);
+            SetField(_brokerage, "_client", client);
+            Assert.IsTrue(_brokerage.IsConnected);
+            SetField(_brokerage, "_isReconnecting", 0);
         }
 
         /// <summary>

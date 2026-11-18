@@ -943,14 +943,23 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
-        /// Connects the client to the IB gateway, unless another connection attempt is in progress, which then owns the outcome
+        /// Connects the client to the IB gateway, one attempt at a time: while another attempt is in progress, it waits for it to end
+        /// and then connects only if still needed
         /// </summary>
         public override void Connect()
         {
             if (Interlocked.Exchange(ref _isReconnecting, 1) == 1)
             {
-                Log.Trace("InteractiveBrokersBrokerage.Connect(): another connection attempt is in progress, skipping this one");
-                return;
+                Log.Trace("InteractiveBrokersBrokerage.Connect(): another connection attempt is in progress, waiting for it to end");
+                // callers read the account data right after, which the attempt in progress has cleared until its download ends
+                do
+                {
+                    if (_isDisposeCalled || _cancellationTokenSource.Token.WaitHandle.WaitOne(100))
+                    {
+                        return;
+                    }
+                }
+                while (Interlocked.Exchange(ref _isReconnecting, 1) == 1);
             }
 
             try
