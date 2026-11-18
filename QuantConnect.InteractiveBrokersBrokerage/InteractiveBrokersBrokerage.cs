@@ -6050,6 +6050,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             try
             {
                 var result = _ibAutomater.Start(false);
+                if (_isDisposeCalled)
+                {
+                    Log.Trace("InteractiveBrokersBrokerage.StartGatewayAndConnect(): disposed while starting IBAutomater, not connecting");
+                    return;
+                }
                 CheckIbAutomaterError(result, false);
 
                 // the error was raised above, or we are waiting for the 2FA user required action after a timeout: no gateway to connect to

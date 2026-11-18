@@ -520,8 +520,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
         }
 
-        [Test, Platform("Linux")]
-        public void DisposeDuringAGatewayStartWaitingForTheLoginReturnsPromptlyAndRaisesNothing()
+        [Platform("Linux")]
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DisposeDuringAGatewayStartWaitingForTheLoginReturnsPromptlyAndRaisesNothing(bool gatewayRestart)
         {
             // a gateway installation with its Java, which the start runs through the IBAutomater.sh of the working directory first:
             // this one stands for a gateway waiting for its login, such as for a 2FA confirmation, until it is stopped
@@ -545,9 +547,11 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                         waitingForLogin.Set();
                     }
                 };
-                // the gateway needs a new login after a timed out one
+                // the gateway needs a new login after a timed out one, or after it exited, as for the weekly restart
                 SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
-                var connect = Task.Run(() => _brokerage.Connect());
+                var connect = gatewayRestart
+                    ? Task.Run(() => InvokeMethod(_brokerage, "StartGatewayAndConnect"))
+                    : Task.Run(() => _brokerage.Connect());
                 Assert.IsTrue(waitingForLogin.Wait(TimeSpan.FromSeconds(30)));
 
                 // the start waits up to its 15 minutes initialization timeout
