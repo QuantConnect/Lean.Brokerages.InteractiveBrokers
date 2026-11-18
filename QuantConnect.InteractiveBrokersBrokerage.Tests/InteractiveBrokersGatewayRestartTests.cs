@@ -520,6 +520,50 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
         }
 
+        [Test, Platform("Linux")]
+        public void DisposeDuringAGatewayStartWaitingForTheLoginReturnsPromptlyAndRaisesNothing()
+        {
+            // a gateway installation with its Java, which the start runs through the IBAutomater.sh of the working directory first:
+            // this one stands for a gateway waiting for its login, such as for a 2FA confirmation, until it is stopped
+            var jreDirectory = Path.Combine(_gatewayDirectory, "jre");
+            Directory.CreateDirectory(jreDirectory);
+            Directory.CreateDirectory(Path.Combine(_gatewayDirectory, ".install4j"));
+            File.WriteAllText(Path.Combine(_gatewayDirectory, ".install4j", "pref_jre.cfg"), jreDirectory);
+            var workingDirectory = Path.Combine(_gatewayDirectory, "working");
+            Directory.CreateDirectory(workingDirectory);
+            File.WriteAllText(Path.Combine(workingDirectory, "IBAutomater.sh"),
+                "#!/bin/bash\ndirectory=$(dirname \"$1\")\nwhile [ ! -f \"$directory/shutdown\" ]; do sleep 0.1; done\n");
+            var previousDirectory = Environment.CurrentDirectory;
+            Environment.CurrentDirectory = workingDirectory;
+            try
+            {
+                using var waitingForLogin = new ManualResetEventSlim();
+                _automater.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data.StartsWith("IBAutomater process started"))
+                    {
+                        waitingForLogin.Set();
+                    }
+                };
+                // the gateway needs a new login after a timed out one
+                SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
+                var connect = Task.Run(() => _brokerage.Connect());
+                Assert.IsTrue(waitingForLogin.Wait(TimeSpan.FromSeconds(30)));
+
+                // the start waits up to its 15 minutes initialization timeout
+                var dispose = Task.Run(_brokerage.Dispose);
+
+                Assert.IsTrue(dispose.Wait(TimeSpan.FromSeconds(30)), "Dispose() waited for the login");
+                Assert.IsTrue(connect.Wait(TimeSpan.FromSeconds(5)));
+                Assert.IsEmpty(_messages);
+                Assert.IsFalse(_automater.IsRunning());
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousDirectory;
+            }
+        }
+
         /// <summary>
         /// Ends the connection attempt a test holds the connection guard for, connected to the given gateway
         /// </summary>

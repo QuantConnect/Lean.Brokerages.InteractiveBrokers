@@ -1482,7 +1482,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _aggregator.DisposeSafely();
             if (!_isRemoteGateway)
             {
-                _ibAutomater?.Stop();
+                // ends a gateway start waiting for the login, such as for a 2FA confirmation, instead of waiting for it
+                _ibAutomater?.Shutdown();
                 _ibAutomater.DisposeSafely();
             }
 
