@@ -29,6 +29,7 @@ using IBApi;
 using NUnit.Framework;
 using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.InteractiveBrokers;
+using QuantConnect.Data;
 using QuantConnect.IBAutomater;
 using QuantConnect.Packets;
 using QuantConnect.Securities;
@@ -421,6 +422,68 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(2)));
             Assert.IsEmpty(_messages);
             Assert.IsTrue(_brokerage.IsConnected);
+        }
+
+        [Test]
+        public void ConnectStepsAsideForAConnectionAttemptInProgress()
+        {
+            // as while a gateway restart, a gateway start or a retry is inside Connect(), here waiting for a 2FA confirmation
+            SetField(_brokerage, "_isReconnecting", 1);
+            SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
+
+            Assert.DoesNotThrow(() => _brokerage.Connect());
+
+            // a second gateway start or connection would disconnect the attempt in progress
+            Assert.IsFalse(_automaterOutput.Any(x => x.StartsWith("Loading IBGateway")));
+            Assert.IsEmpty(_messages);
+            Assert.AreEqual(1, GetField<int>(_brokerage, "_isReconnecting"));
+        }
+
+        [Test]
+        public void ConnectReleasesTheConnectionGuard()
+        {
+            // the gateway start fails
+            SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
+
+            Assert.Throws<Exception>(() => _brokerage.Connect());
+
+            Assert.IsTrue(_automaterOutput.Any(x => x.StartsWith("Loading IBGateway")));
+            Assert.AreEqual(0, GetField<int>(_brokerage, "_isReconnecting"));
+        }
+
+        [Test]
+        public void GatewayStartEndedByADisposeRaisesNothing()
+        {
+            SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
+            // the brokerage is disposed while the gateway starts, as while it waits for a 2FA confirmation
+            _automater.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data.StartsWith("Loading IBGateway"))
+                {
+                    SetField(_brokerage, "_isDisposeCalled", true);
+                }
+            };
+
+            Assert.DoesNotThrow(() => _brokerage.Connect());
+
+            Assert.IsEmpty(_messages);
+            // lets the tear down dispose of it
+            SetField(_brokerage, "_isDisposeCalled", false);
+        }
+
+        [Test]
+        public void ConnectEndedByADisposeRaisesNothing()
+        {
+            SetField(_brokerage, "_subscriptionManager", new EventBasedDataQueueHandlerSubscriptionManager());
+            var connect = Task.Run(() => _brokerage.Connect());
+            Assert.IsTrue(SpinWait.SpinUntil(() => StateManager.IsConnecting, TimeSpan.FromSeconds(10)));
+
+            _brokerage.Dispose();
+            // as the heart beat thread's stop does on dispose
+            GetField<CancellationTokenSource>(_brokerage, "_cancellationTokenSource").Cancel();
+
+            Assert.IsTrue(connect.Wait(TimeSpan.FromSeconds(10)));
+            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
         }
 
         /// <summary>
