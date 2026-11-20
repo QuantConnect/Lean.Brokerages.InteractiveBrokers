@@ -130,9 +130,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         // merely surfaced as a warning, so the wait expired 'ib-response-timeout' later and stopped the
         // algorithm with 'Timeout waiting for brokerage response'.
         // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/93
-        [TestCase(10147, "OrderId 141 that needs to be cancelled is not found.")]
-        [TestCase(10148, "OrderId 141 that needs to be cancelled can not be cancelled, state: Cancelled.")]
-        public void HandleErrorCancellationRejectionInvalidatesOrderAndReleasesPendingResponse(int errorCode, string errorMessage)
+        // A 10148 for an order already pending cancel or canceled is not a rejection though: IB canceled it on its own, like the
+        // remaining orders of an OCA group, and reports it as an order status, so it releases the thread without invalidating.
+        [TestCase(10147, "OrderId 141 that needs to be cancelled is not found.", true)]
+        [TestCase(10148, "OrderId 141 that needs to be cancelled can not be cancelled, state: Inactive.", true)]
+        [TestCase(10148, "OrderId 141 that needs to be cancelled can not be cancelled, state: Cancelled.", false)]
+        [TestCase(10148, "OrderId 141 that needs to be cancelled can not be cancelled, state: PendingCancel.", false)]
+        public void HandleErrorCancellationRejectionInvalidatesOrderAndReleasesPendingResponse(int errorCode, string errorMessage, bool invalidates)
         {
             using var brokerage = new InteractiveBrokersBrokerage();
             const int ibOrderId = 141;
@@ -161,8 +165,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.IsTrue(pendingResponseEvent.IsSet, "the thread waiting in CancelOrder was not released");
             Assert.IsFalse(pendingOrderResponses.Contains(ibOrderId));
-            Assert.AreEqual(1, orderEvents.Count(e => e.OrderId == order.Id && e.Status == OrderStatus.Invalid));
-            StringAssert.StartsWith($"{errorCode} - {errorMessage}", orderEvents.Single().Message);
+            var expectedOrderEvents = invalidates ? 1 : 0;
+            Assert.AreEqual(expectedOrderEvents, orderEvents.Count);
+            Assert.AreEqual(expectedOrderEvents, orderEvents.Count(e => e.OrderId == order.Id && e.Status == OrderStatus.Invalid
+                && e.Message.StartsWith($"{errorCode} - {errorMessage}", StringComparison.Ordinal)));
             // both are filtered codes: the rejection reaches the user as the order event above, not as a message
             Assert.IsEmpty(messages.Where(m => m.Code == errorCode.ToStringInvariant()));
         }
@@ -399,6 +405,8 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             SetPrivateFieldValue(client, "<ClientSocket>k__BackingField", socket);
             SetPrivateFieldValue(brokerage, "_client", client);
             SetPrivateFieldValue(brokerage, "_nextValidId", nextValidId);
+            // with delayed streaming data enabled in the configuration each market data request is preceded by a market data type request
+            SetPrivateFieldValue(brokerage, "_enableDelayedStreamingData", false);
 
             symbol = Symbol.Create("SMH", SecurityType.Cfd, Market.InteractiveBrokers);
             var subscriptionEntryType = typeof(InteractiveBrokersBrokerage).GetNestedType("SubscriptionEntry", BindingFlags.NonPublic);
