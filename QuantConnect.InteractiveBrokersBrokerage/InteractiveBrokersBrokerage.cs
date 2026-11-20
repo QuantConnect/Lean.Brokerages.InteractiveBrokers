@@ -1545,6 +1545,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var exportIbGatewayLogs = true; // Config.GetBool("ib-export-ibgateway-logs");
             // IB paper account ids start with a 'D' (DU..., DF...)
             var tradingMode = account.StartsWith("d", StringComparison.InvariantCultureIgnoreCase) ? "paper" : "live";
+            // an empty 'ib-version' setting means the default version, like a missing one
+            if (string.IsNullOrEmpty(ibVersion))
+            {
+                ibVersion = DefaultVersion;
+            }
             _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, exportIbGatewayLogs);
             _ibAutomater.OutputDataReceived += OnIbAutomaterOutputDataReceived;
             _ibAutomater.ErrorDataReceived += OnIbAutomaterErrorDataReceived;
