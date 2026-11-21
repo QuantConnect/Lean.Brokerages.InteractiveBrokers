@@ -139,7 +139,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // 1 while a reconnect that failed within the server reset period is being retried
         private int _isRetryingReconnect;
 
-        // 1 while a gateway restart, a gateway start or a retry is reconnecting: one at a time
+        // 1 while a connect, a gateway restart, a gateway start or a retry is connecting: one at a time
         private int _isReconnecting;
 
         private int _port;
@@ -943,9 +943,39 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
-        /// Connects the client to the IB gateway
+        /// Connects the client to the IB gateway, one attempt at a time: while another attempt is in progress, it waits for it to end
+        /// and then connects only if still needed
         /// </summary>
         public override void Connect()
+        {
+            if (Interlocked.Exchange(ref _isReconnecting, 1) == 1)
+            {
+                Log.Trace("InteractiveBrokersBrokerage.Connect(): another connection attempt is in progress, waiting for it to end");
+                // callers read the account data right after, which the attempt in progress has cleared until its download ends
+                do
+                {
+                    if (_isDisposeCalled || _cancellationTokenSource.Token.WaitHandle.WaitOne(100))
+                    {
+                        return;
+                    }
+                }
+                while (Interlocked.Exchange(ref _isReconnecting, 1) == 1);
+            }
+
+            try
+            {
+                ConnectToGateway();
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _isReconnecting, 0);
+            }
+        }
+
+        /// <summary>
+        /// Connects the client to the IB gateway, for a caller that holds the connection guard
+        /// </summary>
+        private void ConnectToGateway()
         {
             if (IsConnected || _isDisposeCalled)
             {
@@ -958,6 +988,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (lastAutomaterStartResult.HasError)
             {
                 lastAutomaterStartResult = _ibAutomater.Start(false);
+                if (_isDisposeCalled)
+                {
+                    Log.Trace("InteractiveBrokersBrokerage.Connect(): disposed while starting IBAutomater, not connecting");
+                    return;
+                }
                 CheckIbAutomaterError(lastAutomaterStartResult);
                 // There was an error but we did not throw, must be another 2FA timeout, we can't continue
                 if (lastAutomaterStartResult.HasError)
@@ -1146,6 +1181,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 // we need to tell the DefaultBrokerageMessageHandler we are connected else he will kill us
                 OnMessage(BrokerageMessageEvent.Reconnected("Connect() finished successfully"));
+            }
+            else if (_isDisposeCalled)
+            {
+                Log.Trace("InteractiveBrokersBrokerage.Connect(): disposed while connecting, not connected");
             }
             else
             {
@@ -1443,7 +1482,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _aggregator.DisposeSafely();
             if (!_isRemoteGateway)
             {
-                _ibAutomater?.Stop();
+                // ends a gateway start waiting for the login, such as for a 2FA confirmation, instead of waiting for it
+                _ibAutomater?.Shutdown();
                 _ibAutomater.DisposeSafely();
             }
 
@@ -6015,6 +6055,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             try
             {
                 var result = _ibAutomater.Start(false);
+                if (_isDisposeCalled)
+                {
+                    Log.Trace("InteractiveBrokersBrokerage.StartGatewayAndConnect(): disposed while starting IBAutomater, not connecting");
+                    return;
+                }
                 CheckIbAutomaterError(result, false);
 
                 // the error was raised above, or we are waiting for the 2FA user required action after a timeout: no gateway to connect to
@@ -6052,7 +6097,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     _stateManager.Reset();
                     Disconnect();
                 }
-                Connect();
+                ConnectToGateway();
             }
             catch (Exception exception)
             {
@@ -6110,7 +6155,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Log.Trace("InteractiveBrokersBrokerage.ScheduleReconnectRetry(): retrying the connection...");
                     // a 1100 from a previous attempt gets no 1102 if IB returned while no connection was open
                     ClearDisconnectState();
-                    Connect();
+                    ConnectToGateway();
                     Interlocked.Exchange(ref _isRetryingReconnect, 0);
                 }
                 catch (Exception exception)

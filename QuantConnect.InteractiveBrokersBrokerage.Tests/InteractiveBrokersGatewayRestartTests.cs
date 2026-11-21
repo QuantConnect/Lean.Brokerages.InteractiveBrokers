@@ -29,6 +29,7 @@ using IBApi;
 using NUnit.Framework;
 using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.InteractiveBrokers;
+using QuantConnect.Data;
 using QuantConnect.IBAutomater;
 using QuantConnect.Packets;
 using QuantConnect.Securities;
@@ -421,6 +422,162 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsFalse(_automater.Stopped.Wait(TimeSpan.FromSeconds(2)));
             Assert.IsEmpty(_messages);
             Assert.IsTrue(_brokerage.IsConnected);
+        }
+
+        [Test]
+        public void ConnectWaitsForAConnectionAttemptInProgress()
+        {
+            using var gateway = new HandshakeOnlyGateway();
+            // as while a gateway restart, a gateway start or a retry is inside Connect(), here waiting for a 2FA confirmation
+            SetField(_brokerage, "_isReconnecting", 1);
+            SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
+
+            var connect = Task.Run(() => _brokerage.Connect());
+
+            // a second gateway start or connection would disconnect the attempt in progress
+            Assert.IsFalse(connect.Wait(TimeSpan.FromSeconds(1)));
+            Assert.IsFalse(_automaterOutput.Any(x => x.StartsWith("Loading IBGateway")));
+
+            // the attempt in progress connects
+            EndConnectionAttempt(gateway);
+
+            Assert.IsTrue(connect.Wait(TimeSpan.FromSeconds(10)));
+            Assert.IsFalse(_automaterOutput.Any(x => x.StartsWith("Loading IBGateway")));
+            Assert.IsEmpty(_messages);
+            Assert.AreEqual(0, GetField<int>(_brokerage, "_isReconnecting"));
+        }
+
+        [Test]
+        public void CashSyncDuringAConnectionAttemptGetsTheDownloadedBalances()
+        {
+            using var gateway = new HandshakeOnlyGateway();
+            var algorithm = new AlgorithmStub();
+            algorithm.SetCash(10000);
+            // another attempt is connecting and cleared the account data it downloads again
+            SetField(_brokerage, "_isReconnecting", 1);
+            var accountData = GetField<InteractiveBrokersAccountData>(_brokerage, "_accountData");
+            accountData.CashBalances.Clear();
+
+            var cashSync = Task.Run(() => _brokerage.PerformCashSync(algorithm, DateTime.UtcNow, () => TimeSpan.FromDays(1)));
+
+            // the cleared balances are not the account's: taken as such, the sync would zero the algorithm's cash
+            Assert.IsFalse(cashSync.Wait(TimeSpan.FromSeconds(1)));
+            Assert.AreEqual(10000, algorithm.Portfolio.CashBook[Currencies.USD].Amount);
+
+            // the attempt in progress downloads the account and connects
+            accountData.CashBalances[Currencies.USD] = 12000;
+            EndConnectionAttempt(gateway);
+
+            Assert.IsTrue(cashSync.Wait(TimeSpan.FromSeconds(10)));
+            Assert.IsTrue(cashSync.Result);
+            Assert.AreEqual(12000, algorithm.Portfolio.CashBook[Currencies.USD].Amount);
+        }
+
+        [Test]
+        public void ConnectReleasesTheConnectionGuard()
+        {
+            // the gateway start fails
+            SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
+
+            Assert.Throws<Exception>(() => _brokerage.Connect());
+
+            Assert.IsTrue(_automaterOutput.Any(x => x.StartsWith("Loading IBGateway")));
+            Assert.AreEqual(0, GetField<int>(_brokerage, "_isReconnecting"));
+        }
+
+        [Test]
+        public void GatewayStartEndedByADisposeRaisesNothing()
+        {
+            SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
+            // the brokerage is disposed while the gateway starts, as while it waits for a 2FA confirmation
+            _automater.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data.StartsWith("Loading IBGateway"))
+                {
+                    SetField(_brokerage, "_isDisposeCalled", true);
+                }
+            };
+
+            Assert.DoesNotThrow(() => _brokerage.Connect());
+
+            Assert.IsEmpty(_messages);
+            // lets the tear down dispose of it
+            SetField(_brokerage, "_isDisposeCalled", false);
+        }
+
+        [Test]
+        public void ConnectEndedByADisposeRaisesNothing()
+        {
+            SetField(_brokerage, "_subscriptionManager", new EventBasedDataQueueHandlerSubscriptionManager());
+            var connect = Task.Run(() => _brokerage.Connect());
+            Assert.IsTrue(SpinWait.SpinUntil(() => StateManager.IsConnecting, TimeSpan.FromSeconds(10)));
+
+            _brokerage.Dispose();
+            // as the heart beat thread's stop does on dispose
+            GetField<CancellationTokenSource>(_brokerage, "_cancellationTokenSource").Cancel();
+
+            Assert.IsTrue(connect.Wait(TimeSpan.FromSeconds(10)));
+            Assert.IsFalse(_messages.Any(m => m.Type == BrokerageMessageType.Error));
+        }
+
+        [Platform("Linux")]
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DisposeDuringAGatewayStartWaitingForTheLoginReturnsPromptlyAndRaisesNothing(bool gatewayRestart)
+        {
+            // a gateway installation with its Java, which the start runs through the IBAutomater.sh of the working directory first:
+            // this one stands for a gateway waiting for its login, such as for a 2FA confirmation, until it is stopped
+            var jreDirectory = Path.Combine(_gatewayDirectory, "jre");
+            Directory.CreateDirectory(jreDirectory);
+            Directory.CreateDirectory(Path.Combine(_gatewayDirectory, ".install4j"));
+            File.WriteAllText(Path.Combine(_gatewayDirectory, ".install4j", "pref_jre.cfg"), jreDirectory);
+            var workingDirectory = Path.Combine(_gatewayDirectory, "working");
+            Directory.CreateDirectory(workingDirectory);
+            File.WriteAllText(Path.Combine(workingDirectory, "IBAutomater.sh"),
+                "#!/bin/bash\ndirectory=$(dirname \"$1\")\nwhile [ -d \"$directory\" ] && [ ! -f \"$directory/shutdown\" ]; do sleep 0.1; done\n");
+            var previousDirectory = Environment.CurrentDirectory;
+            Environment.CurrentDirectory = workingDirectory;
+            try
+            {
+                using var waitingForLogin = new ManualResetEventSlim();
+                _automater.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data.StartsWith("IBAutomater process started"))
+                    {
+                        waitingForLogin.Set();
+                    }
+                };
+                // the gateway needs a new login after a timed out one, or after it exited, as for the weekly restart
+                SetField(_automater, "_lastStartResult", new StartResult(ErrorCode.InitializationTimeout));
+                var connect = gatewayRestart
+                    ? Task.Run(() => InvokeMethod(_brokerage, "StartGatewayAndConnect"))
+                    : Task.Run(() => _brokerage.Connect());
+                Assert.IsTrue(waitingForLogin.Wait(TimeSpan.FromSeconds(30)));
+
+                // the start waits up to its 15 minutes initialization timeout
+                var dispose = Task.Run(_brokerage.Dispose);
+
+                Assert.IsTrue(dispose.Wait(TimeSpan.FromSeconds(30)), "Dispose() waited for the login");
+                Assert.IsTrue(connect.Wait(TimeSpan.FromSeconds(5)));
+                Assert.IsEmpty(_messages);
+                Assert.IsFalse(_automater.IsRunning());
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousDirectory;
+            }
+        }
+
+        /// <summary>
+        /// Ends the connection attempt a test holds the connection guard for, connected to the given gateway
+        /// </summary>
+        private void EndConnectionAttempt(HandshakeOnlyGateway gateway)
+        {
+            var client = new IB.InteractiveBrokersClient(new EReaderMonitorSignal());
+            client.ClientSocket.eConnect("127.0.0.1", gateway.Port, 0);
+            SetField(_brokerage, "_client", client);
+            Assert.IsTrue(_brokerage.IsConnected);
+            SetField(_brokerage, "_isReconnecting", 0);
         }
 
         /// <summary>
