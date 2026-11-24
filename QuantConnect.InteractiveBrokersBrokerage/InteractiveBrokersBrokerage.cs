@@ -139,7 +139,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         // 1 while a reconnect that failed within the server reset period is being retried
         private int _isRetryingReconnect;
 
-        // 1 while a connect, a gateway restart, a gateway start or a retry is connecting: one at a time
+        // 1 while a gateway restart, a gateway start or a retry is reconnecting: one at a time
         private int _isReconnecting;
 
         private int _port;
@@ -943,39 +943,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         }
 
         /// <summary>
-        /// Connects the client to the IB gateway, one attempt at a time: while another attempt is in progress, it waits for it to end
-        /// and then connects only if still needed
+        /// Connects the client to the IB gateway
         /// </summary>
         public override void Connect()
-        {
-            if (Interlocked.Exchange(ref _isReconnecting, 1) == 1)
-            {
-                Log.Trace("InteractiveBrokersBrokerage.Connect(): another connection attempt is in progress, waiting for it to end");
-                // callers read the account data right after, which the attempt in progress has cleared until its download ends
-                do
-                {
-                    if (_isDisposeCalled || _cancellationTokenSource.Token.WaitHandle.WaitOne(100))
-                    {
-                        return;
-                    }
-                }
-                while (Interlocked.Exchange(ref _isReconnecting, 1) == 1);
-            }
-
-            try
-            {
-                ConnectToGateway();
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _isReconnecting, 0);
-            }
-        }
-
-        /// <summary>
-        /// Connects the client to the IB gateway, for a caller that holds the connection guard
-        /// </summary>
-        private void ConnectToGateway()
         {
             if (IsConnected || _isDisposeCalled)
             {
@@ -6108,7 +6078,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     _stateManager.Reset();
                     Disconnect();
                 }
-                ConnectToGateway();
+                Connect();
             }
             catch (Exception exception)
             {
@@ -6166,7 +6136,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     Log.Trace("InteractiveBrokersBrokerage.ScheduleReconnectRetry(): retrying the connection...");
                     // a 1100 from a previous attempt gets no 1102 if IB returned while no connection was open
                     ClearDisconnectState();
-                    ConnectToGateway();
+                    Connect();
                     Interlocked.Exchange(ref _isRetryingReconnect, 0);
                 }
                 catch (Exception exception)
