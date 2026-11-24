@@ -93,15 +93,15 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             get
             {
                 var aapl = Symbols.AAPL;
-                var aaplOptionContract = Symbol.CreateOption(aapl, aapl.ID.Market, SecurityType.Option.DefaultOptionStyle(), OptionRight.Call, 220m, new(2025, 09, 19));
+                var aaplOptionContract = Symbol.CreateOption(aapl, aapl.ID.Market, SecurityType.Option.DefaultOptionStyle(), OptionRight.Call, 220m, new(2027, 01, 15));
                 yield return new TestCaseData(new MarketOnOpenOrderTestParameters(aaplOptionContract));
 
                 var spx = Symbols.SPX;
-                var spxOptionContract = Symbol.CreateOption(spx, "SPXW", spx.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 5980m, new(2025, 09, 19));
+                var spxOptionContract = Symbol.CreateOption(spx, "SPXW", spx.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6000m, new(2027, 01, 15));
                 yield return new TestCaseData(new MarketOnOpenOrderTestParameters(spxOptionContract));
 
-                var futureContract = Symbol.CreateFuture(Futures.Indices.SP500EMini, Market.CME, new DateTime(2025, 12, 19));
-                var futureOptionContract = Symbol.CreateOption(futureContract, futureContract.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Call, 7000m, new(2025, 12, 19));
+                var futureContract = Symbol.CreateFuture(Futures.Indices.SP500EMini, Market.CME, new DateTime(2027, 3, 19));
+                var futureOptionContract = Symbol.CreateOption(futureContract, futureContract.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Call, 7000m, new(2027, 03, 19));
                 yield return new TestCaseData(new MarketOnOpenOrderTestParameters(futureOptionContract));
             }
         }

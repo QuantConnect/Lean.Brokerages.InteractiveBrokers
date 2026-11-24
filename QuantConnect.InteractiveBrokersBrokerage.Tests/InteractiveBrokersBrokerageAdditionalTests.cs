@@ -226,7 +226,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 brokerage.CancelOrder(order);
             }
 
-            var optionsExpiration = new DateTime(2023, 7, 21);
+            var optionsExpiration = new DateTime(2027, 1, 15);
             var orderProperties = new InteractiveBrokersOrderProperties();
             var group = new GroupOrderManager(1, legCount: 2, quantity: comboDirection == OrderDirection.Buy ? 2 : -2);
 
@@ -240,7 +240,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var events = new List<OrderEvent>();
             var orders = new List<Order> { comboOrderCall };
 
-            var putSymbol = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call, 432, optionsExpiration);
+            var putSymbol = Symbol.CreateOption(underlying, Market.USA, OptionStyle.American, OptionRight.Call, 435, optionsExpiration);
             var comboOrderPut = BuildOrder(orderType, putSymbol, -1, comboLimitPrice, group,
                 putLimitPrice, orderProperties, algo.Transactions);
             orders.Add(comboOrderPut);
@@ -299,7 +299,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 brokerage.CancelOrder(order);
             }
 
-            var optionsExpiration = new DateTime(2024, 9, 6);
+            var optionsExpiration = new DateTime(2027, 1, 15);
             var orderProperties = new InteractiveBrokersOrderProperties();
             var group = new GroupOrderManager(1, legCount: orderType != OrderType.ComboLegLimit ? 3 : 2, quantity: comboDirection == OrderDirection.Buy ? 2 : -2);
 
@@ -318,7 +318,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             if (orderType != OrderType.ComboLegLimit)
             {
                 var putSymbol = Symbol.CreateOption(Symbols.SPY, Market.USA, OptionStyle.American, OptionRight.Put,
-                            442, optionsExpiration);
+                            445, optionsExpiration);
                 var comboOrderPut = BuildOrder(orderType, putSymbol, 1, comboLimitPrice, group,
                     putLimitPrice, orderProperties, algo.Transactions);
                 orders.Add(comboOrderPut);
@@ -404,7 +404,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 brokerage.CancelOrder(order);
             }
 
-            var optionsExpiration = new DateTime(2023, 12, 29);
+            var optionsExpiration = new DateTime(2027, 1, 15);
             var orderProperties = new InteractiveBrokersOrderProperties();
             var comboLimitPrice = orderType == OrderType.ComboLimit ? 400m : 0m;
             var group = new GroupOrderManager(1, legCount: 2, quantity: 2, limitPrice: comboLimitPrice);
@@ -1247,7 +1247,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             using var ib = new InteractiveBrokersBrokerage(new QCAlgorithm(), new OrderProvider(), new SecurityProvider());
             ib.Connect();
 
-            var future = Symbol.CreateFuture(Futures.Indices.SP500EMini, Market.CME, new DateTime(2025, 09, 19));
+            var future = Symbol.CreateFuture(Futures.Indices.SP500EMini, Market.CME, new DateTime(2026, 12, 18));
             var index = Symbol.Create("SPX", SecurityType.Index, Market.USA);
             var symbols = new Symbol[]
             {
@@ -1257,13 +1257,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
                 Symbol.CreateOption(future, future.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Put, 6750m, future.ID.Date),
                 Symbol.CreateOption(future, future.ID.Market, SecurityType.FutureOption.DefaultOptionStyle(), OptionRight.Call, 6750m, future.ID.Date),
 
-                Symbol.CreateOption(index, index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6300m, new(2025,08,15)),
-                Symbol.CreateOption(index, index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6350m, new(2025,08,15)),
-                Symbol.CreateOption(index, index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Put, 6395m, new(2025,08,15)),
+                Symbol.CreateOption(index, index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6300m, new(2027,01,15)),
+                Symbol.CreateOption(index, index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6350m, new(2027,01,15)),
+                Symbol.CreateOption(index, index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Put, 6400m, new(2027,01,15)),
 
-                Symbol.CreateOption(index, "SPXW", index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6355m, new(2025,08,15)),
-                Symbol.CreateOption(index, "SPXW", index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Put, 6320m, new(2025,08,15)),
-                Symbol.CreateOption(index, "SPXW", index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Put, 6310m, new(2025,08,15)),
+                Symbol.CreateOption(index, "SPXW", index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Call, 6350m, new(2027,01,15)),
+                Symbol.CreateOption(index, "SPXW", index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Put, 6320m, new(2027,01,15)),
+                Symbol.CreateOption(index, "SPXW", index.ID.Market, SecurityType.IndexOption.DefaultOptionStyle(), OptionRight.Put, 6310m, new(2027,01,15)),
             };
 
             var stopwatch = Stopwatch.StartNew();
@@ -1665,7 +1665,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             else if (securityType == SecurityType.Option)
             {
                 var underlying = Symbols.SPY;
-                var optionsExpiration = new DateTime(2025, 12, 19);
+                var optionsExpiration = new DateTime(2027, 1, 15);
                 var symbol1 = Symbol.CreateOption(underlying, underlying.ID.Market, OptionStyle.American, OptionRight.Call, 430, optionsExpiration);
                 var symbol2 = Symbol.CreateOption(underlying, underlying.ID.Market, OptionStyle.American, OptionRight.Call, 435, optionsExpiration);
                 return [underlying, symbol1, symbol2];
@@ -1673,22 +1673,22 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             else if (securityType == SecurityType.IndexOption)
             {
                 var underlying = Symbols.SPX;
-                var optionsExpiration = new DateTime(2025, 7, 18);
-                var symbol1 = Symbol.CreateOption(underlying, "SPXW", underlying.ID.Market, OptionStyle.European, OptionRight.Call, 5505m, optionsExpiration);
+                var optionsExpiration = new DateTime(2027, 1, 15);
+                var symbol1 = Symbol.CreateOption(underlying, "SPXW", underlying.ID.Market, OptionStyle.European, OptionRight.Call, 5500m, optionsExpiration);
                 var symbol2 = Symbol.CreateOption(underlying, underlying.ID.Market, OptionStyle.European, OptionRight.Call, 5500m, optionsExpiration);
                 return [underlying, symbol1, symbol2];
             }
             else if (securityType == SecurityType.FutureOption)
             {
-                var underlying = Symbol.CreateFuture("ES", Market.CME, new DateTime(2025, 12, 19));
-                var symbol1 = Symbol.CreateOption(underlying, Market.CME, OptionStyle.American, OptionRight.Call, 6000m, new DateTime(2025, 12, 19));
-                var symbol2 = Symbol.CreateOption(underlying, Market.CME, OptionStyle.American, OptionRight.Call, 6100m, new DateTime(2025, 12, 19));
+                var underlying = Symbol.CreateFuture("ES", Market.CME, new DateTime(2027, 3, 19));
+                var symbol1 = Symbol.CreateOption(underlying, Market.CME, OptionStyle.American, OptionRight.Call, 6000m, new DateTime(2027, 3, 19));
+                var symbol2 = Symbol.CreateOption(underlying, Market.CME, OptionStyle.American, OptionRight.Call, 6100m, new DateTime(2027, 3, 19));
                 return [underlying, symbol1, symbol2];
             }
             else if (securityType == SecurityType.Future)
             {
-                var underlying = Symbol.CreateFuture("ES", Market.CME, new DateTime(2025, 9, 19));
-                var underlying2 = Symbol.CreateFuture("ES", Market.CME, new DateTime(2025, 12, 19));
+                var underlying = Symbol.CreateFuture("ES", Market.CME, new DateTime(2026, 12, 18));
+                var underlying2 = Symbol.CreateFuture("ES", Market.CME, new DateTime(2027, 3, 19));
                 return [null, underlying2, underlying];
             }
             throw new NotImplementedException();

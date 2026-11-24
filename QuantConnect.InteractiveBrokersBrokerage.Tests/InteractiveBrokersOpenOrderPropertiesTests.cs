@@ -87,7 +87,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
 
             // IB ignores the flag on a SPY option combo (warning 2109) and keeps it on an index option combo
-            var expiry = new DateTime(2026, 10, 2);
+            var expiry = new DateTime(2027, 1, 15);
             var longCall = Symbol.CreateOption(Symbols.SPX, "SPXW", Market.USA, OptionStyle.European, OptionRight.Call, 7700m, expiry);
             var shortCall = Symbol.CreateOption(Symbols.SPX, "SPXW", Market.USA, OptionStyle.European, OptionRight.Call, 7750m, expiry);
             var groupOrderManager = new GroupOrderManager(legCount: 2, quantity: 1, limitPrice: limitPrice);

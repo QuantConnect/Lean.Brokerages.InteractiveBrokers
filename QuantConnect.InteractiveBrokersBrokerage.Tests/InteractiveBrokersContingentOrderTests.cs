@@ -103,7 +103,7 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             var groupOrderManager = new GroupOrderManager(legs.Length, quantity, limitPrice ?? 0m);
             return legs.Select(leg =>
             {
-                var option = Symbol.CreateOption(Symbols.SPY, QuantConnect.Market.USA, OptionStyle.American, OptionRight.Call, leg.Strike, new DateTime(2026, 10, 2));
+                var option = Symbol.CreateOption(Symbols.SPY, QuantConnect.Market.USA, OptionStyle.American, OptionRight.Call, leg.Strike, new DateTime(2027, 1, 15));
                 return limitPrice.HasValue
                     ? (Order)new ComboLimitOrder(option, leg.Ratio * quantity, limitPrice.Value, DateTime.UtcNow, groupOrderManager)
                     : new ComboMarketOrder(option, leg.Ratio * quantity, DateTime.UtcNow, groupOrderManager);
