@@ -2870,8 +2870,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                // the only changes we handle now are trail stop price updates
                 var order = orders[0];
+                // IB sizes percent change orders from the accounts' positions, ignoring the quantity we sent
+                if (IsPercentChangeAllocationMethod(e.Order.FaMethod) && e.Order.TotalQuantity > 0 && e.Order.TotalQuantity != order.AbsoluteQuantity)
+                {
+                    OnOrderUpdated(new OrderUpdateEvent { OrderId = order.Id, Quantity = Math.Sign(order.Quantity) * e.Order.TotalQuantity });
+                }
+
+                // the only other changes we handle now are trail stop price updates
                 if (order.Type != OrderType.TrailingStop)
                 {
                     return;
