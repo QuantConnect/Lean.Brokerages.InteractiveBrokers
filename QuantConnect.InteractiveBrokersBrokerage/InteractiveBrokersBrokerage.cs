@@ -116,7 +116,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// The default gateway version to use
         /// </summary>
-        public static string DefaultVersion { get; } = "1034";
+        public static string DefaultVersion { get; } = "1050";
 
         private IBAutomater.IBAutomater _ibAutomater;
 
@@ -1585,6 +1585,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var exportIbGatewayLogs = true; // Config.GetBool("ib-export-ibgateway-logs");
             // IB paper account ids start with a 'D' (DU..., DF...)
             var tradingMode = account.StartsWith("d", StringComparison.InvariantCultureIgnoreCase) ? "paper" : "live";
+            // an empty 'ib-version' setting means the default version, like a missing one
+            if (string.IsNullOrEmpty(ibVersion))
+            {
+                ibVersion = DefaultVersion;
+            }
             _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, exportIbGatewayLogs);
             _ibAutomater.OutputDataReceived += OnIbAutomaterOutputDataReceived;
             _ibAutomater.ErrorDataReceived += OnIbAutomaterErrorDataReceived;
@@ -2728,7 +2733,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// <summary>
         /// Stores all the account values
         /// </summary>
-        private void HandleUpdateAccountValue(object sender, IB.UpdateAccountValueEventArgs e)
+        internal void HandleUpdateAccountValue(object sender, IB.UpdateAccountValueEventArgs e)
         {
             if (Log.DebuggingEnabled)
             {
@@ -2739,8 +2744,13 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 _accountData.AccountProperties[e.Currency + ":" + e.Key] = e.Value;
 
+                // newer IB Gateway installations, such as 10.50, prefix the per-currency keys by default (API setting "Prepend $LEDGER- prefix to per-currency account values")
+                var key = e.Key.StartsWith(AccountValueKeys.LedgerPrefix, StringComparison.Ordinal)
+                    ? e.Key.Substring(AccountValueKeys.LedgerPrefix.Length)
+                    : e.Key;
+
                 // we want to capture if the user's cash changes so we can reflect it in the algorithm
-                if (e.Key == AccountValueKeys.CashBalance && e.Currency != "BASE")
+                if (key == AccountValueKeys.CashBalance && e.Currency != "BASE")
                 {
                     var cashBalance = decimal.Parse(e.Value, CultureInfo.InvariantCulture);
                     _accountData.CashBalances.AddOrUpdate(e.Currency, cashBalance);
@@ -2749,7 +2759,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 }
 
                 // IB does not explicitly return the account base currency, but we can find out using exchange rates returned
-                if (e.Key == AccountValueKeys.ExchangeRate && e.Currency != "BASE" && e.Value.ToDecimal() == 1)
+                if (key == AccountValueKeys.ExchangeRate && e.Currency != "BASE" && e.Value.ToDecimal() == 1)
                 {
                     AccountBaseCurrency = e.Currency;
                 }
@@ -2900,8 +2910,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     return;
                 }
 
-                // the only changes we handle now are trail stop price updates
                 var order = orders[0];
+                // IB sizes percent change orders from the accounts' positions, ignoring the quantity we sent
+                if (IsPercentChangeAllocationMethod(e.Order.FaMethod) && e.Order.TotalQuantity > 0 && e.Order.TotalQuantity != order.AbsoluteQuantity)
+                {
+                    OnOrderUpdated(new OrderUpdateEvent { OrderId = order.Id, Quantity = Math.Sign(order.Quantity) * e.Order.TotalQuantity });
+                }
+
+                // the only other changes we handle now are trail stop price updates
                 if (order.Type != OrderType.TrailingStop)
                 {
                     return;
@@ -6533,6 +6549,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         {
             public const string CashBalance = "CashBalance";
             public const string ExchangeRate = "ExchangeRate";
+            public const string LedgerPrefix = "$LEDGER-";
         }
 
         // these are fatal errors from IB

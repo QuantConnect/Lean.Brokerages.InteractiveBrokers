@@ -17,6 +17,8 @@ using System;
 using IBApi;
 using NUnit.Framework;
 using QuantConnect.Securities;
+using QuantConnect.Securities.Future;
+using QuantConnect.Securities.FutureOption;
 using QuantConnect.Brokerages.InteractiveBrokers;
 using IB = QuantConnect.Brokerages.InteractiveBrokers.Client;
 using System.Collections.Generic;
@@ -282,10 +284,12 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             }
             else if (securityType == SecurityType.FutureOption)
             {
-                expiry = new DateTime(2025, 12, 15);
-                var fopExpiry = new DateTime(2025, 12, 05);
+                // the mapper resolves the underlying among the futures listed today, so take next year's December contract
+                var canonicalFuture = Symbol.Create(leanUnderlyingTicker, SecurityType.Future, Market.CME);
+                expiry = FuturesExpiryFunctions.FuturesExpiryFunction(canonicalFuture)(new DateTime(DateTime.Today.Year + 1, 12, 1));
                 var strike = 0.650m;
                 var underlying = Symbol.CreateFuture(leanUnderlyingTicker, Market.CME, expiry);
+                var fopExpiry = FuturesOptionsExpiryFunctions.GetFutureOptionExpiryFromFutureExpiry(underlying);
                 expectedLeanSymbol = Symbol.CreateOption(underlying, underlying.ID.Market, OptionStyle.American, OptionRight.Call, strike, fopExpiry);
 
                 resultLeanSymbol = mapper.GetLeanSymbol(ibTicker, securityType, expectedLeanSymbol.ID.Market, fopExpiry, strike, OptionRight.Call);
