@@ -1811,7 +1811,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         {
                             var reason = $"Timeout waiting for brokerage response for brokerage order id {ibOrderId} lean id {order.Id}";
 
-                            // IB can hold back the response to an order it accepted, like a MarketOnClose order placed near the close.
+                            // IB can hold back the response to an order it accepted.
                             // A new order IB lists as open is live: its updates still arrive, so stopping the algorithm would leave it unmanaged
                             Contract openOrderContract = null;
                             try
