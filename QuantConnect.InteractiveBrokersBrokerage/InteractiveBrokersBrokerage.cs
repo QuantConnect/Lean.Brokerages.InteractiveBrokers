@@ -958,6 +958,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             if (lastAutomaterStartResult.HasError)
             {
                 lastAutomaterStartResult = _ibAutomater.Start(false);
+                if (_isDisposeCalled)
+                {
+                    Log.Trace("InteractiveBrokersBrokerage.Connect(): disposed while starting IBAutomater, not connecting");
+                    return;
+                }
                 CheckIbAutomaterError(lastAutomaterStartResult);
                 // There was an error but we did not throw, must be another 2FA timeout, we can't continue
                 if (lastAutomaterStartResult.HasError)
@@ -1146,6 +1151,10 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                 // we need to tell the DefaultBrokerageMessageHandler we are connected else he will kill us
                 OnMessage(BrokerageMessageEvent.Reconnected("Connect() finished successfully"));
+            }
+            else if (_isDisposeCalled)
+            {
+                Log.Trace("InteractiveBrokersBrokerage.Connect(): disposed while connecting, not connected");
             }
             else
             {
@@ -1443,7 +1452,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             _aggregator.DisposeSafely();
             if (!_isRemoteGateway)
             {
-                _ibAutomater?.Stop();
+                // ends a gateway start waiting for the login, such as for a 2FA confirmation, instead of waiting for it
+                _ibAutomater?.Shutdown();
                 _ibAutomater.DisposeSafely();
             }
 
@@ -6026,6 +6036,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             try
             {
                 var result = _ibAutomater.Start(false);
+                if (_isDisposeCalled)
+                {
+                    Log.Trace("InteractiveBrokersBrokerage.StartGatewayAndConnect(): disposed while starting IBAutomater, not connecting");
+                    return;
+                }
                 CheckIbAutomaterError(result, false);
 
                 // the error was raised above, or we are waiting for the 2FA user required action after a timeout: no gateway to connect to
