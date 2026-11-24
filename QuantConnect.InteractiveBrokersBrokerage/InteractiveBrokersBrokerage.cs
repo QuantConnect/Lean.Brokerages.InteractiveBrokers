@@ -100,6 +100,8 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         private readonly HashSet<OrderType> _noSubmissionOrderTypes = new(new[] {
             OrderType.MarketOnOpen,
+            // IB can hold back any answer to a market on close order until about 30 seconds before the close
+            OrderType.MarketOnClose,
             OrderType.ComboLegLimit,
             // combo market & limit do not send submission event when trading only options
             OrderType.ComboMarket,
@@ -133,6 +135,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         private readonly object _nextValidIdLocker = new object();
 
         private CancellationTokenSource _gatewayRestartTokenSource;
+
+        // 1 while a reconnect that failed within the server reset period is being retried
+        private int _isRetryingReconnect;
+
+        // 1 while a gateway restart, a gateway start or a retry is reconnecting: one at a time
+        private int _isReconnecting;
 
         private int _port;
         private string _account;
@@ -260,7 +268,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
         // when unsubscribing symbols immediately after subscribing IB returns an error (Can't find EId with tickerId:nnn),
         // so we track subscription times to ensure symbols are not unsubscribed before a minimum time span has elapsed
-        private readonly Dictionary<int, DateTime> _subscriptionTimes = new Dictionary<int, DateTime>();
+        private readonly ConcurrentDictionary<int, DateTime> _subscriptionTimes = new ConcurrentDictionary<int, DateTime>();
 
         private readonly TimeSpan _minimumTimespanBeforeUnsubscribe = TimeSpan.FromSeconds(5);
 
@@ -309,6 +317,16 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         internal static DateTime _nextNdxMarketOpenSkipTime = default;
 
         /// <summary>
+        /// How long after the scheduled server reset period ends the connection is still waited for before restarting the gateway
+        /// </summary>
+        internal static TimeSpan PostResetReconnectGracePeriod { get; set; } = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// How often a reconnect that failed within the scheduled server reset period is retried
+        /// </summary>
+        internal static TimeSpan ResetPeriodReconnectRetryInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+        /// <summary>
         /// Stores the exchange hours for the NDX security, used to determine market open/close times and related calculations.
         /// </summary>
         private static SecurityExchangeHours _ndxSecurityExchangeHours;
@@ -322,6 +340,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// Returns true if we're currently connected to the broker
         /// </summary>
         public override bool IsConnected => _client != null && _client.Connected && !_stateManager.Disconnected1100Fired && !_stateManager.IsConnecting;
+
+        /// <summary>
+        /// IB reports every option position change through its portfolio updates, so Lean's daily option holdings sync is not needed
+        /// </summary>
+        public override bool HoldingsSyncEnabled => false;
 
         /// <summary>
         /// Returns true if the connected user is a financial advisor
@@ -1522,6 +1545,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             var exportIbGatewayLogs = true; // Config.GetBool("ib-export-ibgateway-logs");
             // IB paper account ids start with a 'D' (DU..., DF...)
             var tradingMode = account.StartsWith("d", StringComparison.InvariantCultureIgnoreCase) ? "paper" : "live";
+            // an empty 'ib-version' setting means the default version, like a missing one
+            if (string.IsNullOrEmpty(ibVersion))
+            {
+                ibVersion = DefaultVersion;
+            }
             _ibAutomater = new IBAutomater.IBAutomater(ibDirectory, ibVersion, userName, password, tradingMode, port, exportIbGatewayLogs);
             _ibAutomater.OutputDataReceived += OnIbAutomaterOutputDataReceived;
             _ibAutomater.ErrorDataReceived += OnIbAutomaterErrorDataReceived;
@@ -2347,6 +2375,9 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 StopGatewayRestartTask();
                 if (!_stateManager.Disconnected1100Fired)
                 {
+                    // a new disconnect starts with no reset-period history
+                    _stateManager.PreviouslyInResetTime = false;
+                    _stateManager.ResetPeriodEndedUtc = null;
                     _stateManager.Disconnected1100Fired = true;
 
                     // begin the try wait logic
@@ -2363,17 +2394,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             else if (errorCode == 1102)
             {
                 // Connectivity between IB and TWS has been restored - data maintained.
+                ClearDisconnectState();
                 OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
-
-                _stateManager.Disconnected1100Fired = false;
                 return;
             }
             else if (errorCode == 1101)
             {
                 // Connectivity between IB and TWS has been restored - data lost.
+                ClearDisconnectState();
                 OnMessage(BrokerageMessageEvent.Reconnected(errorMsg));
-
-                _stateManager.Disconnected1100Fired = false;
 
                 RestoreDataSubscriptions();
                 return;
@@ -2593,25 +2622,94 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             var isResetTime = _ibAutomater.IsWithinScheduledServerResetTimes();
 
-            if (!isResetTime)
-            {
-                if (!_stateManager.PreviouslyInResetTime)
-                {
-                    // if we were disconnected and we're not within the reset times, send the error event
-                    OnMessage(BrokerageMessageEvent.Disconnected("Connection with Interactive Brokers lost. " +
-                                                                 "This could be because of internet connectivity issues or a log in from another location."
-                        ));
-                }
-            }
-            else
+            if (isResetTime)
             {
                 Log.Trace("InteractiveBrokersBrokerage.TryWaitForReconnect(): Within server reset times, trying to wait for reconnect...");
 
                 // we're still not connected but we're also within the schedule reset time, so just keep polling
                 Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => TryWaitForReconnect());
+
+                _stateManager.PreviouslyInResetTime = true;
+                // a window that reopens restarts the grace period
+                _stateManager.ResetPeriodEndedUtc = null;
+                return;
             }
 
-            _stateManager.PreviouslyInResetTime = isResetTime;
+            if (!_stateManager.PreviouslyInResetTime)
+            {
+                // if we were disconnected and we're not within the reset times, send the error event
+                RaiseDisconnectUnlessRestored("Connection with Interactive Brokers lost. " +
+                                              "This could be because of internet connectivity issues or a log in from another location.");
+                return;
+            }
+
+            // IB resets can overrun the published window: a short grace trades a cold login (and its 2FA prompt) for a late 1102
+            var resetPeriodEndedUtc = _stateManager.ResetPeriodEndedUtc ??= DateTime.UtcNow;
+            if (DateTime.UtcNow - resetPeriodEndedUtc < PostResetReconnectGracePeriod)
+            {
+                Log.Trace($"InteractiveBrokersBrokerage.TryWaitForReconnect(): Server reset period ended, waiting up to {PostResetReconnectGracePeriod} more for the connection to be restored...");
+
+                Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => TryWaitForReconnect());
+                return;
+            }
+
+            _stateManager.PreviouslyInResetTime = false;
+            _stateManager.ResetPeriodEndedUtc = null;
+            if (!RaiseDisconnectUnlessRestored("Connection with Interactive Brokers was not restored after the server reset period."))
+            {
+                return;
+            }
+
+            if (!_isRemoteGateway)
+            {
+                Log.Trace("InteractiveBrokersBrokerage.TryWaitForReconnect(): Not reconnected after the server reset period, restarting the gateway...");
+
+                // the gateway can be left logged out, e.g. when IB refused its re-login during the reset: once stopped,
+                // the exit handler retries with a full login, a soft restart would reuse the session IB refused
+                Task.Factory.StartNew(() =>
+                {
+                    // a 1102 may have landed since the decision above
+                    if (!_stateManager.Disconnected1100Fired)
+                    {
+                        Log.Trace("InteractiveBrokersBrokerage.TryWaitForReconnect(): Connection restored before the gateway was stopped, skipping the restart.");
+                        return;
+                    }
+                    _ibAutomater.Stop();
+                });
+            }
+        }
+
+        /// <summary>
+        /// Raises the disconnect unless a 1101/1102 restored the connection meanwhile, returns whether it was raised
+        /// </summary>
+        private bool RaiseDisconnectUnlessRestored(string message)
+        {
+            // the reader thread can restore the connection at any point of the poll
+            if (!_stateManager.Disconnected1100Fired)
+            {
+                return false;
+            }
+
+            OnMessage(BrokerageMessageEvent.Disconnected(message));
+            if (_stateManager.Disconnected1100Fired)
+            {
+                return true;
+            }
+
+            // the restore's own Reconnected was dropped as a no-op before this Disconnect, the base class dedupes this one otherwise
+            OnMessage(BrokerageMessageEvent.Reconnected("Connection with Interactive Brokers restored."));
+            return false;
+        }
+
+        /// <summary>
+        /// Ends the pending disconnect, called before the Reconnected is raised so a racing poll finds it over
+        /// </summary>
+        private void ClearDisconnectState()
+        {
+            _stateManager.Disconnected1100Fired = false;
+            // a later disconnect is a new one, not one left over from the reset period
+            _stateManager.PreviouslyInResetTime = false;
+            _stateManager.ResetPeriodEndedUtc = null;
         }
 
         /// <summary>
@@ -4565,6 +4663,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </summary>
         private void HandleMarketDataReRoute(object sender, IB.RerouteMarketDataRequestEventArgs e)
         {
+            // this runs on the IB message thread, so it doesn't take _sync, which Unsubscribe holds while it waits:
+            // the concurrent collections detect an unsubscribe racing the re-route instead
+            if (!_subscribedTickers.TryRemove(e.RequestId, out var entry))
+            {
+                // the subscription was removed meanwhile or its request was already re-routed
+                return;
+            }
+
             var requestInformation = _requestInformation.GetValueOrDefault(e.RequestId);
             Log.Trace($"InteractiveBrokersBrokerage.Subscribe(): Re-routing {requestInformation?.AssociatedSymbol} CFD data request to underlying");
 
@@ -4575,7 +4681,33 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 Exchange = e.UnderlyingPrimaryExchange,
             };
 
-            RequestMarketData(underlyingContract, e.RequestId);
+            // IB may still hold the CFD request open, after a gateway restart for instance, and reusing its id
+            // would be rejected as a duplicate ticker id, so the re-routed request takes a new one
+            var id = GetNextId();
+            _requestInformation[id] = new RequestInformation
+            {
+                RequestId = id,
+                RequestType = RequestType.Subscription,
+                AssociatedSymbol = requestInformation?.AssociatedSymbol,
+                Message = $"[Id={id}] Re-routed subscription [Id={e.RequestId}]: {entry.Symbol.Value} ({GetContractDescription(underlyingContract)})"
+            };
+            _subscribedTickers[id] = entry;
+            if (_subscriptionTimes.TryRemove(e.RequestId, out var subscriptionTime))
+            {
+                _subscriptionTimes[id] = subscriptionTime;
+            }
+
+            // when IB already released the CFD request, the error 300 answering this cancel is ignored as benign
+            Client.ClientSocket.cancelMktData(e.RequestId);
+            RequestMarketData(underlyingContract, id);
+
+            if (!_subscribedSymbols.TryUpdate(entry.Symbol, id, e.RequestId))
+            {
+                // the symbol was unsubscribed meanwhile, which cancelled only the CFD request
+                Client.ClientSocket.cancelMktData(id);
+                _subscribedTickers.TryRemove(id, out _);
+                _subscriptionTimes.TryRemove(id, out _);
+            }
         }
 
         /// <summary>
@@ -4711,13 +4843,15 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                                         Thread.Sleep(delay);
                                     }
 
-                                    _subscriptionTimes.Remove(id);
+                                    _subscriptionTimes.TryRemove(id, out _);
                                 }
 
                                 Client.ClientSocket.cancelMktData(id);
 
-                                SubscriptionEntry entry;
-                                return _subscribedTickers.TryRemove(id, out entry);
+                                // taking the symbol is what unsubscribes it: its ticker is already gone when a CFD
+                                // re-route moved the subscription meanwhile, which then cancels its own request
+                                _subscribedTickers.TryRemove(id, out _);
+                                return true;
                             }
                         }
                     }
@@ -5640,6 +5774,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     OnMessage(new BrokerageMessageEvent(BrokerageMessageType.ActionRequired, "2FAAuthRequired", message));
                 });
             }
+            else if (e.Data.Contains("IB Automater auto-restart login failed", StringComparison.InvariantCultureIgnoreCase))
+            {
+                // IBAutomater stops the gateway and reports its exit, which retries with a full login
+                OnMessage(BrokerageMessageEvent.Disconnected("Interactive Brokers refused the login of the gateway restart. A new login will be attempted."));
+            }
             else if (e.Data.Contains(OrderConfirmationWindowMarker, StringComparison.InvariantCultureIgnoreCase))
             {
                 // IBAutomater auto-accepted an order confirmation/warning window, let the user know
@@ -5789,7 +5928,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                         else
                         {
                             // if the gateway is not running, we start it
-                            CheckIbAutomaterError(_ibAutomater.Start(false));
+                            StartGatewayAndConnect();
                         }
                     }
                     catch (Exception ex)
@@ -5876,14 +6015,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
                         Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterExited(): restarting...");
 
-                        var result = _ibAutomater.Start(false);
-                        CheckIbAutomaterError(result);
-
-                        // Has error but we are still running, we might be waiting for 2FA user required action after timeout, let's not connect in that case
-                        if (!result.HasError)
-                        {
-                            Connect();
-                        }
+                        StartGatewayAndConnect();
                     }
                     catch (Exception exception)
                     {
@@ -5895,6 +6027,143 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
             {
                 OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterError", result.ErrorMessage));
             }
+        }
+
+        /// <summary>
+        /// Starts the IB Gateway and connects to it, raising any failure as a message
+        /// </summary>
+        private void StartGatewayAndConnect()
+        {
+            try
+            {
+                var result = _ibAutomater.Start(false);
+                CheckIbAutomaterError(result, false);
+
+                // the error was raised above, or we are waiting for the 2FA user required action after a timeout: no gateway to connect to
+                if (!result.HasError)
+                {
+                    Reconnect("IBAutomaterRestartError");
+                }
+            }
+            catch (Exception exception)
+            {
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterRestartError", exception.ToString()));
+            }
+        }
+
+        /// <summary>
+        /// Connects to the gateway unless another reconnect is in progress, which then owns the outcome
+        /// </summary>
+        private void Reconnect(string errorCode, bool afterGatewayRestart = false)
+        {
+            if (Interlocked.Exchange(ref _isReconnecting, 1) == 1)
+            {
+                Log.Trace("InteractiveBrokersBrokerage.Reconnect(): another reconnect is in progress, skipping this one");
+                if (afterGatewayRestart)
+                {
+                    // the new gateway session has no connectivity history, the reconnect in progress keeps its connecting state
+                    ClearDisconnectState();
+                }
+                return;
+            }
+
+            try
+            {
+                if (afterGatewayRestart)
+                {
+                    _stateManager.Reset();
+                    Disconnect();
+                }
+                Connect();
+            }
+            catch (Exception exception)
+            {
+                HandleReconnectFailure(exception, errorCode);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _isReconnecting, 0);
+            }
+        }
+
+        /// <summary>
+        /// Raises a failed reconnect as an error, unless within the server reset period: IB may not serve the account then, so it's retried
+        /// </summary>
+        private void HandleReconnectFailure(Exception exception, string errorCode)
+        {
+            if (!_ibAutomater.IsWithinScheduledServerResetTimes())
+            {
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, errorCode, exception.ToString()));
+                return;
+            }
+
+            // nothing is raised while IB resets, as for a 1100: with an open market Lean stops the algorithm 15 minutes after a disconnect
+            Log.Trace($"InteractiveBrokersBrokerage.HandleReconnectFailure(): within the server reset period, the connection will be retried: {exception.Message}");
+
+            // a single retry sequence, however many reconnects fail meanwhile
+            if (Interlocked.Exchange(ref _isRetryingReconnect, 1) == 0)
+            {
+                ScheduleReconnectRetry();
+            }
+        }
+
+        /// <summary>
+        /// Retries the connection until it succeeds or the server reset period ends, then restarts the gateway for a new login
+        /// </summary>
+        private void ScheduleReconnectRetry(DateTime? resetPeriodEndedUtc = null)
+        {
+            Task.Delay(ResetPeriodReconnectRetryInterval, _cancellationTokenSource.Token).ContinueWith(_ =>
+            {
+                if (_isDisposeCalled || IsConnected)
+                {
+                    Interlocked.Exchange(ref _isRetryingReconnect, 0);
+                    return;
+                }
+
+                if (Interlocked.Exchange(ref _isReconnecting, 1) == 1)
+                {
+                    // the reconnect in progress may fail too, the sequence goes on until one connects
+                    ScheduleReconnectRetry(resetPeriodEndedUtc);
+                    return;
+                }
+
+                try
+                {
+                    Log.Trace("InteractiveBrokersBrokerage.ScheduleReconnectRetry(): retrying the connection...");
+                    // a 1100 from a previous attempt gets no 1102 if IB returned while no connection was open
+                    ClearDisconnectState();
+                    Connect();
+                    Interlocked.Exchange(ref _isRetryingReconnect, 0);
+                }
+                catch (Exception exception)
+                {
+                    Log.Trace($"InteractiveBrokersBrokerage.ScheduleReconnectRetry(): failed to connect: {exception.Message}");
+
+                    if (_ibAutomater.IsWithinScheduledServerResetTimes())
+                    {
+                        ScheduleReconnectRetry();
+                        return;
+                    }
+
+                    // IB resets can overrun the published window
+                    resetPeriodEndedUtc ??= DateTime.UtcNow;
+                    if (DateTime.UtcNow - resetPeriodEndedUtc < PostResetReconnectGracePeriod)
+                    {
+                        ScheduleReconnectRetry(resetPeriodEndedUtc);
+                        return;
+                    }
+
+                    Interlocked.Exchange(ref _isRetryingReconnect, 0);
+                    Log.Trace("InteractiveBrokersBrokerage.ScheduleReconnectRetry(): not connected after the server reset period, restarting the gateway...");
+                    OnMessage(BrokerageMessageEvent.Disconnected("Unable to connect to Interactive Brokers after its server reset period. A new login will be attempted."));
+                    // once stopped, the exit handler logs in again and a reconnect that fails then is raised as an error
+                    _ibAutomater.Stop();
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _isReconnecting, 0);
+                }
+            }, TaskContinuationOptions.OnlyOnRanToCompletion);
         }
 
         private TimeSpan GetRestartDelay()
@@ -5929,7 +6198,6 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             _lastGatewayRestartTimeUtc = DateTime.UtcNow;
 
-            _stateManager.Reset();
             StopGatewayRestartTask();
 
             // check if IBGateway was closed because of an IBAutomater error
@@ -5941,16 +6209,11 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                 // IBGateway was restarted automatically
                 Log.Trace("InteractiveBrokersBrokerage.OnIbAutomaterRestarted(): IBGateway restart detected, reconnecting...");
 
-                try
-                {
-                    Disconnect();
-
-                    Connect();
-                }
-                catch (Exception exception)
-                {
-                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "IBAutomaterAutoRestartError", exception.ToString()));
-                }
+                Reconnect("IBAutomaterAutoRestartError", afterGatewayRestart: true);
+            }
+            else
+            {
+                _stateManager.Reset();
             }
         }
 

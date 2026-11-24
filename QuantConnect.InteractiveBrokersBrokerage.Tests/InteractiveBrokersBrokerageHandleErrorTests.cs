@@ -16,9 +16,14 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
+using IBApi;
 using NUnit.Framework;
 using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.InteractiveBrokers;
@@ -125,9 +130,13 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
         // merely surfaced as a warning, so the wait expired 'ib-response-timeout' later and stopped the
         // algorithm with 'Timeout waiting for brokerage response'.
         // See https://github.com/QuantConnect/Lean.Brokerages.InteractiveBrokers/issues/93
-        [TestCase(10147, "OrderId 141 that needs to be cancelled is not found.")]
-        [TestCase(10148, "OrderId 141 that needs to be cancelled can not be cancelled, state: Cancelled.")]
-        public void HandleErrorCancellationRejectionInvalidatesOrderAndReleasesPendingResponse(int errorCode, string errorMessage)
+        // A 10148 for an order already pending cancel or canceled is not a rejection though: IB canceled it on its own, like the
+        // remaining orders of an OCA group, and reports it as an order status, so it releases the thread without invalidating.
+        [TestCase(10147, "OrderId 141 that needs to be cancelled is not found.", true)]
+        [TestCase(10148, "OrderId 141 that needs to be cancelled can not be cancelled, state: Inactive.", true)]
+        [TestCase(10148, "OrderId 141 that needs to be cancelled can not be cancelled, state: Cancelled.", false)]
+        [TestCase(10148, "OrderId 141 that needs to be cancelled can not be cancelled, state: PendingCancel.", false)]
+        public void HandleErrorCancellationRejectionInvalidatesOrderAndReleasesPendingResponse(int errorCode, string errorMessage, bool invalidates)
         {
             using var brokerage = new InteractiveBrokersBrokerage();
             const int ibOrderId = 141;
@@ -156,8 +165,10 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
 
             Assert.IsTrue(pendingResponseEvent.IsSet, "the thread waiting in CancelOrder was not released");
             Assert.IsFalse(pendingOrderResponses.Contains(ibOrderId));
-            Assert.AreEqual(1, orderEvents.Count(e => e.OrderId == order.Id && e.Status == OrderStatus.Invalid));
-            StringAssert.StartsWith($"{errorCode} - {errorMessage}", orderEvents.Single().Message);
+            var expectedOrderEvents = invalidates ? 1 : 0;
+            Assert.AreEqual(expectedOrderEvents, orderEvents.Count);
+            Assert.AreEqual(expectedOrderEvents, orderEvents.Count(e => e.OrderId == order.Id && e.Status == OrderStatus.Invalid
+                && e.Message.StartsWith($"{errorCode} - {errorMessage}", StringComparison.Ordinal)));
             // both are filtered codes: the rejection reaches the user as the order event above, not as a message
             Assert.IsEmpty(messages.Where(m => m.Code == errorCode.ToStringInvariant()));
         }
@@ -299,6 +310,142 @@ namespace QuantConnect.Tests.Brokerages.InteractiveBrokers
             Assert.IsTrue(pendingResponseEvent.IsSet);
             Assert.AreEqual(1, orderEvents.Count(e => e.Status == OrderStatus.Invalid));
             Assert.AreEqual(BrokerageMessageType.Error, messages.Single(m => m.Code == "200").Type);
+        }
+
+        // IB answers a CFD market data request it serves from the underlying with a re-route. Requesting the
+        // underlying with the CFD request's id is rejected with a fatal 322 ("Duplicate ticker id") whenever IB
+        // still holds the CFD request open, as it did after a gateway restart, so the CFD request is cancelled and
+        // the re-routed request takes a new id, carrying the subscription over to it. A repeated re-route is ignored.
+        [Test]
+        public void MarketDataReRouteRequestsTheUnderlyingWithANewTickerId()
+        {
+            const int cfdTickerId = 40;
+            const int nextValidId = 41;
+            using var brokerage = CreateReRouteBrokerage(cfdTickerId, nextValidId, out var socket, out var symbol, out var subscriptionEntry);
+            var subscribedTickers = (IDictionary)GetPrivateFieldValue(brokerage, "_subscribedTickers");
+            var subscribedSymbols = (IDictionary)GetPrivateFieldValue(brokerage, "_subscribedSymbols");
+
+            var reRoute = new IB.RerouteMarketDataRequestEventArgs(cfdTickerId, 123456, "NASDAQ");
+            InvokeHandleMarketDataReRoute(brokerage, reRoute);
+
+            CollectionAssert.AreEqual(new[] { (CancelMarketData, cfdTickerId), (RequestMarketData, nextValidId) }, socket.Requests);
+            Assert.AreEqual(nextValidId, subscribedSymbols[symbol]);
+            Assert.IsFalse(subscribedTickers.Contains(cfdTickerId));
+            Assert.AreSame(subscriptionEntry, subscribedTickers[nextValidId]);
+            Assert.IsTrue(((IDictionary)GetPrivateFieldValue(brokerage, "_requestInformation")).Contains(nextValidId));
+
+            // IB re-routing the same CFD request again doesn't request the underlying a second time
+            InvokeHandleMarketDataReRoute(brokerage, reRoute);
+
+            Assert.AreEqual(2, socket.Requests.Count);
+            Assert.AreEqual(nextValidId + 1, GetPrivateFieldValue(brokerage, "_nextValidId"));
+            Assert.AreEqual(nextValidId, subscribedSymbols[symbol]);
+            Assert.AreEqual(1, subscribedTickers.Count);
+        }
+
+        // Unsubscribe cancels the request id it finds for the symbol, so when it takes the symbol while its CFD
+        // request is being re-routed, it cancels only the CFD request and the re-route must cancel its own request
+        [Test]
+        public void MarketDataReRouteRacingAnUnsubscribeCancelsTheReRoutedRequest()
+        {
+            const int cfdTickerId = 40;
+            const int nextValidId = 41;
+            using var brokerage = CreateReRouteBrokerage(cfdTickerId, nextValidId, out var socket, out var symbol, out _);
+            var subscribedTickers = (IDictionary)GetPrivateFieldValue(brokerage, "_subscribedTickers");
+            var subscribedSymbols = (IDictionary)GetPrivateFieldValue(brokerage, "_subscribedSymbols");
+
+            // Unsubscribe took the symbol and is about to cancel the CFD request and remove its ticker
+            subscribedSymbols.Remove(symbol);
+
+            InvokeHandleMarketDataReRoute(brokerage, new IB.RerouteMarketDataRequestEventArgs(cfdTickerId, 123456, "NASDAQ"));
+
+            CollectionAssert.AreEqual(
+                new[] { (CancelMarketData, cfdTickerId), (RequestMarketData, nextValidId), (CancelMarketData, nextValidId) },
+                socket.Requests);
+            Assert.IsEmpty(subscribedSymbols);
+            Assert.IsEmpty(subscribedTickers);
+            Assert.IsEmpty((IDictionary)GetPrivateFieldValue(brokerage, "_subscriptionTimes"));
+        }
+
+        // the same race as above, with the re-route coming in while Unsubscribe waits out the minimum subscription
+        // time: Unsubscribe must still report success, else the subscription manager keeps the symbol as subscribed
+        // and adding it again never reaches the brokerage
+        [Test]
+        public void UnsubscribeRacedByAMarketDataReRouteSucceeds()
+        {
+            const int cfdTickerId = 40;
+            const int nextValidId = 41;
+            using var brokerage = CreateReRouteBrokerage(cfdTickerId, nextValidId, out var socket, out var symbol, out _);
+
+            var unsubscribe = typeof(InteractiveBrokersBrokerage).GetMethod("Unsubscribe", BindingFlags.NonPublic | BindingFlags.Instance,
+                [typeof(IEnumerable<Symbol>)]);
+            var unsubscribeTask = Task.Run(() => (bool)unsubscribe.Invoke(brokerage, [new[] { symbol }]));
+
+            // the CFD was subscribed just now, so Unsubscribe took the symbol and is waiting before it cancels
+            Assert.IsTrue(SpinWait.SpinUntil(() => ((IDictionary)GetPrivateFieldValue(brokerage, "_subscribedSymbols")).Count == 0, 1000));
+            InvokeHandleMarketDataReRoute(brokerage, new IB.RerouteMarketDataRequestEventArgs(cfdTickerId, 123456, "NASDAQ"));
+
+            Assert.IsTrue(unsubscribeTask.Wait(TimeSpan.FromSeconds(10)));
+            Assert.IsTrue(unsubscribeTask.Result);
+            CollectionAssert.AreEqual(
+                new[] { (CancelMarketData, cfdTickerId), (RequestMarketData, nextValidId), (CancelMarketData, nextValidId), (CancelMarketData, cfdTickerId) },
+                socket.Requests);
+            Assert.IsEmpty((IDictionary)GetPrivateFieldValue(brokerage, "_subscribedTickers"));
+        }
+
+        private const int RequestMarketData = 1;
+        private const int CancelMarketData = 2;
+
+        private static InteractiveBrokersBrokerage CreateReRouteBrokerage(int cfdTickerId, int nextValidId, out RecordingClientSocket socket,
+            out Symbol symbol, out object subscriptionEntry)
+        {
+            var brokerage = new InteractiveBrokersBrokerage();
+            var client = new IB.InteractiveBrokersClient(new EReaderMonitorSignal());
+            socket = new RecordingClientSocket(client);
+            SetPrivateFieldValue(client, "<ClientSocket>k__BackingField", socket);
+            SetPrivateFieldValue(brokerage, "_client", client);
+            SetPrivateFieldValue(brokerage, "_nextValidId", nextValidId);
+            // with delayed streaming data enabled in the configuration each market data request is preceded by a market data type request
+            SetPrivateFieldValue(brokerage, "_enableDelayedStreamingData", false);
+
+            symbol = Symbol.Create("SMH", SecurityType.Cfd, Market.InteractiveBrokers);
+            var subscriptionEntryType = typeof(InteractiveBrokersBrokerage).GetNestedType("SubscriptionEntry", BindingFlags.NonPublic);
+            subscriptionEntry = Activator.CreateInstance(subscriptionEntryType);
+            subscriptionEntryType.GetProperty("Symbol").SetValue(subscriptionEntry, symbol);
+            ((IDictionary)GetPrivateFieldValue(brokerage, "_subscribedTickers"))[cfdTickerId] = subscriptionEntry;
+            ((IDictionary)GetPrivateFieldValue(brokerage, "_subscribedSymbols"))[symbol] = cfdTickerId;
+            ((IDictionary)GetPrivateFieldValue(brokerage, "_subscriptionTimes"))[cfdTickerId] = DateTime.UtcNow;
+            SeedRequestInformation(brokerage, cfdTickerId, "Subscription", symbol);
+            return brokerage;
+        }
+
+        private static void InvokeHandleMarketDataReRoute(InteractiveBrokersBrokerage brokerage, IB.RerouteMarketDataRequestEventArgs reRoute)
+        {
+            typeof(InteractiveBrokersBrokerage)
+                .GetMethod("HandleMarketDataReRoute", BindingFlags.NonPublic | BindingFlags.Instance)
+                .Invoke(brokerage, [null, reRoute]);
+        }
+
+        /// <summary>
+        /// A connected IB client socket recording the message id and ticker id of each request instead of sending it
+        /// </summary>
+        private class RecordingClientSocket : EClientSocket
+        {
+            public List<(int MessageId, int TickerId)> Requests { get; } = [];
+
+            public RecordingClientSocket(EWrapper wrapper) : base(wrapper, new EReaderMonitorSignal())
+            {
+                isConnected = true;
+                serverVersion = MinServerVer.PRICE_MGMT_ALGO;
+            }
+
+            protected override void CloseAndSend(BinaryWriter request, uint lengthPos)
+            {
+                var message = ((MemoryStream)request.BaseStream).ToArray();
+                // the message follows its 4 byte length, its fields are null terminated: message id, version, ticker id, ...
+                var fields = Encoding.ASCII.GetString(message, (int)lengthPos + 4, message.Length - (int)lengthPos - 4).Split('\0');
+                Requests.Add((int.Parse(fields[0], CultureInfo.InvariantCulture), int.Parse(fields[2], CultureInfo.InvariantCulture)));
+            }
         }
 
         private static void SeedRequestInformation(InteractiveBrokersBrokerage brokerage, int requestId, string requestType, Symbol symbol)
